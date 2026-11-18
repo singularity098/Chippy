@@ -212,7 +212,7 @@ impl Resample {
     }
 
     fn push(&mut self, interleaved: &[f32], out: &mut Vec<f32>) {
-        for f in interleaved.chunks_exact(2) {
+        for f in interleaved.as_chunks::<2>().0 {
             self.input[0].push(f[0]);
             self.input[1].push(f[1]);
         }

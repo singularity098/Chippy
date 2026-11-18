@@ -4,6 +4,13 @@ members = [
     "crates/gme-sys",
     "crates/vgmstream-sys",
     "crates/lazyusf-sys",
+    "crates/aosdk-sys",
+    "crates/archive-sys",
+    "crates/sidplayfp-sys",
+    "crates/gsf-sys",
+    "crates/twosf-sys",
+    "crates/wsr-sys",
+    "crates/xmp-sys",
     "crates/chippy-core",
     "crates/chippy",
 ]
@@ -14,12 +21,19 @@ version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/singularity098/Chippy"
-rust-version = "1.80"
+rust-version = "1.88"
 
 [workspace.dependencies]
 gme-sys = { path = "crates/gme-sys" }
 vgmstream-sys = { path = "crates/vgmstream-sys" }
 lazyusf-sys = { path = "crates/lazyusf-sys" }
+aosdk-sys = { path = "crates/aosdk-sys" }
+archive-sys = { path = "crates/archive-sys" }
+sidplayfp-sys = { path = "crates/sidplayfp-sys" }
+gsf-sys = { path = "crates/gsf-sys" }
+twosf-sys = { path = "crates/twosf-sys" }
+wsr-sys = { path = "crates/wsr-sys" }
+xmp-sys = { path = "crates/xmp-sys" }
 chippy-core = { path = "crates/chippy-core" }
 anyhow = "1"
 log = "0.4"

@@ -4,7 +4,7 @@
 import { Theme } from "theme.slint";
 import { IconButton, TextField, Tip, MenuItem } from "widgets.slint";
 import { Icon, Icons } from "icons.slint";
-import { FileItem } from "types.slint";
+import { FileItem, Crumb } from "types.slint";
 import { ListView } from "std-widgets.slint";
 
 export global Browser {
@@ -12,6 +12,8 @@ export global Browser {
     // The folder shown (its virtual path), and its name.
     in property <string> path;
     in property <string> title;
+    // Each level of the path, clickable ("~" for the home folder).
+    in property <[Crumb]> crumbs;
     in property <bool> can-back;
     in property <bool> can-forward;
     in property <bool> can-up;
@@ -83,24 +85,29 @@ component FileRow inherits Rectangle {
             weight: 1.6;
             tint: root.tint;
         }
-        stem := Text {
-            text: root.item.stem;
-            color: root.item.playing ? Theme.paint-a : root.dim ? Theme.text-dim : Theme.text;
-            font-size: Theme.font-small + 1px;
-            font-weight: root.item.playing ? Theme.regular : Theme.light;
-            vertical-alignment: center;
-            overflow: elide;
+        // The name and its extension, side by side with no gap.
+        HorizontalLayout {
+            spacing: 0;
             horizontal-stretch: 1;
-            max-width: self.preferred-width;
+            stem := Text {
+                text: root.item.stem;
+                color: root.item.playing ? Theme.paint-a : root.dim ? Theme.text-dim : Theme.text;
+                font-size: Theme.font-small + 1px;
+                font-weight: root.item.playing ? Theme.regular : Theme.light;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+                max-width: self.preferred-width;
+            }
+            if root.item.ext != "": Text {
+                text: root.item.ext;
+                color: Theme.text-faint;
+                font-size: Theme.font-small + 1px;
+                vertical-alignment: center;
+                horizontal-stretch: 0;
+            }
+            Rectangle { horizontal-stretch: 1; min-width: 0; }
         }
-        if root.item.ext != "": Text {
-            text: root.item.ext;
-            color: Theme.text-faint;
-            font-size: Theme.font-small + 1px;
-            vertical-alignment: center;
-            horizontal-stretch: 0;
-        }
-        Rectangle { horizontal-stretch: 1; min-width: 0; }
         if root.item.detail != "": Text {
             text: root.item.detail;
             color: Theme.text-faint;
@@ -135,7 +142,13 @@ export component BrowserPanel inherits Rectangle {
     border-color: Theme.border;
 
     property <string> path: Browser.path;
-    changed path => { path-field.text = Browser.path; }
+    changed path => { path-field.text = Browser.path; root.editing-path = false; }
+    // The path bar shows clickable levels; clicking beside them edits it.
+    property <bool> editing-path;
+    property <bool> path-focused: path-field.has-focus;
+    changed path-focused => {
+        if !self.path-focused { root.editing-path = false; path-field.text = Browser.path; }
+    }
     property <int> serial: Browser.folder-serial;
     changed serial => { list.viewport-y = 0; }
     property <int> menu-index: -1;
@@ -218,11 +231,70 @@ export component BrowserPanel inherits Rectangle {
                 }
             }
 
-            path-field := TextField {
-                placeholder: "Path";
-                clearable: false;
-                accepted(t) => { root.interacted(); Browser.go(t); keys.focus(); }
-                escape => { self.text = Browser.path; keys.focus(); }
+            Rectangle {
+                height: 38px;
+                path-field := TextField {
+                    visible: root.editing-path;
+                    placeholder: "Path";
+                    clearable: false;
+                    accepted(t) => { root.interacted(); Browser.go(t); root.editing-path = false; keys.focus(); }
+                    escape => { self.text = Browser.path; root.editing-path = false; keys.focus(); }
+                }
+                if !root.editing-path: Rectangle {
+                    border-radius: 10px;
+                    background: Theme.surface-2;
+                    border-width: 1px;
+                    border-color: crumb-touch.has-hover ? Theme.border-hover : Theme.border-strong;
+                    clip: true;
+                    // Beside the levels: edit the path as text.
+                    crumb-touch := TouchArea {
+                        mouse-cursor: MouseCursor.text;
+                        clicked => {
+                            root.interacted();
+                            root.editing-path = true;
+                            path-field.focus-input();
+                            path-field.select-all();
+                        }
+                    }
+                    crumbs := Flickable {
+                        x: 6px;
+                        width: parent.width - 12px;
+                        viewport-width: max(self.width, crumb-row.preferred-width);
+                        // The deepest levels stay in view.
+                        viewport-x: min(0, self.width - crumb-row.preferred-width);
+                        interactive: true;
+                        crumb-row := HorizontalLayout {
+                            spacing: 0;
+                            alignment: start;
+                            for c[i] in Browser.crumbs: HorizontalLayout {
+                                spacing: 0;
+                                if c.sep: Text {
+                                    text: "/";
+                                    color: Theme.text-faint;
+                                    font-size: Theme.font-small + 1px;
+                                    vertical-alignment: center;
+                                }
+                                Rectangle {
+                                    width: label.preferred-width + 10px;
+                                    border-radius: 6px;
+                                    background: t.pressed ? Theme.pressed : t.has-hover ? #ffffff14 : transparent;
+                                    label := Text {
+                                        text: c.label;
+                                        color: i == Browser.crumbs.length - 1 ? Theme.text : t.has-hover ? Theme.paint-a : Theme.text-dim;
+                                        font-size: Theme.font-small + 1px;
+                                        font-weight: i == Browser.crumbs.length - 1 ? Theme.regular : Theme.light;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: center;
+                                    }
+                                    t := TouchArea {
+                                        mouse-cursor: MouseCursor.pointer;
+                                        clicked => { root.interacted(); Browser.go(c.path); keys.focus(); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             filter-field := TextField {
                 icon: Icons.search-line;

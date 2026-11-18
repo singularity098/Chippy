@@ -39,8 +39,6 @@ pub struct Column {
 pub struct Settings {
     /// Where the file browser starts.
     pub music_dir: Option<PathBuf>,
-    /// The folder the browser showed last.
-    pub last_dir: Option<PathBuf>,
     /// List every file, not only folders, archives and music.
     pub show_all_files: bool,
     /// A file opened from outside (command line, file manager) brings the
@@ -68,6 +66,10 @@ pub struct Settings {
     pub gme_accuracy: bool,
     /// Spectrum bar count.
     pub spectrum_bars: u32,
+    /// A folder of SF2 SoundFonts for MIDI, and the file name of the one
+    /// in use.
+    pub soundfont_dir: Option<PathBuf>,
+    pub soundfont: Option<String>,
 }
 
 pub fn default_columns() -> Vec<Column> {
@@ -98,7 +100,6 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             music_dir: directories::UserDirs::new().and_then(|u| u.audio_dir().map(PathBuf::from)),
-            last_dir: None,
             show_all_files: false,
             open_folder_as_playlist: true,
             single_tap: false,
@@ -119,6 +120,8 @@ impl Default for Settings {
             usf_hle: true,
             gme_accuracy: true,
             spectrum_bars: 32,
+            soundfont_dir: None,
+            soundfont: None,
         }
     }
 }

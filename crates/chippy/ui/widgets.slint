@@ -389,30 +389,37 @@ export component Scrubber inherits Rectangle {
 }
 
 // A small stereo level meter, two thin horizontal bars.
+component MeterBar inherits Rectangle {
+    in property <float> level;
+    in property <length> full-width;
+    height: 4px;
+    border-radius: 2px;
+    background: Theme.track;
+    clip: true;
+    // The gradient spans the whole meter; only the lit part shows.
+    Rectangle {
+        x: 0;
+        width: parent.width * min(1, root.level);
+        clip: true;
+        Rectangle {
+            x: 0;
+            width: root.full-width;
+            border-radius: 2px;
+            background: @linear-gradient(90deg, Theme.ok 0%, Theme.ok 62%, Theme.warn 84%, Theme.danger 100%);
+        }
+    }
+}
+
+// Two fixed bars, not a repeater over [left, right]: that array is rebuilt
+// on every level change, which dropped the bars while they were drawn.
 export component LevelMeter inherits Rectangle {
     in property <float> left;
     in property <float> right;
     height: 12px;
     VerticalLayout {
         spacing: 3px;
-        for level in [root.left, root.right]: Rectangle {
-            height: 4px;
-            border-radius: 2px;
-            background: Theme.track;
-            clip: true;
-            // The gradient spans the whole meter; only the lit part shows.
-            Rectangle {
-                x: 0;
-                width: parent.width * min(1, level);
-                clip: true;
-                Rectangle {
-                    x: 0;
-                    width: root.width;
-                    border-radius: 2px;
-                    background: @linear-gradient(90deg, Theme.ok 0%, Theme.ok 62%, Theme.warn 84%, Theme.danger 100%);
-                }
-            }
-        }
+        MeterBar { level: root.left; full-width: root.width; }
+        MeterBar { level: root.right; full-width: root.width; }
     }
 }
 

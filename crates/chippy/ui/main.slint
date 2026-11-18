@@ -13,13 +13,13 @@ import { Theme, ThemeLook } from "theme.slint";
 import { IconButton, Tips } from "widgets.slint";
 import { Icon, Icons, IconArt } from "icons.slint";
 import { TooltipLayer } from "tooltip.slint";
-import { FileItem, PlRow, ColumnItem } from "types.slint";
+import { FileItem, PlRow, ColumnItem, Crumb } from "types.slint";
 import { Browser, BrowserPanel } from "browser.slint";
 import { Playlist, PlaylistPanel } from "playlist.slint";
 import { Now, ArtPanel, BottomBar } from "nowplaying.slint";
 import { Prefs, SettingsPanel } from "settings.slint";
 
-export { Theme, IconArt, Browser, Playlist, Now, Prefs, FileItem, PlRow, ColumnItem }
+export { Theme, IconArt, Browser, Playlist, Now, Prefs, FileItem, PlRow, ColumnItem, Crumb }
 
 // A window edge that brings in a sidebar: follows the finger and snaps
 // open or closed, opens on a tap, and shows a tab while the mouse is over it.
@@ -36,7 +36,7 @@ component EdgeStrip inherits Rectangle {
 
     // A moment's rest, so the pointer passing the edge does not open it.
     Timer {
-        interval: 90ms;
+        interval: 60ms;
         running: root.hovered && !strip.pressed && !tab-touch.pressed;
         triggered => { root.hover(); }
     }
@@ -189,7 +189,10 @@ export component MainWindow inherits Window {
     callback seek-by(int);
     callback volume-by(float);
 
-    property <length> strip-width: 8px;
+    // The edges that bring the sidebars in: as wide as the margin beside the
+    // playlist and the art, so they are easy to find without covering them.
+    property <length> strip-width: 22px;
+    property <length> gutter: 8px;
     property <bool> docked: !root.fullscreen;
     property <length> top-inset: root.docked ? 44px : 0;
     property <length> bottom-height: 96px;
@@ -252,6 +255,8 @@ export component MainWindow inherits Window {
             if e.text == "s" { Now.toggle-shuffle(); return accept; }
             if e.text == "r" { Now.cycle-repeat(); return accept; }
             if e.text == "m" { Now.toggle-mute(); return accept; }
+            if e.text == "[" { Now.cycle-soundfont(-1); return accept; }
+            if e.text == "]" { Now.cycle-soundfont(1); return accept; }
             if e.text == "b" || e.text == Key.Tab { root.open-left(); return accept; }
             if e.text == "," { root.open-right(); return accept; }
             reject
@@ -264,8 +269,8 @@ export component MainWindow inherits Window {
         height: root.mid-height;
         HorizontalLayout {
             padding: 18px;
-            padding-left: root.strip-width + 14px;
-            padding-right: root.strip-width + 14px;
+            padding-left: root.gutter + 14px;
+            padding-right: root.gutter + 14px;
             spacing: 22px;
             PlaylistPanel {
                 horizontal-stretch: 1;
@@ -274,7 +279,7 @@ export component MainWindow inherits Window {
             }
             ArtPanel {
                 horizontal-stretch: 0;
-                width: min(parent.height - 36px - 80px, (root.width - 2 * root.strip-width) * 0.42);
+                width: min(parent.height - 36px - 80px, (root.width - 2 * root.gutter) * 0.42);
             }
         }
     }
@@ -340,7 +345,7 @@ export component MainWindow inherits Window {
         visible: root.left-pos == 0 || root.left-dragging;
         x: root.edge-inset;
         y: root.top-inset;
-        width: root.strip-width;
+        width: root.strip-width - root.edge-inset;
         height: root.mid-height;
         icon: Icons.folder-line;
         panel-width: root.left-width;
@@ -359,9 +364,9 @@ export component MainWindow inherits Window {
     }
     right-strip := EdgeStrip {
         visible: root.right-pos == 0 || root.right-dragging;
-        x: root.width - root.edge-inset - root.strip-width;
+        x: root.width - root.strip-width;
         y: root.top-inset;
-        width: root.strip-width;
+        width: root.strip-width - root.edge-inset;
         height: root.mid-height;
         right-side: true;
         icon: Icons.gear-line;

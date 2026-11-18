@@ -1,0 +1,11 @@
+[package]
+name = "archive-sys"
+description = "Raw bindings to libarchive's reader, built from third_party/libarchive with no external libraries (for RAR and RSN)"
+version.workspace = true
+edition.workspace = true
+license = "BSD-2-Clause"
+links = "archive"
+build = "build.rs"
+
+[build-dependencies]
+cmake = "0.1"

@@ -1,0 +1,2 @@
+vio2sf (DeSmuME-based Nintendo DS sound emulation, GPL-2.0-or-later) by
+Christopher Snowhill, as vendored by rePlayer (source/Replays/vio2sf/desmume).

@@ -1,0 +1,15 @@
+[package]
+name = "aosdk-sys"
+description = "Raw bindings to the Audio Overload SDK (PSF, PSF2, SSF, DSF, QSF, SPU), built from third_party/aosdk"
+version.workspace = true
+edition.workspace = true
+license = "GPL-2.0-or-later"
+links = "aosdk"
+build = "build.rs"
+
+[build-dependencies]
+cc = "1"
+
+[dependencies]
+# The engines inflate PSF program sections with zlib.
+libz-sys = "1"

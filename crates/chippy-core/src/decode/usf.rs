@@ -106,7 +106,7 @@ impl UsfDecoder {
                 bail!("invalid USF data");
             }
         }
-        let (length, fade) = timing(&p, opts);
+        let (length, fade) = psf::timing(&p, opts);
         let rate = opts.sample_rate;
         let f = |ms: u64| ms * rate as u64 / 1000;
         let mut d = UsfDecoder {
@@ -135,18 +135,6 @@ impl UsfDecoder {
             bail!("USF emulation stopped: {msg}");
         }
         Ok(())
-    }
-}
-
-fn timing(p: &Psf, opts: &DecodeOptions) -> (u64, u64) {
-    let length = p
-        .tag("length")
-        .and_then(psf::parse_time_ms)
-        .filter(|&l| l > 0);
-    let fade = p.tag("fade").and_then(psf::parse_time_ms);
-    match length {
-        Some(l) => (l, fade.unwrap_or(opts.fade_ms.min(l / 4))),
-        None => (opts.default_length_ms, fade.unwrap_or(opts.fade_ms)),
     }
 }
 
@@ -191,33 +179,11 @@ impl Decoder for UsfDecoder {
 }
 
 pub fn meta(loc: &Location, opts: &DecodeOptions) -> Result<TrackMeta> {
-    let data = loc.read()?;
-    let p = psf::parse(&data)?;
-    let (length, fade) = timing(&p, opts);
-    let t = |k: &str| p.tag(k).unwrap_or("").to_string();
-    Ok(TrackMeta {
-        title: t("title"),
-        artist: t("artist"),
-        album: t("game"),
-        year: t("year"),
-        genre: t("genre"),
-        comment: t("comment"),
-        copyright: t("copyright"),
-        dumper: [t("usfby"), t("psfby")]
-            .into_iter()
-            .find(|s| !s.is_empty())
-            .unwrap_or_default(),
-        track_no: p
-            .tag("track")
-            .and_then(|s| s.split('/').next()?.trim().parse().ok()),
-        length_ms: Some(length + fade),
-        system: "Nintendo 64".into(),
-        format: if loc.extension() == "miniusf" {
-            "miniUSF".into()
-        } else {
-            "USF".into()
-        },
-        channels: Some(2),
-        ..Default::default()
-    })
+    let p = psf::parse(&loc.read()?)?;
+    let format = if loc.extension() == "miniusf" {
+        "miniUSF"
+    } else {
+        "USF"
+    };
+    Ok(psf::meta(&p, opts, "Nintendo 64", format))
 }

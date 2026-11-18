@@ -77,7 +77,7 @@ impl Shared {
         let target = self.volume * self.volume;
         let mut taken = 0;
         let mut peak = self.peak;
-        for f in out.chunks_exact_mut(2) {
+        for f in out.as_chunks_mut::<2>().0 {
             let (Some(l), Some(r)) = (self.buf.pop_front(), self.buf.pop_front()) else {
                 f.fill(0.0);
                 continue;

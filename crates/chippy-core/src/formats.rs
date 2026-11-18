@@ -15,6 +15,22 @@ pub enum Codec {
     Common,
     /// Everything else vgmstream knows (hundreds of game formats).
     Vgmstream,
+    /// Standard MIDI files, played through a SoundFont.
+    Midi,
+    /// Audio Overload SDK: PSF, PSF2, SSF, DSF, QSF, SPU.
+    Ao,
+    /// Commodore 64 SID tunes (libsidplayfp).
+    Sid,
+    /// Sega Master System / Game Gear SGC.
+    Sgc,
+    /// Game Boy Advance GSF (mGBA).
+    Gsf,
+    /// Nintendo DS 2SF (vio2sf).
+    Twosf,
+    /// Bandai WonderSwan WSR.
+    Wsr,
+    /// Tracker modules (libxmp).
+    Module,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +39,8 @@ pub enum ArchiveKind {
     SevenZip,
     Tar,
     TarGz,
+    /// RAR (and RSN: SNES music packed in RAR).
+    Rar,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,12 +60,27 @@ pub const COMMON: &[&str] = &[
     "mp3", "mp2", "mp1", "flac", "wav", "wave", "ogg", "oga", "m4a", "m4b", "mp4", "aac", "alac",
     "aif", "aiff", "aifc", "caf", "mka", "webm",
 ];
+pub const AO: &[&str] = &[
+    "psf", "minipsf", "psf1", "minipsf1", "psf2", "minipsf2", "ssf", "minissf", "dsf", "minidsf",
+    "qsf", "miniqsf", "spu",
+];
+pub const SID: &[&str] = &["sid", "psid", "rsid"];
+pub const SGC: &[&str] = &["sgc"];
+pub const GSF: &[&str] = &["gsf", "minigsf"];
+pub const TWOSF: &[&str] = &["2sf", "mini2sf"];
+pub const WSR: &[&str] = &["wsr"];
+pub const MODULES: &[&str] = &[
+    "mod", "xm", "s3m", "it", "mtm", "669", "med", "mmd0", "mmd1", "mmd2", "mmd3", "okt", "stm",
+    "far", "ult", "ptm", "dbm", "amf", "mdl", "digi", "psm", "j2b", "gdm", "imf", "dsm", "stx",
+    "liq", "masi", "mgt", "rtm", "emod", "fnk", "ims", "xmf", "umx", "abk", "coco",
+];
+pub const MIDI: &[&str] = &["mid", "midi", "kar", "rmi", "smf"];
 pub const IMAGES: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "webp"];
 
 /// Extensions vgmstream accepts that are better shown as something else, or
 /// are too generic to call music.
 const VGMSTREAM_SKIP: &[&str] = &[
-    "txt", "zip", "7z", "rar", "jpg", "png", "nfo", "m3u", "pdf", "exe", "dll",
+    "txt", "zip", "7z", "rar", "rsn", "jpg", "png", "nfo", "m3u", "pdf", "exe", "dll",
 ];
 
 fn vgmstream_exts() -> &'static HashSet<String> {
@@ -81,6 +114,7 @@ pub fn kind_of(name: &str) -> FileKind {
         "7z" => return FileKind::Archive(ArchiveKind::SevenZip),
         "tar" => return FileKind::Archive(ArchiveKind::Tar),
         "tgz" | "tar.gz" => return FileKind::Archive(ArchiveKind::TarGz),
+        "rar" | "rsn" => return FileKind::Archive(ArchiveKind::Rar),
         _ => {}
     }
     if GME_MULTI.contains(&e) || GME_SINGLE.contains(&e) {
@@ -91,6 +125,30 @@ pub fn kind_of(name: &str) -> FileKind {
     }
     if COMMON.contains(&e) {
         return FileKind::Audio(Codec::Common);
+    }
+    if AO.contains(&e) {
+        return FileKind::Audio(Codec::Ao);
+    }
+    if SID.contains(&e) {
+        return FileKind::Audio(Codec::Sid);
+    }
+    if SGC.contains(&e) {
+        return FileKind::Audio(Codec::Sgc);
+    }
+    if GSF.contains(&e) {
+        return FileKind::Audio(Codec::Gsf);
+    }
+    if TWOSF.contains(&e) {
+        return FileKind::Audio(Codec::Twosf);
+    }
+    if WSR.contains(&e) {
+        return FileKind::Audio(Codec::Wsr);
+    }
+    if MODULES.contains(&e) {
+        return FileKind::Audio(Codec::Module);
+    }
+    if MIDI.contains(&e) {
+        return FileKind::Audio(Codec::Midi);
     }
     if IMAGES.contains(&e) {
         return FileKind::Image;
@@ -112,7 +170,7 @@ pub fn may_hold_tracks(name: &str) -> bool {
     let ext = extension(name);
     match kind_of(name) {
         FileKind::Audio(Codec::Gme) => GME_MULTI.contains(&ext.as_str()),
-        FileKind::Audio(Codec::Vgmstream) => true,
+        FileKind::Audio(Codec::Vgmstream | Codec::Sid | Codec::Sgc | Codec::Wsr) => true,
         _ => false,
     }
 }

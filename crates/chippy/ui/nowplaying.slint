@@ -1,0 +1,341 @@
+// What is playing: the large album art, and the bottom bar (now playing
+// with its spectrum, the transport and timeline, shuffle, repeat, volume).
+import { Theme } from "theme.slint";
+import { IconButton, PlayButton, Scrubber, LevelMeter, Tip } from "widgets.slint";
+import { Icon, Icons } from "icons.slint";
+
+export global Now {
+    in property <string> title;
+    in property <string> artist;
+    in property <string> album;
+    // "NSFE · Nintendo NES · 48 kHz".
+    in property <string> info;
+    in property <image> art;
+    in property <bool> has-art;
+    // Width / height of the art.
+    in property <float> art-aspect: 1;
+    // 0 stopped, 1 playing, 2 paused.
+    in property <int> state;
+    in property <bool> has-track;
+    // 0..1 through the track, and the times either side of the timeline.
+    in property <float> position;
+    in property <string> elapsed: "0:00";
+    in property <string> total: "0:00";
+    in property <bool> seekable;
+    in property <[float]> bars;
+    in property <[float]> peaks;
+    in property <float> volume: 0.8;
+    in property <bool> muted;
+    in property <float> level-l;
+    in property <float> level-r;
+    in property <bool> shuffle;
+    // 0 off, 1 all, 2 one.
+    in property <int> repeat;
+    // The time under the mouse on the timeline.
+    pure callback time-at(float) -> string;
+    callback play-pause;
+    callback stop;
+    callback next;
+    callback previous;
+    callback seek(float);
+    callback set-volume(float);
+    callback toggle-mute;
+    callback toggle-shuffle;
+    callback cycle-repeat;
+}
+
+// Bars rising from the bottom in the theme's paint, with peak caps.
+export component Spectrum inherits Rectangle {
+    property <int> n: Now.bars.length;
+    property <length> slot: root.width / max(1, root.n);
+    property <length> gap: max(1px, root.slot * 0.28);
+    clip: true;
+    for b[i] in Now.bars: Rectangle {
+        x: i * root.slot + root.gap / 2;
+        width: root.slot - root.gap;
+        y: root.height - self.height;
+        height: max(2px, root.height * b);
+        border-radius: min(2px, self.width / 2);
+        background: @linear-gradient(0deg, Theme.paint-c 0%, Theme.paint-b 55%, Theme.paint-a 100%);
+        opacity: 0.55 + 0.45 * b;
+    }
+    for p[i] in Now.peaks: Rectangle {
+        x: i * root.slot + root.gap / 2;
+        width: root.slot - root.gap;
+        y: root.height - root.height * p - 4px;
+        height: 2px;
+        border-radius: 1px;
+        background: Theme.paint-a;
+        opacity: p > 0.01 ? 0.9 : 0;
+    }
+}
+
+// The cover as large as the space allows, keeping its shape.
+export component ArtPanel inherits Rectangle {
+    property <length> space-h: root.height - caption.preferred-height - 18px;
+    property <float> aspect: Now.has-art ? max(0.25, min(4, Now.art-aspect)) : 1;
+    property <length> art-w: min(root.width, root.space-h * root.aspect);
+    property <length> art-h: root.art-w / root.aspect;
+
+    frame := Rectangle {
+        x: (root.width - self.width) / 2;
+        y: max(0, (root.space-h - self.height) / 2);
+        width: root.art-w;
+        height: root.art-h;
+        border-radius: Theme.radius + 4px;
+        background: Now.has-art ? #000000 : Theme.surface;
+        border-width: Now.has-art ? 0 : 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 42px;
+        drop-shadow-offset-y: 10px;
+        drop-shadow-color: Now.has-art ? #000000d0 : transparent;
+        clip: true;
+        if Now.has-art: Image {
+            width: parent.width;
+            height: parent.height;
+            source: Now.art;
+            image-fit: cover;
+            image-rendering: smooth;
+            accessible-role: image;
+            accessible-label: "Album art";
+        }
+        if !Now.has-art: Rectangle {
+            background: @radial-gradient(circle, Theme.paint-c.transparentize(82%) 0%, transparent 70%);
+            Icon {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: min(parent.width, parent.height) * 0.38;
+                height: self.width;
+                line: Now.has-track ? Icons.disc-line : Icons.chip-line;
+                solid: Now.has-track ? "" : Icons.chip-solid;
+                weight: 0.9;
+                tint: Theme.paint;
+                opacity: 0.55;
+            }
+        }
+    }
+    caption := VerticalLayout {
+        x: frame.x;
+        y: frame.y + frame.height + 18px;
+        width: frame.width;
+        height: self.preferred-height;
+        spacing: 2px;
+        Text {
+            text: Now.album != "" ? Now.album : Now.has-track ? Now.title : "Chippy";
+            font-size: Theme.font-large;
+            color: Theme.text;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            text: Now.has-track ? Now.artist : "Chiptunes, and everything else";
+            color: Theme.text-dim;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            text: Now.info;
+            font-size: Theme.font-small - 1px;
+            font-weight: Theme.regular;
+            color: Theme.text-faint;
+            letter-spacing: 0.5px;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+export component BottomBar inherits Rectangle {
+    background: #0000009c;
+    Rectangle {
+        y: 0;
+        height: 1px;
+        background: Theme.border;
+    }
+    // A thin glow along the top while playing.
+    Rectangle {
+        x: 0;
+        y: 0;
+        height: 1px;
+        width: parent.width * Now.position;
+        background: Theme.paint;
+        opacity: Now.has-track ? 0.9 : 0;
+    }
+
+    property <bool> narrow: root.width < 1100px;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 18px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        spacing: 18px;
+
+        // ---- now playing
+        now := HorizontalLayout {
+            width: root.narrow ? min(300px, root.width * 0.3) : min(470px, root.width * 0.34);
+            spacing: 12px;
+            thumb := Rectangle {
+                width: self.height;
+                border-radius: 8px;
+                clip: true;
+                background: Theme.surface-2;
+                border-width: Now.has-art ? 0 : 1px;
+                border-color: Theme.border;
+                if Now.has-art: Image {
+                    width: parent.width;
+                    height: parent.height;
+                    source: Now.art;
+                    image-fit: cover;
+                }
+                if !Now.has-art: Icon {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    width: parent.width * 0.5;
+                    height: self.width;
+                    line: Icons.note-line;
+                    solid: Icons.note-solid;
+                    weight: 1.4;
+                    tint: Theme.text-faint;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                spacing: 1px;
+                horizontal-stretch: 1;
+                Text {
+                    text: Now.has-track ? Now.title : "Not playing";
+                    color: Theme.text;
+                    font-size: Theme.font + 1px;
+                    font-weight: Theme.regular;
+                    overflow: elide;
+                }
+                Text {
+                    text: Now.artist;
+                    color: Theme.text-dim;
+                    font-size: Theme.font-small;
+                    overflow: elide;
+                }
+                Text {
+                    text: Now.album;
+                    color: Theme.text-faint;
+                    font-size: Theme.font-small;
+                    overflow: elide;
+                }
+            }
+            if !root.narrow: Spectrum {
+                width: 150px;
+            }
+        }
+
+        // ---- transport and timeline
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            HorizontalLayout {
+                alignment: center;
+                spacing: 10px;
+                IconButton {
+                    y: (parent.height - self.height) / 2;
+                    icon-solid: Icons.stop-solid;
+                    icon-size: 18px;
+                    enabled: Now.has-track;
+                    tip: "Stop";
+                    clicked => { Now.stop(); }
+                }
+                IconButton {
+                    y: (parent.height - self.height) / 2;
+                    icon-solid: Icons.prev-solid;
+                    size: 44px;
+                    icon-size: 22px;
+                    tip: "Previous track";
+                    clicked => { Now.previous(); }
+                }
+                PlayButton {
+                    playing: Now.state == 1;
+                    tip: Now.state == 1 ? "Pause (Space)" : "Play (Space)";
+                    clicked => { Now.play-pause(); }
+                }
+                IconButton {
+                    y: (parent.height - self.height) / 2;
+                    icon-solid: Icons.next-solid;
+                    size: 44px;
+                    icon-size: 22px;
+                    tip: "Next track";
+                    clicked => { Now.next(); }
+                }
+                IconButton {
+                    y: (parent.height - self.height) / 2;
+                    icon: Icons.shuffle-line;
+                    icon-size: 18px;
+                    active: Now.shuffle;
+                    tip: Now.shuffle ? "Shuffle: on" : "Shuffle: off";
+                    clicked => { Now.toggle-shuffle(); }
+                }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Text {
+                    text: scrub.dragging ? Now.time-at(scrub.drag-value) : Now.elapsed;
+                    width: 54px;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    color: Theme.text-dim;
+                    font-size: Theme.font-small;
+                    font-weight: Theme.regular;
+                }
+                scrub := Scrubber {
+                    value: Now.position;
+                    enabled: Now.seekable;
+                    released(v) => { Now.seek(v); }
+                }
+                Text {
+                    text: Now.total;
+                    width: 54px;
+                    vertical-alignment: center;
+                    color: Theme.text-dim;
+                    font-size: Theme.font-small;
+                    font-weight: Theme.regular;
+                }
+            }
+        }
+
+        // ---- repeat, volume, meter
+        HorizontalLayout {
+            width: root.narrow ? 220px : 280px;
+            spacing: 8px;
+            IconButton {
+                y: (parent.height - self.height) / 2;
+                icon: Now.repeat == 2 ? Icons.repeat-one-line : Icons.repeat-line;
+                icon-size: 18px;
+                active: Now.repeat > 0;
+                tip: Now.repeat == 0 ? "Repeat: off" : Now.repeat == 1 ? "Repeat: the playlist" : "Repeat: this track";
+                clicked => { Now.cycle-repeat(); }
+            }
+            IconButton {
+                y: (parent.height - self.height) / 2;
+                icon: Now.muted ? Icons.mute-line : Icons.volume-line;
+                icon-solid: Icons.volume-solid;
+                icon-size: 20px;
+                tip: Now.muted ? "Unmute" : "Mute";
+                clicked => { Now.toggle-mute(); }
+            }
+            VerticalLayout {
+                alignment: center;
+                spacing: 4px;
+                horizontal-stretch: 1;
+                Scrubber {
+                    value: Now.muted ? 0 : Now.volume;
+                    tip: "Volume " + round((Now.muted ? 0 : Now.volume) * 100) + "%";
+                    changed(v) => { Now.set-volume(v); }
+                    released(v) => { Now.set-volume(v); }
+                }
+                LevelMeter {
+                    left: Now.level-l;
+                    right: Now.level-r;
+                }
+            }
+        }
+    }
+}

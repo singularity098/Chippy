@@ -1,0 +1,40 @@
+[package]
+name = "chippy"
+description = "A chiptune-focused music player with a file browser instead of a library"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["skia"]
+# Skia antialiases curves and thin lines far better than femtovg (as in
+# Carlita). Build with `--no-default-features` to use femtovg only, e.g.
+# where Skia's prebuilt binaries cannot be downloaded.
+skia = ["slint/renderer-skia-opengl"]
+
+[dependencies]
+chippy-core.workspace = true
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
+crossbeam-channel.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+cpal = "0.15"
+rubato = "0.15"
+rustfft = "6"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp", "webp"] }
+slint = { version = "~1.14", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "backend-winit",
+    "renderer-femtovg",
+    "renderer-software",
+    "accessibility",
+    # Moving and resizing the frameless window with the window manager.
+    "unstable-winit-030",
+] }
+
+[build-dependencies]
+slint-build = "~1.14"

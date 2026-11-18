@@ -1,0 +1,32 @@
+// Data handed to the UI from Rust.
+
+// One row of the file browser.
+export struct FileItem {
+    // The name without its extension, and the extension (drawn dimmer).
+    stem: string,
+    ext: string,
+    // 0 folder, 1 archive, 2 music file, 3 music file that may hold several
+    // tracks, 4 track of a multi-track file, 5 image, 6 other file.
+    kind: int,
+    // Right-aligned detail (a track's length, a file's size).
+    detail: string,
+    // The track playing now.
+    playing: bool,
+}
+
+// One playlist row: the text of each visible column, in order.
+export struct PlRow {
+    cells: [string],
+    playing: bool,
+    // Metadata not read yet (shown dimmer).
+    pending: bool,
+}
+
+export struct ColumnItem {
+    id: string,
+    title: string,
+    width: length,
+    visible: bool,
+    // Right-aligned (numbers, lengths).
+    right: bool,
+}

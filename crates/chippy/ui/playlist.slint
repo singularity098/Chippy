@@ -1,0 +1,328 @@
+// The playlist: a table whose columns can be resized (drag a header's
+// edge) and shown or hidden (right-click the header).
+import { Theme } from "theme.slint";
+import { IconButton, BigButton, Tip, MenuItem } from "widgets.slint";
+import { Icon, Icons } from "icons.slint";
+import { PlRow, ColumnItem } from "types.slint";
+import { ListView } from "std-widgets.slint";
+
+export global Playlist {
+    in property <[PlRow]> rows;
+    // The columns shown, in order (the rows' cells follow them).
+    in property <[ColumnItem]> columns;
+    // Every column, for the header's menu.
+    in property <[ColumnItem]> all-columns;
+    in-out property <int> selected: -1;
+    in property <int> playing: -1;
+    // "24 tracks · 1:12:33".
+    in property <string> summary;
+    // Bumped by Rust to scroll the playing row into view.
+    in property <int> reveal-serial;
+    // The width of every visible column but the title, and of the table:
+    // the title column grows to fill what is left.
+    in property <length> others-width;
+    in-out property <length> view-width;
+    public pure function width-of(c: ColumnItem) -> length {
+        c.id == "title" ? max(c.width, root.view-width - root.others-width - 8px) : c.width
+    }
+    callback play(int);
+    callback remove(int);
+    callback clear;
+    callback reveal(int);
+    callback toggle-column(string);
+    callback resize-column(string, length);
+    callback reset-columns;
+}
+
+component HeaderCell inherits Rectangle {
+    in property <ColumnItem> column;
+    callback menu(length, length);
+    width: Playlist.width-of(root.column);
+    property <length> start-width;
+    Text {
+        x: 10px;
+        width: parent.width - 20px;
+        text: root.column.title;
+        color: Theme.text-dim;
+        font-size: Theme.font-small;
+        font-weight: Theme.regular;
+        letter-spacing: 0.5px;
+        vertical-alignment: center;
+        horizontal-alignment: root.column.right ? right : left;
+        overflow: elide;
+    }
+    TouchArea {
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                root.menu(self.mouse-x, self.mouse-y);
+            }
+        }
+    }
+    // The edge: drag to resize.
+    Rectangle {
+        x: parent.width - 6px;
+        width: 12px;
+        Rectangle {
+            x: 5px;
+            width: 1px;
+            y: 8px;
+            height: parent.height - 16px;
+            background: grip.has-hover || grip.pressed ? Theme.paint-b : Theme.border;
+        }
+        grip := TouchArea {
+            mouse-cursor: col-resize;
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down { root.start-width = root.column.width; }
+            }
+            moved => {
+                if self.pressed {
+                    Playlist.resize-column(root.column.id, max(36px, root.start-width + self.mouse-x - self.pressed-x));
+                }
+            }
+        }
+    }
+}
+
+component Row inherits Rectangle {
+    in property <PlRow> data;
+    in property <int> index;
+    callback menu(length, length);
+    height: 34px;
+    background: Playlist.selected == root.index ? #ffffff1c
+        : touch.has-hover ? #ffffff0d
+        : mod(root.index, 2) == 1 ? #ffffff05 : transparent;
+    border-radius: 6px;
+    if root.data.playing: Rectangle {
+        x: 0;
+        y: 7px;
+        width: 3px;
+        height: parent.height - 14px;
+        border-radius: 1.5px;
+        background: Theme.paint;
+    }
+    HorizontalLayout {
+        for cell[j] in root.data.cells: Rectangle {
+            width: j < Playlist.columns.length ? Playlist.width-of(Playlist.columns[j]) : 100px;
+            Text {
+                x: 10px;
+                width: parent.width - 20px;
+                text: cell;
+                color: root.data.playing ? Theme.paint-a : root.data.pending ? Theme.text-faint
+                    : j < Playlist.columns.length && Playlist.columns[j].id == "title" ? Theme.text : Theme.text-dim;
+                font-weight: root.data.playing ? Theme.regular : Theme.light;
+                font-size: Theme.font-small + 1px;
+                vertical-alignment: center;
+                horizontal-alignment: j < Playlist.columns.length && Playlist.columns[j].right ? right : left;
+                overflow: elide;
+            }
+        }
+        Rectangle { horizontal-stretch: 1; }
+    }
+    touch := TouchArea {
+        clicked => { Playlist.selected = root.index; }
+        double-clicked => { Playlist.play(root.index); }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                Playlist.selected = root.index;
+                root.menu(self.mouse-x, self.mouse-y);
+            }
+        }
+    }
+}
+
+export component PlaylistPanel inherits Rectangle {
+    callback open-browser;
+    border-radius: Theme.radius;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    clip: true;
+
+    property <length> menu-x;
+    property <length> menu-y;
+    property <length> view: list.visible-width;
+    changed view => { Playlist.view-width = self.view; }
+    init => { Playlist.view-width = list.visible-width; }
+    property <int> serial: Playlist.reveal-serial;
+    changed serial => {
+        if Playlist.playing >= 0 {
+            let top = Playlist.playing * 34px;
+            if top < -list.viewport-y || top + 34px > -list.viewport-y + list.visible-height {
+                list.viewport-y = -max(0, top - list.visible-height / 3);
+            }
+        }
+    }
+
+    keys := FocusScope {
+        key-pressed(e) => {
+            if e.text == Key.Delete && Playlist.selected >= 0 { Playlist.remove(Playlist.selected); return accept; }
+            if e.text == Key.Return && Playlist.selected >= 0 { Playlist.play(Playlist.selected); return accept; }
+            if e.text == Key.UpArrow { Playlist.selected = max(0, Playlist.selected - 1); return accept; }
+            if e.text == Key.DownArrow { Playlist.selected = min(Playlist.rows.length - 1, Playlist.selected + 1); return accept; }
+            reject
+        }
+        VerticalLayout {
+            padding: 6px;
+            padding-top: 0;
+            // Title line.
+            HorizontalLayout {
+                height: 46px;
+                padding-left: 10px;
+                padding-right: 4px;
+                spacing: 10px;
+                Text {
+                    text: "Playlist";
+                    font-size: Theme.font-large;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: Playlist.summary;
+                    font-size: Theme.font-small;
+                    font-weight: Theme.regular;
+                    color: Theme.text-faint;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                if Playlist.rows.length > 0: IconButton {
+                    y: (parent.height - self.height) / 2;
+                    size: 34px;
+                    icon-size: 18px;
+                    icon: Icons.trash-line;
+                    tip: "Clear the playlist";
+                    clicked => { Playlist.clear(); }
+                }
+            }
+            // Header.
+            header := Rectangle {
+                height: 32px;
+                border-radius: 6px;
+                background: #ffffff08;
+                clip: true;
+                // Scrolls sideways with the rows.
+                HorizontalLayout {
+                    x: list.viewport-x;
+                    width: max(header.width, list.viewport-width);
+                    for col in Playlist.columns: HeaderCell {
+                        column: col;
+                        menu(x, y) => {
+                            root.menu-x = self.absolute-position.x - root.absolute-position.x + x;
+                            root.menu-y = self.absolute-position.y - root.absolute-position.y + y;
+                            column-menu.show();
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        TouchArea {
+                            pointer-event(e) => {
+                                if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                                    root.menu-x = self.absolute-position.x - root.absolute-position.x + self.mouse-x;
+                                    root.menu-y = self.absolute-position.y - root.absolute-position.y + self.mouse-y;
+                                    column-menu.show();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                vertical-stretch: 1;
+                list := ListView {
+                    for row[i] in Playlist.rows: Row {
+                        data: row;
+                        index: i;
+                        menu(x, y) => {
+                            keys.focus();
+                            root.menu-x = self.absolute-position.x - root.absolute-position.x + x;
+                            root.menu-y = self.absolute-position.y - root.absolute-position.y + y;
+                            row-menu.show();
+                        }
+                    }
+                }
+                if Playlist.rows.length == 0: VerticalLayout {
+                    alignment: center;
+                    spacing: 16px;
+                    Icon {
+                        x: (parent.width - self.width) / 2;
+                        width: 64px;
+                        height: 64px;
+                        line: Icons.chip-line;
+                        solid: Icons.chip-solid;
+                        weight: 1.2;
+                        tint: Theme.paint;
+                        opacity: 0.8;
+                    }
+                    Text {
+                        text: "Nothing queued yet";
+                        font-size: Theme.font-large;
+                        color: Theme.text;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "Rest the mouse on the left edge (or swipe in) for the file browser,\nthen double-click a track: its whole folder comes along.";
+                        color: Theme.text-dim;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        BigButton {
+                            text: "Browse files";
+                            icon-line: Icons.folder-line;
+                            primary: true;
+                            clicked => { root.open-browser(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    column-menu := PopupWindow {
+        x: min(root.menu-x, root.width - 230px);
+        y: root.menu-y;
+        width: 220px;
+        Rectangle {
+            background: Theme.popup;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #000000a0;
+            VerticalLayout {
+                padding: 6px;
+                for c in Playlist.all-columns: MenuItem {
+                    text: c.title == "#" ? "Track number" : c.title;
+                    checkable: true;
+                    checked: c.visible;
+                    clicked => { Playlist.toggle-column(c.id); }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                MenuItem { text: "Reset columns"; clicked => { Playlist.reset-columns(); } }
+            }
+        }
+    }
+
+    row-menu := PopupWindow {
+        x: min(root.menu-x, root.width - 230px);
+        y: root.menu-y;
+        width: 220px;
+        Rectangle {
+            background: Theme.popup;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #000000a0;
+            VerticalLayout {
+                padding: 6px;
+                MenuItem { text: "Play"; clicked => { Playlist.play(Playlist.selected); } }
+                MenuItem { text: "Show in file browser"; clicked => { Playlist.reveal(Playlist.selected); } }
+                MenuItem { text: "Remove from playlist"; clicked => { Playlist.remove(Playlist.selected); } }
+                Rectangle { height: 1px; background: Theme.border; }
+                MenuItem { text: "Clear playlist"; clicked => { Playlist.clear(); } }
+            }
+        }
+    }
+}

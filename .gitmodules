@@ -1,0 +1,9 @@
+[submodule "third_party/game-music-emu"]
+	path = third_party/game-music-emu
+	url = https://github.com/libgme/game-music-emu
+[submodule "third_party/vgmstream"]
+	path = third_party/vgmstream
+	url = https://github.com/vgmstream/vgmstream
+[submodule "third_party/lazyusf2"]
+	path = third_party/lazyusf2
+	url = https://github.com/derselbst/lazyusf2

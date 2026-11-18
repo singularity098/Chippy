@@ -1,0 +1,437 @@
+// Chippy's main window.
+//
+// Layout: a slim title bar on top (gone in fullscreen), the playlist and
+// the large album art in the middle, the bottom bar with the transport.
+// The file browser slides in from the left edge and the settings from the
+// right (as Carlita's sidebars do): rest the mouse on the edge, swipe in,
+// or tap the edge's tab. A panel brought in by hovering goes again when the
+// mouse leaves it, unless something in it was used; then it stays until a
+// click outside it or its close button.
+import "../../../assets/fonts/Jost-Light.ttf";
+import "../../../assets/fonts/Jost-Regular.ttf";
+import { Theme, ThemeLook } from "theme.slint";
+import { IconButton, Tips } from "widgets.slint";
+import { Icon, Icons, IconArt } from "icons.slint";
+import { TooltipLayer } from "tooltip.slint";
+import { FileItem, PlRow, ColumnItem } from "types.slint";
+import { Browser, BrowserPanel } from "browser.slint";
+import { Playlist, PlaylistPanel } from "playlist.slint";
+import { Now, ArtPanel, BottomBar } from "nowplaying.slint";
+import { Prefs, SettingsPanel } from "settings.slint";
+
+export { Theme, IconArt, Browser, Playlist, Now, Prefs, FileItem, PlRow, ColumnItem }
+
+// A window edge that brings in a sidebar: follows the finger and snaps
+// open or closed, opens on a tap, and shows a tab while the mouse is over it.
+component EdgeStrip inherits Rectangle {
+    in property <bool> right-side;
+    in property <length> panel-width;
+    in property <string> icon;
+    callback drag(float);
+    callback release(bool);
+    callback tap;
+    callback hover;
+    out property <bool> hovered: self.visible && (strip.has-hover || tab-touch.has-hover);
+    property <float> amount: 0;
+
+    // A moment's rest, so the pointer passing the edge does not open it.
+    Timer {
+        interval: 90ms;
+        running: root.hovered && !strip.pressed && !tab-touch.pressed;
+        triggered => { root.hover(); }
+    }
+    tab := Rectangle {
+        visible: strip.has-hover || tab-touch.has-hover;
+        width: 40px;
+        height: 110px;
+        x: root.right-side ? root.width - self.width : 0;
+        y: (root.height - self.height) / 2;
+        border-radius: 10px;
+        background: tab-touch.pressed ? Theme.paint : #00000080;
+        border-width: 1px;
+        border-color: tab-touch.pressed ? transparent : Theme.border-hover;
+        Icon {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            line: root.icon;
+            weight: 1.8;
+            tint: tab-touch.pressed ? Theme.on-paint : Theme.text;
+        }
+        tab-touch := TouchArea { clicked => { root.tap(); } }
+    }
+    strip := TouchArea {
+        width: root.width;
+        x: 0;
+        moved => {
+            root.amount = max(0, min(1, (root.right-side ? self.pressed-x - self.mouse-x : self.mouse-x - self.pressed-x) / root.panel-width));
+            root.drag(root.amount);
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel {
+                if abs(self.mouse-x - self.pressed-x) < 4px && e.kind == PointerEventKind.up && e.button == PointerEventButton.left {
+                    root.tap();
+                } else {
+                    root.release(root.amount > 0.33);
+                }
+                root.amount = 0;
+            }
+        }
+    }
+}
+
+component ResizeHandle inherits TouchArea {
+    in property <string> direction;
+    callback start(string);
+    mouse-cursor: root.direction == "n" || root.direction == "s" ? ns-resize
+        : root.direction == "e" || root.direction == "w" ? ew-resize
+        : root.direction == "nw" || root.direction == "se" ? nwse-resize
+        : nesw-resize;
+    pointer-event(e) => {
+        if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+            root.start(root.direction);
+        }
+    }
+}
+
+component TopBar inherits Rectangle {
+    in property <bool> maximized;
+    in property <string> subtitle;
+    callback start-drag;
+    callback toggle-maximize;
+    callback minimize;
+    callback close-window;
+    callback toggle-fullscreen;
+    callback open-settings;
+    callback open-browser;
+    background: #00000066;
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+    // Dragging the bar's empty parts moves the window.
+    TouchArea {
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                root.start-drag();
+            }
+        }
+        double-clicked => { root.toggle-maximize(); }
+    }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 6px;
+        spacing: 4px;
+        IconButton {
+            y: (parent.height - self.height) / 2;
+            size: 34px;
+            icon: Icons.menu-line;
+            tip: "File browser";
+            clicked => { root.open-browser(); }
+        }
+        Icon {
+            y: (parent.height - self.height) / 2;
+            width: 22px;
+            height: 22px;
+            line: Icons.chip-line;
+            solid: Icons.chip-solid;
+            weight: 1.6;
+            tint: Theme.paint;
+        }
+        Text {
+            text: "Chippy";
+            font-size: Theme.font + 1px;
+            font-weight: Theme.regular;
+            letter-spacing: 1px;
+            color: Theme.text;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.subtitle;
+            font-size: Theme.font-small;
+            color: Theme.text-faint;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: Icons.gear-line; weight: 1.6; tip: "Settings"; clicked => { root.open-settings(); } }
+        IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: Icons.fullscreen-line; tip: "Fullscreen (F11)"; clicked => { root.toggle-fullscreen(); } }
+        IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: Icons.minimize-line; tip: "Minimise"; clicked => { root.minimize(); } }
+        IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: root.maximized ? Icons.restore-line : Icons.maximize-line; weight: 1.6; tip: root.maximized ? "Restore" : "Maximise"; clicked => { root.toggle-maximize(); } }
+        IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: Icons.close; tip: "Quit"; clicked => { root.close-window(); } }
+    }
+}
+
+export component MainWindow inherits Window {
+    title: "Chippy";
+    no-frame: true;
+    icon: @image-url("../../../assets/chippy-icon.svg");
+    background: Theme.bg;
+    min-width: 760px;
+    min-height: 520px;
+    preferred-width: 1360px;
+    preferred-height: 820px;
+    default-font-size: Theme.font;
+    default-font-family: "Jost";
+    default-font-weight: Theme.light;
+
+    in property <bool> fullscreen;
+    in property <bool> window-maximized;
+    in property <bool> hover-opens: true;
+    in property <[string]> theme-names: Theme.names;
+    in-out property <string> toast;
+    in property <bool> toast-error;
+    in property <string> subtitle;
+
+    callback start-drag;
+    callback start-resize(string);
+    callback minimize-window;
+    callback toggle-maximize;
+    callback close-window;
+    callback toggle-fullscreen;
+    callback seek-by(int);
+    callback volume-by(float);
+
+    property <length> strip-width: 8px;
+    property <bool> docked: !root.fullscreen;
+    property <length> top-inset: root.docked ? 44px : 0;
+    property <length> bottom-height: 96px;
+    property <length> mid-height: root.height - root.top-inset - root.bottom-height;
+    property <bool> framed: root.docked && !root.window-maximized;
+    property <length> edge-inset: root.framed ? 5px : 0;
+
+    // Sidebars: 0 closed, 1 open.
+    in-out property <float> left-pos: 0;
+    in-out property <float> right-pos: 0;
+    property <bool> left-dragging;
+    property <bool> right-dragging;
+    property <bool> left-by-hover;
+    property <bool> right-by-hover;
+    property <length> left-width: min(520px, root.width * 0.9);
+    property <length> right-width: min(580px, root.width * 0.92);
+
+    public function open-left() {
+        root.left-pos = 1; root.right-pos = 0; root.left-by-hover = false; root.right-by-hover = false;
+        browser-panel.focus-list();
+    }
+    public function close-left() { root.left-pos = 0; root.left-by-hover = false; keys.focus(); }
+    public function open-right() { root.right-pos = 1; root.left-pos = 0; root.left-by-hover = false; root.right-by-hover = false; }
+    public function close-right() { root.right-pos = 0; root.right-by-hover = false; keys.focus(); }
+    public function focus-main() { keys.focus(); }
+
+    function over-left(x: length, y: length) -> bool { x < root.left-width && y >= root.top-inset && y < root.top-inset + root.mid-height }
+    function over-right(x: length, y: length) -> bool { x >= root.width - root.right-width && y >= root.top-inset && y < root.top-inset + root.mid-height }
+
+    // Every pointer move and press, seen before any element (from Rust).
+    public function pointer-moved(x: length, y: length) {
+        if root.left-by-hover && root.left-pos > 0 && !root.left-dragging && !root.over-left(x, y) { root.close-left(); }
+        if root.right-by-hover && root.right-pos > 0 && !root.right-dragging && !root.over-right(x, y) { root.close-right(); }
+    }
+    public function pointer-pressed(x: length, y: length) {
+        if root.left-by-hover && root.over-left(x, y) { root.left-by-hover = false; }
+        if root.right-by-hover && root.over-right(x, y) { root.right-by-hover = false; }
+    }
+
+    changed left-pos => { Tips.hide(); }
+    changed right-pos => { Tips.hide(); }
+
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(e) => {
+            if e.text == Key.F11 { root.toggle-fullscreen(); return accept; }
+            if e.text == Key.Escape {
+                if root.left-pos > 0 { root.close-left(); return accept; }
+                if root.right-pos > 0 { root.close-right(); return accept; }
+                if root.fullscreen { root.toggle-fullscreen(); return accept; }
+                return accept;
+            }
+            if e.text == " " { Now.play-pause(); return accept; }
+            if e.text == Key.LeftArrow && !e.modifiers.alt { root.seek-by(e.modifiers.shift ? -30 : -5); return accept; }
+            if e.text == Key.RightArrow && !e.modifiers.alt { root.seek-by(e.modifiers.shift ? 30 : 5); return accept; }
+            if e.text == Key.UpArrow { root.volume-by(0.05); return accept; }
+            if e.text == Key.DownArrow { root.volume-by(-0.05); return accept; }
+            if e.text == "n" { Now.next(); return accept; }
+            if e.text == "p" { Now.previous(); return accept; }
+            if e.text == "s" { Now.toggle-shuffle(); return accept; }
+            if e.text == "r" { Now.cycle-repeat(); return accept; }
+            if e.text == "m" { Now.toggle-mute(); return accept; }
+            if e.text == "b" || e.text == Key.Tab { root.open-left(); return accept; }
+            if e.text == "," { root.open-right(); return accept; }
+            reject
+        }
+    }
+
+    // ---------------------------------------------------------- main area
+    Rectangle {
+        y: root.top-inset;
+        height: root.mid-height;
+        HorizontalLayout {
+            padding: 18px;
+            padding-left: root.strip-width + 14px;
+            padding-right: root.strip-width + 14px;
+            spacing: 22px;
+            PlaylistPanel {
+                horizontal-stretch: 1;
+                min-width: 320px;
+                open-browser => { root.open-left(); }
+            }
+            ArtPanel {
+                horizontal-stretch: 0;
+                width: min(parent.height - 36px - 80px, (root.width - 2 * root.strip-width) * 0.42);
+            }
+        }
+    }
+
+    BottomBar {
+        y: root.height - root.bottom-height;
+        height: root.bottom-height;
+    }
+
+    if root.docked: TopBar {
+        y: 0;
+        height: root.top-inset;
+        maximized: root.window-maximized;
+        subtitle: root.subtitle;
+        start-drag => { root.start-drag(); }
+        toggle-maximize => { root.toggle-maximize(); }
+        minimize => { root.minimize-window(); }
+        close-window => { root.close-window(); }
+        toggle-fullscreen => { root.toggle-fullscreen(); }
+        open-settings => { root.open-right(); }
+        open-browser => { root.open-left(); }
+    }
+
+    // ----------------------------------------------------------- sidebars
+    if root.left-pos > 0 || root.right-pos > 0: Rectangle {
+        y: root.top-inset;
+        height: root.mid-height;
+        background: Colors.rgba(0, 0, 0, 0.55 * max(root.left-pos, root.right-pos));
+        TouchArea {
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.up {
+                    root.close-left();
+                    root.close-right();
+                }
+            }
+        }
+    }
+
+    browser-panel := BrowserPanel {
+        y: root.top-inset;
+        width: root.left-width;
+        height: root.mid-height;
+        x: (root.left-pos - 1) * root.left-width;
+        visible: root.left-pos > 0;
+        animate x { duration: root.left-dragging ? 0ms : Theme.slide; easing: ease-out; }
+        close => { root.close-left(); }
+        interacted => { root.left-by-hover = false; }
+    }
+
+    SettingsPanel {
+        y: root.top-inset;
+        width: root.right-width;
+        height: root.mid-height;
+        x: root.width - root.right-pos * root.right-width;
+        visible: root.right-pos > 0;
+        animate x { duration: root.right-dragging ? 0ms : Theme.slide; easing: ease-out; }
+        theme-names: root.theme-names;
+        close => { root.close-right(); }
+        interacted => { root.right-by-hover = false; }
+    }
+
+    left-strip := EdgeStrip {
+        visible: root.left-pos == 0 || root.left-dragging;
+        x: root.edge-inset;
+        y: root.top-inset;
+        width: root.strip-width;
+        height: root.mid-height;
+        icon: Icons.folder-line;
+        panel-width: root.left-width;
+        drag(a) => { root.left-dragging = true; root.right-pos = 0; root.left-pos = a; }
+        release(open) => {
+            root.left-dragging = false;
+            if open { root.open-left(); } else { root.close-left(); }
+        }
+        tap => { root.open-left(); }
+        hover => {
+            if root.hover-opens && root.left-pos == 0 && root.right-pos == 0 {
+                root.open-left();
+                root.left-by-hover = true;
+            }
+        }
+    }
+    right-strip := EdgeStrip {
+        visible: root.right-pos == 0 || root.right-dragging;
+        x: root.width - root.edge-inset - root.strip-width;
+        y: root.top-inset;
+        width: root.strip-width;
+        height: root.mid-height;
+        right-side: true;
+        icon: Icons.gear-line;
+        panel-width: root.right-width;
+        drag(a) => { root.right-dragging = true; root.left-pos = 0; root.right-pos = a; }
+        release(open) => {
+            root.right-dragging = false;
+            if open { root.open-right(); } else { root.close-right(); }
+        }
+        tap => { root.open-right(); }
+        hover => {
+            if root.hover-opens && root.left-pos == 0 && root.right-pos == 0 {
+                root.open-right();
+                root.right-by-hover = true;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------- the toast
+    if root.toast != "": Rectangle {
+        x: (root.width - self.width) / 2;
+        y: root.height - root.bottom-height - self.height - 16px;
+        width: min(root.width - 40px, toast-text.preferred-width + 40px);
+        height: 44px;
+        border-radius: 22px;
+        background: Theme.popup;
+        border-width: 1px;
+        border-color: root.toast-error ? Theme.danger : Theme.border-strong;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #000000a0;
+        toast-text := Text {
+            text: root.toast;
+            color: root.toast-error ? Theme.danger.brighter(40%) : Theme.text;
+            font-size: Theme.font-small + 1px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        TouchArea { clicked => { root.toast = ""; } }
+    }
+
+    // ------------------------------------------------- window border handles
+    if root.framed: Rectangle {
+        property <length> b: root.edge-inset;
+        property <length> c: 14px;
+        ResizeHandle { direction: "n"; x: parent.c; y: 0; width: root.width - 2 * parent.c; height: parent.b; start(d) => { root.start-resize(d); } }
+        ResizeHandle { direction: "s"; x: parent.c; y: root.height - parent.b; width: root.width - 2 * parent.c; height: parent.b; start(d) => { root.start-resize(d); } }
+        ResizeHandle { direction: "w"; x: 0; y: parent.c; width: parent.b; height: root.height - 2 * parent.c; start(d) => { root.start-resize(d); } }
+        ResizeHandle { direction: "e"; x: root.width - parent.b; y: parent.c; width: parent.b; height: root.height - 2 * parent.c; start(d) => { root.start-resize(d); } }
+        ResizeHandle { direction: "nw"; x: 0; y: 0; width: parent.c; height: parent.c; start(d) => { root.start-resize(d); } }
+        ResizeHandle { direction: "ne"; x: root.width - parent.c; y: 0; width: parent.c; height: parent.c; start(d) => { root.start-resize(d); } }
+        ResizeHandle { direction: "sw"; x: 0; y: root.height - parent.c; width: parent.c; height: parent.c; start(d) => { root.start-resize(d); } }
+        ResizeHandle { direction: "se"; x: root.width - parent.c; y: root.height - parent.c; width: parent.c; height: parent.c; start(d) => { root.start-resize(d); } }
+    }
+
+    TooltipLayer {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+    }
+
+    if Theme.scanlines: Image {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        source: @image-url("../../../assets/scanlines.png");
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
+        accessible-role: none;
+    }
+}

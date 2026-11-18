@@ -1,0 +1,11 @@
+[package]
+name = "gme-sys"
+description = "Raw bindings to Game Music Emu (libgme), built from third_party/game-music-emu"
+version.workspace = true
+edition.workspace = true
+license = "LGPL-2.1-or-later"
+links = "gme"
+build = "build.rs"
+
+[build-dependencies]
+cmake = "0.1"

@@ -1,0 +1,11 @@
+[package]
+name = "vgmstream-sys"
+description = "Raw bindings to libvgmstream, built from third_party/vgmstream"
+version.workspace = true
+edition.workspace = true
+license = "ISC"
+links = "vgmstream"
+build = "build.rs"
+
+[build-dependencies]
+cmake = "0.1"

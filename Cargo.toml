@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/gme-sys",
+    "crates/vgmstream-sys",
+    "crates/lazyusf-sys",
+    "crates/chippy-core",
+    "crates/chippy",
+]
+default-members = ["crates/chippy"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/singularity098/Chippy"
+rust-version = "1.80"
+
+[workspace.dependencies]
+gme-sys = { path = "crates/gme-sys" }
+vgmstream-sys = { path = "crates/vgmstream-sys" }
+lazyusf-sys = { path = "crates/lazyusf-sys" }
+chippy-core = { path = "crates/chippy-core" }
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+crossbeam-channel = "0.5"
+directories = "6"
+tempfile = "3"
+
+[profile.dev]
+# The emulators are far too slow unoptimised to play in real time.
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true

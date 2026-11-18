@@ -1,0 +1,296 @@
+// The file browser: the left sidebar. A folder, archive or multi-track
+// file is listed like a folder; opening a music file plays it with the
+// rest of the music beside it.
+import { Theme } from "theme.slint";
+import { IconButton, TextField, Tip, MenuItem } from "widgets.slint";
+import { Icon, Icons } from "icons.slint";
+import { FileItem } from "types.slint";
+import { ListView } from "std-widgets.slint";
+
+export global Browser {
+    in property <[FileItem]> items;
+    // The folder shown (its virtual path), and its name.
+    in property <string> path;
+    in property <string> title;
+    in property <bool> can-back;
+    in property <bool> can-forward;
+    in property <bool> can-up;
+    in property <bool> show-all;
+    // "12 folders, 40 files" or an error.
+    in property <string> status;
+    in property <bool> status-error;
+    in property <bool> single-tap;
+    in-out property <int> selected: -1;
+    in-out property <string> filter;
+    // Bumped by Rust when the folder changes, to scroll back to the top.
+    in property <int> folder-serial;
+    callback activate(int);
+    callback add(int);
+    callback back;
+    callback forward;
+    callback up;
+    callback refresh;
+    callback home;
+    callback go(string);
+    callback set-filter(string);
+    callback toggle-show-all;
+}
+
+component FileRow inherits Rectangle {
+    in property <FileItem> item;
+    in property <bool> selected;
+    callback select;
+    callback activate;
+    callback menu(length, length);
+    height: 38px;
+    border-radius: 8px;
+    background: root.selected ? #ffffff1c : touch.has-hover ? #ffffff0d : transparent;
+
+    property <string> icon-line: root.item.kind == 0 ? Icons.folder-line
+        : root.item.kind == 1 ? Icons.archive-line
+        : root.item.kind == 3 ? Icons.chip-line
+        : root.item.kind == 2 || root.item.kind == 4 ? Icons.note-line
+        : root.item.kind == 5 ? Icons.image-line
+        : Icons.file-line;
+    property <string> icon-solid: root.item.kind == 3 ? Icons.chip-solid
+        : root.item.kind == 2 || root.item.kind == 4 ? Icons.note-solid
+        : root.item.kind == 5 ? Icons.image-solid : "";
+    property <brush> tint: root.item.playing ? Theme.paint
+        : root.item.kind == 0 ? Theme.paint-a
+        : root.item.kind == 1 ? Theme.paint-c
+        : root.item.kind == 3 ? Theme.paint-b
+        : root.item.kind >= 5 ? Theme.text-faint : Theme.text-dim;
+    property <bool> dim: root.item.kind >= 5;
+
+    if root.item.playing: Rectangle {
+        x: 0;
+        y: 8px;
+        width: 3px;
+        height: parent.height - 16px;
+        border-radius: 1.5px;
+        background: Theme.paint;
+    }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        Icon {
+            y: (parent.height - self.height) / 2;
+            width: 20px;
+            height: 20px;
+            line: root.icon-line;
+            solid: root.icon-solid;
+            weight: 1.6;
+            tint: root.tint;
+        }
+        stem := Text {
+            text: root.item.stem;
+            color: root.item.playing ? Theme.paint-a : root.dim ? Theme.text-dim : Theme.text;
+            font-size: Theme.font-small + 1px;
+            font-weight: root.item.playing ? Theme.regular : Theme.light;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+            max-width: self.preferred-width;
+        }
+        if root.item.ext != "": Text {
+            text: root.item.ext;
+            color: Theme.text-faint;
+            font-size: Theme.font-small + 1px;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+        Rectangle { horizontal-stretch: 1; min-width: 0; }
+        if root.item.detail != "": Text {
+            text: root.item.detail;
+            color: Theme.text-faint;
+            font-size: Theme.font-small;
+            font-weight: Theme.regular;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+    }
+    touch := TouchArea {
+        clicked => {
+            root.select();
+            if Browser.single-tap { root.activate(); }
+        }
+        double-clicked => {
+            if !Browser.single-tap { root.activate(); }
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                root.select();
+                root.menu(self.mouse-x, self.mouse-y);
+            }
+        }
+    }
+}
+
+export component BrowserPanel inherits Rectangle {
+    callback close;
+    callback interacted;
+    background: Theme.popup;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    property <string> path: Browser.path;
+    changed path => { path-field.text = Browser.path; }
+    property <int> serial: Browser.folder-serial;
+    changed serial => { list.viewport-y = 0; }
+    property <int> menu-index: -1;
+    property <length> menu-x;
+    property <length> menu-y;
+
+    public function focus-list() { keys.focus(); }
+    public function focus-filter() { filter-field.focus-input(); }
+
+    function move(d: int) {
+        if Browser.items.length == 0 { return; }
+        Browser.selected = max(0, min(Browser.items.length - 1, Browser.selected + d));
+        // Keep the selection in view.
+        if Browser.selected * 38px < -list.viewport-y {
+            list.viewport-y = -Browser.selected * 38px;
+        }
+        if (Browser.selected + 1) * 38px > -list.viewport-y + list.visible-height {
+            list.viewport-y = -((Browser.selected + 1) * 38px - list.visible-height);
+        }
+    }
+
+    keys := FocusScope {
+        key-pressed(e) => {
+            if e.text == Key.UpArrow { root.move(-1); return accept; }
+            if e.text == Key.DownArrow { root.move(1); return accept; }
+            if e.text == Key.PageUp { root.move(-10); return accept; }
+            if e.text == Key.PageDown { root.move(10); return accept; }
+            if e.text == Key.Return && Browser.selected >= 0 { Browser.activate(Browser.selected); return accept; }
+            if e.text == Key.Backspace { Browser.up(); return accept; }
+            if e.modifiers.alt && e.text == Key.LeftArrow { Browser.back(); return accept; }
+            if e.modifiers.alt && e.text == Key.RightArrow { Browser.forward(); return accept; }
+            if e.text == Key.F5 { Browser.refresh(); return accept; }
+            reject
+        }
+
+        VerticalLayout {
+            padding: 12px;
+            padding-top: 10px;
+            spacing: 8px;
+
+            HorizontalLayout {
+                spacing: 8px;
+                Icon {
+                    y: (parent.height - self.height) / 2;
+                    width: 22px;
+                    height: 22px;
+                    line: Icons.folder-line;
+                    weight: 1.6;
+                    tint: Theme.paint;
+                }
+                Text {
+                    text: Browser.title;
+                    font-size: Theme.font-large;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                IconButton {
+                    icon: Icons.chevron-left;
+                    tip: "Close the file browser (Esc)";
+                    clicked => { root.close(); }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 2px;
+                IconButton { icon: Icons.back-line; enabled: Browser.can-back; tip: "Back (Alt+Left)"; clicked => { root.interacted(); Browser.back(); } }
+                IconButton { icon: Icons.forward-line; enabled: Browser.can-forward; tip: "Forward (Alt+Right)"; clicked => { root.interacted(); Browser.forward(); } }
+                IconButton { icon: Icons.up-line; enabled: Browser.can-up; tip: "Up one level (Backspace)"; clicked => { root.interacted(); Browser.up(); } }
+                IconButton { icon: Icons.refresh-line; tip: "Refresh (F5)"; clicked => { root.interacted(); Browser.refresh(); } }
+                IconButton { icon: Icons.home-line; tip: "Music folder (set in Settings)"; clicked => { root.interacted(); Browser.home(); } }
+                Rectangle { horizontal-stretch: 1; }
+                IconButton {
+                    icon: Icons.eye-line;
+                    icon-solid: Browser.show-all ? Icons.eye-solid : "";
+                    active: Browser.show-all;
+                    tip: Browser.show-all ? "Showing every file: show only folders and music" : "Show every file, not only folders and music";
+                    clicked => { root.interacted(); Browser.toggle-show-all(); }
+                }
+            }
+
+            path-field := TextField {
+                placeholder: "Path";
+                clearable: false;
+                accepted(t) => { root.interacted(); Browser.go(t); keys.focus(); }
+                escape => { self.text = Browser.path; keys.focus(); }
+            }
+            filter-field := TextField {
+                icon: Icons.search-line;
+                placeholder: "Filter";
+                text <=> Browser.filter;
+                edited(t) => { root.interacted(); Browser.set-filter(t); }
+                escape => {
+                    if self.text != "" { self.text = ""; Browser.set-filter(""); } else { keys.focus(); }
+                }
+                accepted => {
+                    if Browser.items.length > 0 {
+                        if Browser.selected < 0 { Browser.selected = 0; }
+                        keys.focus();
+                    }
+                }
+                down => { if Browser.selected < 0 { Browser.selected = 0; } keys.focus(); }
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+                list := ListView {
+                    for item[i] in Browser.items: FileRow {
+                        item: item;
+                        selected: i == Browser.selected;
+                        select => { root.interacted(); Browser.selected = i; keys.focus(); }
+                        activate => { Browser.activate(i); }
+                        menu(x, y) => {
+                            root.menu-index = i;
+                            root.menu-x = self.absolute-position.x - root.absolute-position.x + x;
+                            root.menu-y = self.absolute-position.y - root.absolute-position.y + y;
+                            file-menu.show();
+                        }
+                    }
+                }
+                if Browser.items.length == 0: Text {
+                    text: Browser.filter != "" ? "Nothing matches \"" + Browser.filter + "\"" : Browser.status-error ? "" : "Nothing to play here";
+                    color: Theme.text-faint;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            Text {
+                text: Browser.status;
+                color: Browser.status-error ? Theme.danger.brighter(30%) : Theme.text-faint;
+                font-size: Theme.font-small;
+                font-weight: Theme.regular;
+                overflow: elide;
+            }
+        }
+    }
+
+    file-menu := PopupWindow {
+        x: min(root.menu-x, root.width - 210px);
+        y: root.menu-y;
+        width: 200px;
+        Rectangle {
+            background: Theme.popup;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #000000a0;
+            VerticalLayout {
+                padding: 6px;
+                MenuItem { text: "Open"; clicked => { file-menu.close(); Browser.activate(root.menu-index); } }
+                MenuItem { text: "Add to playlist"; clicked => { file-menu.close(); Browser.add(root.menu-index); } }
+            }
+        }
+    }
+}

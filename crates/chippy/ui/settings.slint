@@ -1,0 +1,262 @@
+// The right sidebar: every setting. Changes apply at once and are saved.
+import { Theme } from "theme.slint";
+import { BigButton, Toggle, Chip, SectionTitle, SettingRow, Stepper, IconButton, TextField } from "widgets.slint";
+import { Icon, Icons } from "icons.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export global Prefs {
+    in property <string> music-dir;
+    // The folder the file browser shows now.
+    in property <string> browser-dir;
+    in property <bool> show-all;
+    in property <bool> single-tap;
+    in property <bool> hover-opens;
+    in property <bool> folder-playlist;
+    in property <bool> embedded-art;
+    in property <bool> usf-hle;
+    in property <bool> gme-accuracy;
+    in property <bool> fullscreen;
+    in property <string> default-length;
+    in property <string> fade;
+    in property <string> loops;
+    in property <string> bars;
+    in property <int> theme;
+    in property <string> device;
+    in property <string> config-path;
+    in property <string> version;
+    callback set-music-dir(string);
+    callback use-browser-dir;
+    // Toggles by id: show-all, single-tap, hover-opens, folder-playlist,
+    // embedded-art, usf-hle, gme-accuracy, fullscreen.
+    callback set-flag(string, bool);
+    // Steppers by id: default-length, fade, loops, bars.
+    callback step(string, int);
+    callback set-theme(int);
+}
+
+component Card inherits Rectangle {
+    border-radius: Theme.radius;
+    background: Theme.surface-2;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding: Theme.pad;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        spacing: 2px;
+        @children
+    }
+}
+
+export component SettingsPanel inherits Rectangle {
+    in property <[string]> theme-names;
+    callback close;
+    callback interacted;
+    background: Theme.popup;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    property <string> dir: Prefs.music-dir;
+    changed dir => { dir-field.text = Prefs.music-dir; }
+
+    VerticalLayout {
+        padding: 12px;
+        padding-top: 10px;
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 8px;
+            IconButton {
+                icon: Icons.chevron-right;
+                tip: "Close settings (Esc)";
+                clicked => { root.close(); }
+            }
+            Icon {
+                y: (parent.height - self.height) / 2;
+                width: 22px;
+                height: 22px;
+                line: Icons.gear-line;
+                weight: 1.5;
+                tint: Theme.paint;
+            }
+            Text {
+                text: "Settings";
+                font-size: Theme.font-large;
+                color: Theme.text;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            viewport-height: col.preferred-height;
+            viewport-width: self.visible-width;
+            col := VerticalLayout {
+                width: parent.visible-width;
+                spacing: 10px;
+                padding-bottom: 20px;
+                padding-right: 4px;
+
+                SectionTitle { text: "MUSIC FOLDER"; }
+                Card {
+                    Text {
+                        text: "Where the file browser starts (its home button).";
+                        color: Theme.text-dim;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { height: 6px; }
+                    dir-field := TextField {
+                        placeholder: "/path/to/music";
+                        clearable: false;
+                        accepted(t) => { root.interacted(); Prefs.set-music-dir(t); }
+                    }
+                    Rectangle { height: 6px; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        BigButton {
+                            text: "Use the browser's folder";
+                            icon-line: Icons.folder-line;
+                            tip: Prefs.browser-dir;
+                            clicked => { root.interacted(); Prefs.use-browser-dir(); }
+                        }
+                        BigButton {
+                            text: "Save";
+                            clicked => { root.interacted(); Prefs.set-music-dir(dir-field.text); }
+                        }
+                    }
+                    Rectangle { height: 6px; }
+                }
+
+                SectionTitle { text: "FILE BROWSER"; }
+                Card {
+                    SettingRow {
+                        label: "Show every file";
+                        detail: "Not only folders, archives and music.";
+                        Toggle { checked: Prefs.show-all; toggled(v) => { root.interacted(); Prefs.set-flag("show-all", v); } }
+                    }
+                    SettingRow {
+                        label: "Open with a single tap";
+                        detail: "For touch screens; otherwise double-click.";
+                        Toggle { checked: Prefs.single-tap; toggled(v) => { root.interacted(); Prefs.set-flag("single-tap", v); } }
+                    }
+                    SettingRow {
+                        label: "Panels open on hover";
+                        detail: "Resting the mouse on the left or right edge brings in its panel.";
+                        Toggle { checked: Prefs.hover-opens; toggled(v) => { root.interacted(); Prefs.set-flag("hover-opens", v); } }
+                    }
+                    SettingRow {
+                        label: "Files opened from outside bring their folder";
+                        detail: "A file given on the command line or by a file manager plays with the rest of its folder.";
+                        Toggle { checked: Prefs.folder-playlist; toggled(v) => { root.interacted(); Prefs.set-flag("folder-playlist", v); } }
+                    }
+                }
+
+                SectionTitle { text: "CHIPTUNES"; }
+                Card {
+                    SettingRow {
+                        label: "Length of untimed tracks";
+                        detail: "Tracks that loop forever without saying how long they are.";
+                        Stepper { text: Prefs.default-length; step(d) => { root.interacted(); Prefs.step("default-length", d); } }
+                    }
+                    SettingRow {
+                        label: "Fade-out";
+                        Stepper { text: Prefs.fade; step(d) => { root.interacted(); Prefs.step("fade", d); } }
+                    }
+                    SettingRow {
+                        label: "Loops (vgmstream)";
+                        detail: "Times a looping game track plays its loop.";
+                        Stepper { text: Prefs.loops; step(d) => { root.interacted(); Prefs.step("loops", d); } }
+                    }
+                    SettingRow {
+                        label: "Accurate sound (GME)";
+                        detail: "Closer to the hardware, a little more CPU.";
+                        Toggle { checked: Prefs.gme-accuracy; toggled(v) => { root.interacted(); Prefs.set-flag("gme-accuracy", v); } }
+                    }
+                    SettingRow {
+                        label: "Fast N64 audio (USF)";
+                        detail: "High-level audio emulation; turn off for the rare set that needs the low-level path.";
+                        Toggle { checked: Prefs.usf-hle; toggled(v) => { root.interacted(); Prefs.set-flag("usf-hle", v); } }
+                    }
+                    Text {
+                        text: "Changes apply from the next track.";
+                        color: Theme.text-faint;
+                        font-size: Theme.font-small;
+                    }
+                    Rectangle { height: 6px; }
+                }
+
+                SectionTitle { text: "DISPLAY"; }
+                Card {
+                    Rectangle { height: 6px; }
+                    Text {
+                        text: "Theme";
+                        color: Theme.text;
+                    }
+                    Rectangle { height: 4px; }
+                    // Chips wrap onto rows of four.
+                    for row in [0, 1, 2]: HorizontalLayout {
+                        spacing: 8px;
+                        padding-bottom: 8px;
+                        alignment: start;
+                        for i in [0, 1, 2, 3]: Rectangle {
+                            visible: row * 4 + i < root.theme-names.length;
+                            width: (col.width - Theme.pad * 2 - 4px - 24px) / 4;
+                            height: self.visible ? 38px : 0;
+                            if row * 4 + i < root.theme-names.length: Chip {
+                                width: parent.width;
+                                text: root.theme-names[row * 4 + i];
+                                selected: Prefs.theme == row * 4 + i;
+                                clicked => { root.interacted(); Prefs.set-theme(row * 4 + i); }
+                            }
+                        }
+                    }
+                    SettingRow {
+                        label: "Fullscreen";
+                        detail: "F11 switches too.";
+                        Toggle { checked: Prefs.fullscreen; toggled(v) => { root.interacted(); Prefs.set-flag("fullscreen", v); } }
+                    }
+                    SettingRow {
+                        label: "Prefer embedded artwork";
+                        detail: "Over cover.jpg, folder.jpg and other images beside the music.";
+                        Toggle { checked: Prefs.embedded-art; toggled(v) => { root.interacted(); Prefs.set-flag("embedded-art", v); } }
+                    }
+                    SettingRow {
+                        label: "Spectrum bars";
+                        Stepper { text: Prefs.bars; step(d) => { root.interacted(); Prefs.step("bars", d); } }
+                    }
+                }
+
+                SectionTitle { text: "ABOUT"; }
+                Card {
+                    Rectangle { height: 6px; }
+                    Text {
+                        text: "Chippy " + Prefs.version;
+                        color: Theme.text;
+                        font-size: Theme.font-large;
+                    }
+                    Text {
+                        text: "Game Music Emu (NSF, NSFE, SPC, VGM, GBS, HES, KSS, AY, SAP, GYM), lazyusf2 (USF), vgmstream (hundreds of game formats), Symphonia (MP3, FLAC, WAV, OGG, M4A, AIFF...). Archives: ZIP, 7z, TAR, TAR.GZ.";
+                        color: Theme.text-dim;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { height: 4px; }
+                    Text {
+                        text: "Sound output: " + Prefs.device;
+                        color: Theme.text-faint;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        text: "Settings: " + Prefs.config-path;
+                        color: Theme.text-faint;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { height: 6px; }
+                }
+            }
+        }
+    }
+}

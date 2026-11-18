@@ -24,7 +24,7 @@ use crate::art::{self, Picture};
 use crate::audio::Output;
 use crate::player::{Cmd, Event, Player};
 use crate::spectrum::{Spectrum, FFT_LEN};
-use crate::{Browser, ColumnItem, FileItem, MainWindow, Now, PlRow, Playlist, Prefs, Theme};
+use crate::{Browser, ColumnItem, Crumb, FileItem, MainWindow, Now, PlRow, Playlist, Prefs, Theme};
 
 #[derive(Default)]
 pub struct StartOptions {
@@ -41,17 +41,6 @@ enum State {
 
 fn ss(s: impl AsRef<str>) -> SharedString {
     SharedString::from(s.as_ref())
-}
-
-/// What is saved of the playlist between runs.
-#[derive(serde::Serialize, serde::Deserialize, Default)]
-struct SavedQueue {
-    tracks: Vec<TrackRef>,
-    current: Option<usize>,
-}
-
-fn queue_path() -> PathBuf {
-    chippy_core::settings::config_dir().join("playlist.json")
 }
 
 pub struct App {
@@ -75,8 +64,8 @@ pub struct App {
     queue: Queue,
     queue_gen: u64,
     meta_cache: HashMap<TrackRef, TrackMeta>,
-    meta_tx: Sender<(u64, usize, TrackMeta)>,
-    meta_rx: Receiver<(u64, usize, TrackMeta)>,
+    meta_tx: Sender<(u64, usize, TrackRef, TrackMeta)>,
+    meta_rx: Receiver<(u64, usize, TrackRef, TrackMeta)>,
     rows: Rc<VecModel<PlRow>>,
     columns: Rc<VecModel<ColumnItem>>,
     all_columns: Rc<VecModel<ColumnItem>>,
@@ -175,8 +164,7 @@ impl App {
         {
             let mut a = app.borrow_mut();
             a.init_ui();
-            a.restore_queue();
-            let start = a.start_dir();
+            let start = a.home_dir();
             a.navigate(&start, true);
             if let Some(p) = opts.open {
                 a.open_external(&p);
@@ -335,9 +323,12 @@ impl App {
             }
         });
 
-        on!(app, ui, on_start_drag, |a| a.with_winit(|w| {
-            let _ = w.drag_window();
-        }));
+        on!(app, ui, on_start_drag, |a| {
+            a.with_winit(|w| {
+                let _ = w.drag_window();
+            });
+            a.release_pointer();
+        });
         on!(app, ui, on_start_resize, |a, dir: SharedString| {
             use slint::winit_030::winit::window::ResizeDirection as D;
             let d = match dir.as_str() {
@@ -353,6 +344,7 @@ impl App {
             a.with_winit(|w| {
                 let _ = w.drag_resize_window(d);
             });
+            a.release_pointer();
         });
         on!(app, ui, on_minimize_window, |a| a
             .ui()
@@ -393,6 +385,7 @@ impl App {
                     WindowEvent::CursorMoved { position, .. } => {
                         let s = w.scale_factor();
                         cursor = (position.x as f32 / s, position.y as f32 / s);
+                        CURSOR.with(|c| c.set(cursor));
                         if let Some(ui) = weak.upgrade() {
                             ui.invoke_pointer_moved(cursor.0, cursor.1);
                         }
@@ -434,6 +427,25 @@ impl App {
                 }
                 slint::CloseRequestResponse::HideWindow
             }
+        });
+    }
+
+    /// Once the window manager has taken over a move or a resize, the
+    /// button's release goes to it, not to us: without one, the element
+    /// pressed would keep the pointer and the window would ignore the mouse.
+    fn release_pointer(&self) {
+        let (x, y) = CURSOR.with(|c| c.get());
+        let position = slint::LogicalPosition::new(x, y);
+        let weak = self.ui.clone();
+        // After the press being handled now has been delivered.
+        slint::Timer::single_shot(Duration::ZERO, move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let w = ui.window();
+            w.dispatch_event(slint::platform::WindowEvent::PointerReleased {
+                position,
+                button: slint::platform::PointerEventButton::Left,
+            });
+            w.dispatch_event(slint::platform::WindowEvent::PointerExited);
         });
     }
 
@@ -634,7 +646,6 @@ impl App {
     pub fn shutdown(&mut self) {
         self.settings.volume = self.settings.volume.clamp(0.0, 1.0);
         self.save_settings();
-        self.save_queue();
         self.player.send(Cmd::Stop);
     }
 
@@ -657,13 +668,6 @@ impl App {
             .unwrap_or_else(|| PathBuf::from("/"))
     }
 
-    fn start_dir(&self) -> PathBuf {
-        self.settings
-            .last_dir
-            .clone()
-            .filter(|d| vfs::resolve(d).is_ok())
-            .unwrap_or_else(|| self.home_dir())
-    }
 
     /// Shows a virtual path in the browser. Returns false when it cannot.
     fn navigate(&mut self, vpath: &Path, push: bool) -> bool {
@@ -697,8 +701,6 @@ impl App {
         self.node = Some(node);
         self.entries = entries;
         self.filter.clear();
-        self.settings.last_dir = Some(vp.clone());
-        self.mark_dirty();
         let ui = self.ui();
         let b = ui.global::<Browser>();
         b.set_filter(SharedString::new());
@@ -781,8 +783,18 @@ impl App {
             0
         });
         if let Some(n) = &self.node {
-            b.set_path(ss(n.vpath().to_string_lossy()));
+            let vp = n.vpath();
+            b.set_path(ss(tilde(&vp)));
             b.set_title(ss(n.display_name()));
+            let crumbs: Vec<Crumb> = crumbs(&vp)
+                .into_iter()
+                .map(|(label, path, sep)| Crumb {
+                    label: ss(label),
+                    path: ss(path.to_string_lossy()),
+                    sep,
+                })
+                .collect();
+            b.set_crumbs(ModelRc::new(VecModel::from(crumbs)));
         }
         self.update_nav_buttons();
         let (mut dirs, mut files, mut tracks) = (0, 0, 0);
@@ -1066,7 +1078,7 @@ impl App {
             .spawn(move || {
                 for (i, t) in todo {
                     let m = meta::read(&t, &opts);
-                    if tx.send((generation, i, m)).is_err() {
+                    if tx.send((generation, i, t, m)).is_err() {
                         return;
                     }
                 }
@@ -1223,35 +1235,6 @@ impl App {
         }
         self.update_others_width();
         self.mark_dirty();
-    }
-
-    fn save_queue(&self) {
-        let saved = SavedQueue {
-            tracks: self.queue.items.iter().map(|i| i.track.clone()).collect(),
-            current: self.queue.current,
-        };
-        let p = queue_path();
-        if let Some(d) = p.parent() {
-            let _ = std::fs::create_dir_all(d);
-        }
-        if let Ok(j) = serde_json::to_vec(&saved) {
-            let _ = std::fs::write(p, j);
-        }
-    }
-
-    fn restore_queue(&mut self) {
-        let Some(saved) = std::fs::read(queue_path())
-            .ok()
-            .and_then(|d| serde_json::from_slice::<SavedQueue>(&d).ok())
-        else {
-            return;
-        };
-        if saved.tracks.is_empty() {
-            return;
-        }
-        self.set_queue(saved.tracks, saved.current);
-        self.update_now();
-        self.load_art();
     }
 
     // ------------------------------------------------------------ playback
@@ -1517,10 +1500,12 @@ impl App {
         }
 
         let mut meta_changed = false;
-        while let Ok((generation, i, m)) = self.meta_rx.try_recv() {
+        while let Ok((generation, i, track, m)) = self.meta_rx.try_recv() {
+            // Cached under the track that was read: the playlist may have
+            // changed since, and row `i` may now be another track.
+            self.meta_cache.insert(track.clone(), m.clone());
             if let Some(item) = self.queue.items.get_mut(i) {
-                self.meta_cache.insert(item.track.clone(), m.clone());
-                if generation == self.queue_gen {
+                if generation == self.queue_gen && item.track == track {
                     item.meta = Some(m);
                     self.update_row(i);
                     meta_changed = true;
@@ -1624,6 +1609,8 @@ impl App {
 }
 
 thread_local! {
+    /// Where the pointer is, in logical pixels.
+    static CURSOR: std::cell::Cell<(f32, f32)> = const { std::cell::Cell::new((0.0, 0.0)) };
     static DROPPED: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -1638,6 +1625,50 @@ fn expand(s: &str) -> PathBuf {
     PathBuf::from(s)
 }
 
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|h| h.components().count() > 1)
+}
+
+/// A path with the home folder written as `~`.
+fn tilde(p: &Path) -> String {
+    match home().and_then(|h| p.strip_prefix(&h).ok().map(Path::to_path_buf)) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".into(),
+        Some(rest) => format!("~/{}", rest.to_string_lossy()),
+        None => p.to_string_lossy().into_owned(),
+    }
+}
+
+/// The levels of a path, for the path bar: (label, path, after a "/").
+/// The home folder is one level, `~`.
+fn crumbs(p: &Path) -> Vec<(String, PathBuf, bool)> {
+    use std::path::Component;
+    let mut out = Vec::new();
+    let mut acc = PathBuf::new();
+    let home = home();
+    for c in p.components() {
+        acc.push(c.as_os_str());
+        match c {
+            Component::RootDir => out.push(("/".to_string(), acc.clone(), false)),
+            Component::Prefix(pre) => {
+                out.push((pre.as_os_str().to_string_lossy().into_owned(), acc.clone(), false))
+            }
+            _ => {
+                if home.as_deref() == Some(acc.as_path()) {
+                    out.clear();
+                    out.push(("~".to_string(), acc.clone(), false));
+                    continue;
+                }
+                // No "/" straight after the root.
+                let sep = !matches!(out.last(), Some((l, _, _)) if l == "/" || l.ends_with('\\'));
+                out.push((c.as_os_str().to_string_lossy().into_owned(), acc.clone(), sep));
+            }
+        }
+    }
+    out
+}
+
 fn human_size(n: u64) -> String {
     const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
     let mut v = n as f64;
@@ -1650,5 +1681,27 @@ fn human_size(n: u64) -> String {
         format!("{n} B")
     } else {
         format!("{v:.1} {}", UNITS[u])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_bar() {
+        std::env::set_var("HOME", "/home/me");
+        assert_eq!(tilde(Path::new("/home/me/music")), "~/music");
+        assert_eq!(tilde(Path::new("/home/me")), "~");
+        assert_eq!(tilde(Path::new("/srv/x")), "/srv/x");
+        let c = crumbs(Path::new("/home/me/music/nes.zip"));
+        let labels: Vec<&str> = c.iter().map(|x| x.0.as_str()).collect();
+        assert_eq!(labels, ["~", "music", "nes.zip"]);
+        assert_eq!(c[1].1, PathBuf::from("/home/me/music"));
+        let c = crumbs(Path::new("/srv/x"));
+        assert_eq!(
+            c.iter().map(|x| (x.0.as_str(), x.2)).collect::<Vec<_>>(),
+            [("/", false), ("srv", false), ("x", true)]
+        );
     }
 }

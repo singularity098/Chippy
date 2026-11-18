@@ -30,3 +30,12 @@ export struct ColumnItem {
     // Right-aligned (numbers, lengths).
     right: bool,
 }
+
+// One level of the folder shown, in the browser's path bar.
+export struct Crumb {
+    label: string,
+    // The virtual path to go to.
+    path: string,
+    // Drawn after a "/".
+    sep: bool,
+}

@@ -63,8 +63,13 @@ fn open_emu(loc: &Location, rate: u32) -> Result<Emu> {
         bail!("not a supported chiptune");
     }
     let emu = Emu(emu);
-    // An M3U playlist next to the file names (and orders) its tracks.
+    // An M3U playlist next to the file names (and orders) its tracks. NSFE
+    // carries its own names, lengths and order, which an M3U would replace
+    // (loading one turns off the NSFE's playlist).
     let name = loc.name();
+    if crate::formats::extension(&name) == "nsfe" {
+        return Ok(emu);
+    }
     let (stem, _) = crate::formats::split_name(&name);
     if let Some(m3u) = loc.sibling(&format!("{stem}.m3u")) {
         if let Ok(d) = m3u.read() {

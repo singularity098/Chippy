@@ -39,8 +39,6 @@ pub struct Column {
 pub struct Settings {
     /// Where the file browser starts.
     pub music_dir: Option<PathBuf>,
-    /// The folder the browser showed last.
-    pub last_dir: Option<PathBuf>,
     /// List every file, not only folders, archives and music.
     pub show_all_files: bool,
     /// A file opened from outside (command line, file manager) brings the
@@ -98,7 +96,6 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             music_dir: directories::UserDirs::new().and_then(|u| u.audio_dir().map(PathBuf::from)),
-            last_dir: None,
             show_all_files: false,
             open_folder_as_playlist: true,
             single_tap: false,

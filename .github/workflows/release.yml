@@ -1,0 +1,63 @@
+name: Build
+
+# Builds the chippy binary for Linux on every push to main (kept as a
+# workflow artifact) and for every v* tag (attached to a GitHub release).
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported runners, so the binaries run on older
+          # distributions too (glibc is linked dynamically).
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang libasound2-dev libxkbcommon-dev \
+            libxkbcommon-x11-0 libfontconfig-dev zlib1g-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.arch }}
+      - name: Build
+        run: cargo build --release --locked -p chippy
+      - name: Package
+        id: package
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [ "$GITHUB_REF_TYPE" != tag ]; then version="$(git rev-parse --short HEAD)"; fi
+          name="chippy-${version}-linux-${{ matrix.arch }}"
+          mkdir -p "dist/$name"
+          cp target/release/chippy "dist/$name/"
+          cp README.md LICENSE assets/chippy-icon.svg "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: dist/${{ steps.package.outputs.name }}/
+      - name: Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ steps.package.outputs.name }}.tar.gz
+          generate_release_notes: true

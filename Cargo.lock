@@ -904,6 +904,7 @@ dependencies = [
  "directories",
  "flate2",
  "gme-sys",
+ "gsf-sys",
  "iz80",
  "lazyusf-sys",
  "lofty",
@@ -917,6 +918,7 @@ dependencies = [
  "symphonia",
  "tar",
  "tempfile",
+ "twosf-sys",
  "vgmstream-sys",
  "zip",
 ]
@@ -2179,6 +2181,13 @@ name = "gme-sys"
 version = "0.1.0"
 dependencies = [
  "cmake",
+]
+
+[[package]]
+name = "gsf-sys"
+version = "0.1.0"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -5749,6 +5758,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 dependencies = [
  "core_maths",
+]
+
+[[package]]
+name = "twosf-sys"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "libz-sys",
 ]
 
 [[package]]

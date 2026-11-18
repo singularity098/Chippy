@@ -23,6 +23,10 @@ pub enum Codec {
     Sid,
     /// Sega Master System / Game Gear SGC.
     Sgc,
+    /// Game Boy Advance GSF (mGBA).
+    Gsf,
+    /// Nintendo DS 2SF (vio2sf).
+    Twosf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +62,8 @@ pub const AO: &[&str] = &[
 ];
 pub const SID: &[&str] = &["sid", "psid", "rsid"];
 pub const SGC: &[&str] = &["sgc"];
+pub const GSF: &[&str] = &["gsf", "minigsf"];
+pub const TWOSF: &[&str] = &["2sf", "mini2sf"];
 pub const MIDI: &[&str] = &["mid", "midi", "kar", "rmi", "smf"];
 pub const IMAGES: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "webp"];
 
@@ -118,6 +124,12 @@ pub fn kind_of(name: &str) -> FileKind {
     }
     if SGC.contains(&e) {
         return FileKind::Audio(Codec::Sgc);
+    }
+    if GSF.contains(&e) {
+        return FileKind::Audio(Codec::Gsf);
+    }
+    if TWOSF.contains(&e) {
+        return FileKind::Audio(Codec::Twosf);
     }
     if MIDI.contains(&e) {
         return FileKind::Audio(Codec::Midi);

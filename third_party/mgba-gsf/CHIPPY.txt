@@ -1,0 +1,4 @@
+mGBA (MPL-2.0), trimmed to the GBA core for GSF playback, as vendored by rePlayer
+(https://github.com/arnaud-neny/rePlayer, source/Replays/HighlyAdvanced/mGBA),
+itself from kode54's GSF player. Chippy's shim and POSIX memory functions are in
+crates/gsf-sys.

@@ -35,10 +35,17 @@ fn cstr(p: *const c_char) -> String {
     if p.is_null() {
         String::new()
     } else {
-        unsafe { CStr::from_ptr(p) }
-            .to_string_lossy()
-            .trim()
-            .to_string()
+        let bytes = unsafe { CStr::from_ptr(p) }.to_bytes();
+        match std::str::from_utf8(bytes) {
+            Ok(s) => s.trim().to_string(),
+            // Older rips (SPC ID666 tags in particular) are Latin-1.
+            Err(_) => bytes
+                .iter()
+                .map(|&c| c as char)
+                .collect::<String>()
+                .trim()
+                .to_string(),
+        }
     }
 }
 

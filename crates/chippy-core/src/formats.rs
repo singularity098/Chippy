@@ -27,6 +27,8 @@ pub enum ArchiveKind {
     SevenZip,
     Tar,
     TarGz,
+    /// RAR (and RSN: SNES music packed in RAR).
+    Rar,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,7 +58,7 @@ pub const IMAGES: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "webp"];
 /// Extensions vgmstream accepts that are better shown as something else, or
 /// are too generic to call music.
 const VGMSTREAM_SKIP: &[&str] = &[
-    "txt", "zip", "7z", "rar", "jpg", "png", "nfo", "m3u", "pdf", "exe", "dll",
+    "txt", "zip", "7z", "rar", "rsn", "jpg", "png", "nfo", "m3u", "pdf", "exe", "dll",
 ];
 
 fn vgmstream_exts() -> &'static HashSet<String> {
@@ -90,6 +92,7 @@ pub fn kind_of(name: &str) -> FileKind {
         "7z" => return FileKind::Archive(ArchiveKind::SevenZip),
         "tar" => return FileKind::Archive(ArchiveKind::Tar),
         "tgz" | "tar.gz" => return FileKind::Archive(ArchiveKind::TarGz),
+        "rar" | "rsn" => return FileKind::Archive(ArchiveKind::Rar),
         _ => {}
     }
     if GME_MULTI.contains(&e) || GME_SINGLE.contains(&e) {

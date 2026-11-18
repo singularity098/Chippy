@@ -74,6 +74,7 @@ pub fn list(path: &Path) -> Result<Arc<Vec<ArchiveEntry>>> {
         ArchiveKind::SevenZip => list_7z(path)?,
         ArchiveKind::Tar => list_tar(File::open(path)?)?,
         ArchiveKind::TarGz => list_tar(flate2::read::GzDecoder::new(File::open(path)?))?,
+        ArchiveKind::Rar => rar::list(path)?,
     };
     raw.retain(|e| !e.path.is_empty());
     let mut dirs: BTreeSet<String> = raw
@@ -136,6 +137,7 @@ pub fn read(path: &Path, entry: &str) -> Result<Arc<Vec<u8>>> {
         ArchiveKind::SevenZip => read_7z(path, &entry)?,
         ArchiveKind::Tar => read_tar(File::open(path)?, &entry)?,
         ArchiveKind::TarGz => read_tar(flate2::read::GzDecoder::new(File::open(path)?), &entry)?,
+        ArchiveKind::Rar => rar::read(path, &entry)?,
     };
     let data = Arc::new(data);
     let mut f = files().lock().unwrap();
@@ -301,5 +303,115 @@ mod tests {
         assert_eq!(parent_of("a/b/c"), "a/b");
         assert_eq!(name_of("a/b/c"), "c");
         assert_eq!(parent_of("c"), "");
+    }
+}
+
+// ------------------------------------------------------------------ rar
+
+mod rar {
+    //! RAR (versions 1.5 to 5) through libarchive.
+    use super::{clean, ArchiveEntry};
+    use anyhow::{bail, Result};
+    use archive_sys as ffi;
+    use std::ffi::{CStr, CString};
+    use std::path::Path;
+
+    struct Reader(*mut ffi::archive);
+
+    impl Drop for Reader {
+        fn drop(&mut self) {
+            unsafe { ffi::archive_read_free(self.0) };
+        }
+    }
+
+    impl Reader {
+        fn open(path: &Path) -> Result<Reader> {
+            let a = unsafe { ffi::archive_read_new() };
+            if a.is_null() {
+                bail!("out of memory");
+            }
+            let r = Reader(a);
+            #[cfg(unix)]
+            let name = {
+                use std::os::unix::ffi::OsStrExt;
+                CString::new(path.as_os_str().as_bytes())?
+            };
+            #[cfg(not(unix))]
+            let name = CString::new(path.to_string_lossy().as_bytes())?;
+            unsafe {
+                ffi::archive_read_support_format_rar(a);
+                ffi::archive_read_support_format_rar5(a);
+                if ffi::archive_read_open_filename(a, name.as_ptr(), 1 << 16) != ffi::ARCHIVE_OK {
+                    bail!("cannot read {}: {}", path.display(), r.error());
+                }
+            }
+            Ok(r)
+        }
+
+        fn error(&self) -> String {
+            let e = unsafe { ffi::archive_error_string(self.0) };
+            if e.is_null() {
+                "not a RAR archive".into()
+            } else {
+                unsafe { CStr::from_ptr(e) }.to_string_lossy().into_owned()
+            }
+        }
+
+        /// The next entry: (path, is a folder, size).
+        fn next(&mut self) -> Result<Option<(String, bool, u64)>> {
+            let mut e = std::ptr::null_mut();
+            match unsafe { ffi::archive_read_next_header(self.0, &mut e) } {
+                ffi::ARCHIVE_EOF => Ok(None),
+                ffi::ARCHIVE_OK | ffi::ARCHIVE_WARN => unsafe {
+                    let mut p = ffi::archive_entry_pathname_utf8(e);
+                    if p.is_null() {
+                        p = ffi::archive_entry_pathname(e);
+                    }
+                    let name = if p.is_null() {
+                        String::new()
+                    } else {
+                        CStr::from_ptr(p).to_string_lossy().into_owned()
+                    };
+                    let dir = ffi::archive_entry_filetype(e) == ffi::AE_IFDIR;
+                    Ok(Some((name, dir, ffi::archive_entry_size(e).max(0) as u64)))
+                },
+                _ => bail!("{}", self.error()),
+            }
+        }
+    }
+
+    pub fn list(path: &Path) -> Result<Vec<ArchiveEntry>> {
+        let mut r = Reader::open(path)?;
+        let mut out = Vec::new();
+        while let Some((name, is_dir, size)) = r.next()? {
+            out.push(ArchiveEntry {
+                path: clean(&name),
+                is_dir,
+                size,
+            });
+        }
+        Ok(out)
+    }
+
+    pub fn read(path: &Path, entry: &str) -> Result<Vec<u8>> {
+        let mut r = Reader::open(path)?;
+        while let Some((name, is_dir, size)) = r.next()? {
+            if is_dir || clean(&name) != entry {
+                continue;
+            }
+            let mut out = Vec::with_capacity(size as usize);
+            let mut buf = vec![0u8; 1 << 16];
+            loop {
+                let n = unsafe { ffi::archive_read_data(r.0, buf.as_mut_ptr().cast(), buf.len()) };
+                if n < 0 {
+                    bail!("cannot unpack {entry}: {}", r.error());
+                }
+                if n == 0 {
+                    return Ok(out);
+                }
+                out.extend_from_slice(&buf[..n as usize]);
+            }
+        }
+        bail!("{entry} not found in {}", path.display())
     }
 }

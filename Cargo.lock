@@ -290,6 +290,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "archive-sys"
+version = "0.1.0"
+dependencies = [
+ "cmake",
+]
+
+[[package]]
 name = "arg_enum_proc_macro"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -893,6 +900,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "aosdk-sys",
+ "archive-sys",
  "directories",
  "flate2",
  "gme-sys",

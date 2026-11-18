@@ -17,6 +17,8 @@ files as if they were folders.
 | Engine | Formats |
 | --- | --- |
 | [Game Music Emu](https://github.com/libgme/game-music-emu) | NSF, NSFE, SPC, VGM, VGZ, GBS, HES, KSS, AY, SAP, GYM (M3U track lists next to NSF/GBS/etc. are read for track names and lengths) |
+| [lazyusf2](https://github.com/derselbst/lazyusf2) | USF and miniUSF (Nintendo 64), with `_lib` chains |
+| [vgmstream](https://github.com/vgmstream/vgmstream) | Hundreds of game formats: ADX, HCA, BRSTM, BCSTM, XWB, FSB, AT3, DSP, GENH/TXTH... including multi-subsong files, with MP3, Vorbis, Opus, ATRAC3, XMA and WMA streams inside them (through mpg123, libvorbis and FFmpeg) |
 | [Audio Overload SDK](https://github.com/DeaDBeeF-Player/deadbeef/tree/master/plugins/psf) | PSF/miniPSF (PlayStation), PSF2/miniPSF2 (PlayStation 2), SSF/miniSSF (Saturn), DSF/miniDSF (Dreamcast), QSF/miniQSF (Capcom QSound), SPU. No console BIOS needed |
 | [lazyusf2](https://github.com/derselbst/lazyusf2) | USF and miniUSF (Nintendo 64) |
 | [mGBA](https://mgba.io) (GBA core) | GSF and miniGSF (Game Boy Advance) |
@@ -28,6 +30,7 @@ files as if they were folders.
 | [RustySynth](https://github.com/sinshu/rustysynth) | MIDI (MID, MIDI, KAR, RMI, SMF) through SF2 SoundFonts |
 | [vgmstream](https://github.com/vgmstream/vgmstream) | Hundreds of game formats: ADX, HCA, BRSTM, BCSTM, XWB, FSB, AT3, DSP, GENH/TXTH... including multi-subsong files |
 | [Symphonia](https://github.com/pdeljanov/Symphonia) | MP3, FLAC, WAV, OGG Vorbis, M4A/AAC, ALAC, AIFF, CAF, MKV/WebM audio |
+| vgmstream's FFmpeg | Opus, WMA, AC-3 |
 
 All the PSF-family formats follow `_lib` chains to their libraries, beside
 the file or inside the same archive.
@@ -113,16 +116,27 @@ them:
 git clone --recursive https://github.com/singularity098/Chippy
 ```
 
+You need Rust (1.80+), CMake, pkg-config, a C/C++ compiler, and on Linux
+the ALSA, xkbcommon and fontconfig headers, plus mpg123, libvorbis and
+FFmpeg for vgmstream:
 You need Rust (1.88+), CMake, a C/C++ compiler, and on Linux the ALSA,
 xkbcommon and fontconfig headers:
 
 ```bash
-sudo apt install cmake clang libasound2-dev libxkbcommon-dev libfontconfig-dev zlib1g-dev
+sudo apt install cmake clang pkg-config libasound2-dev libxkbcommon-dev libfontconfig-dev zlib1g-dev \
+  libmpg123-dev libvorbis-dev libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
 ```
 
 ```bash
 cargo run --release
 ```
+
+### AppImage
+
+Every push builds a Linux AppImage (`.github/workflows/appimage.yml`).
+Download it from the run's *Artifacts* on the Actions tab, unzip it, make
+it executable and run it. It needs glibc 2.35 or newer (Ubuntu 22.04,
+Debian 12, Fedora 36 and later).
 
 The Skia renderer is used by default (it antialiases best); its prebuilt
 binaries are downloaded during the build. Where that is not possible, build
@@ -137,7 +151,8 @@ crates/
   chippy-core/     no UI: virtual file system (folders, archives, multi-track
                    files), decoders, tags, album art, playlist, settings
   gme-sys/         builds third_party/game-music-emu
-  vgmstream-sys/   builds third_party/vgmstream (built-in codecs only)
+  vgmstream-sys/   builds third_party/vgmstream, with the system's mpg123,
+                   libvorbis and FFmpeg
   lazyusf-sys/     builds third_party/lazyusf2
   aosdk-sys/       third_party/aosdk (PSF, PSF2, SSF, DSF, QSF)
   gsf-sys/         third_party/mgba-gsf (GSF)
@@ -149,7 +164,9 @@ crates/
 ```
 
 `cargo run -p chippy-core --example probe -- PATH` lists a path the way the
-browser does, with each track's tags.
+browser does, with each track's tags;
+`cargo run -p chippy-core --example decode -- FILE` decodes a file to the
+end to check that it plays.
 
 The look (fonts, colours, themes, icons, the edge strips and sliding panels)
 follows [Carlita](https://github.com/singularity098/Carlita).
@@ -157,6 +174,9 @@ follows [Carlita](https://github.com/singularity098/Carlita).
 ## Licence
 
 GPL-3.0-or-later. The vendored libraries keep their own licences: Game Music
+Emu is LGPL-2.1, lazyusf2 is GPL-2.0, vgmstream is ISC-style; the
+AppImage also carries the system's mpg123 and libvorbis, and FFmpeg
+(LGPL-2.1 or GPL, depending on how the distribution built it). The Jost font
 Emu is LGPL-2.1, lazyusf2, vio2sf, Mednafen and libsidplayfp are GPL-2.0+,
 the Audio Overload SDK is BSD with MAME-licensed parts, mGBA is MPL-2.0,
 libxmp is MIT, libarchive is BSD, vgmstream is ISC-style. The Jost font

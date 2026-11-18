@@ -5974,6 +5974,7 @@ name = "vgmstream-sys"
 version = "0.1.0"
 dependencies = [
  "cmake",
+ "pkg-config",
 ]
 
 [[package]]

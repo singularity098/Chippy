@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Chippy
+GenericName=Music Player
+Comment=A chiptune-focused music player with a file browser
+Exec=chippy %f
+Icon=chippy
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;chiptune;nsf;spc;vgm;player;
+MimeType=audio/mpeg;audio/flac;audio/x-flac;audio/ogg;audio/x-vorbis+ogg;audio/x-opus+ogg;audio/wav;audio/x-wav;audio/mp4;audio/aac;audio/x-aiff;audio/x-ms-wma;audio/x-nsf;audio/x-spc;audio/x-gbs;audio/x-vgm;audio/x-sap;application/zip;application/x-7z-compressed;

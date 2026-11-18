@@ -22,6 +22,7 @@ use chippy_core::{decode, formats, DecodeOptions};
 
 use crate::art::{self, Picture};
 use crate::audio::Output;
+use crate::media::{Media, Playback, Request};
 use crate::player::{Cmd, Event, Player};
 use crate::spectrum::{Spectrum, FFT_LEN};
 use crate::{Browser, ColumnItem, Crumb, FileItem, MainWindow, Now, PlRow, Playlist, Prefs, Theme};
@@ -49,6 +50,7 @@ pub struct App {
     settings_dirty: Option<Instant>,
     output: Output,
     player: Player,
+    media: Media,
 
     // ---- file browser
     node: Option<Node>,
@@ -128,6 +130,7 @@ impl App {
             settings_dirty: None,
             output,
             player,
+            media: Media::connect(),
             node: None,
             entries: Vec::new(),
             shown: Vec::new(),
@@ -1337,6 +1340,7 @@ impl App {
             .map(|d| ms.min(d.saturating_sub(250)))
             .unwrap_or(ms);
         self.player.send(Cmd::Seek { ms });
+        self.media.moved();
         // Show the new place at once.
         let mut s = self.output.shared.lock().unwrap();
         s.buf.clear();
@@ -1367,6 +1371,7 @@ impl App {
             self.settings.volume
         };
         self.output.shared.lock().unwrap().volume = v;
+        self.media.set_volume(self.settings.volume);
         let ui = self.ui();
         let n = ui.global::<Now>();
         n.set_volume(self.settings.volume);
@@ -1434,6 +1439,53 @@ impl App {
             .map(format_ms)
             .unwrap_or_else(|| "–:––".into())));
         n.set_seekable(self.state != State::Stopped && self.duration_ms.is_some());
+        let (title, artist, album) = (n.get_title(), n.get_artist(), n.get_album());
+        self.media
+            .show(&title, &artist, &album, self.duration_ms);
+        let pos = self.position_ms();
+        self.media.set_playback(
+            match self.state {
+                State::Stopped => Playback::Stopped,
+                State::Playing => Playback::Playing,
+                State::Paused => Playback::Paused,
+            },
+            pos,
+        );
+    }
+
+    /// Media keys and the desktop's player controls.
+    fn media_request(&mut self, r: Request) {
+        match r {
+            Request::Play => {
+                if self.state != State::Playing {
+                    self.play_pause();
+                }
+            }
+            Request::Pause => {
+                if self.state == State::Playing {
+                    self.play_pause();
+                }
+            }
+            Request::Toggle => self.play_pause(),
+            Request::Next => self.next(false),
+            Request::Previous => self.previous(),
+            Request::Stop => self.stop(),
+            Request::SeekBy(s) => {
+                let pos = self.position_ms() as i64 + s * 1000;
+                self.seek(pos.max(0) as u64);
+            }
+            Request::SeekTo(ms) => self.seek(ms),
+            Request::Volume(v) => self.set_volume(v),
+            Request::Raise => {
+                let ui = self.ui();
+                ui.window().set_minimized(false);
+                let _ = ui.show();
+            }
+            Request::Quit => {
+                self.remember_window();
+                let _ = slint::quit_event_loop();
+            }
+        }
     }
 
     fn load_art(&mut self) {
@@ -1466,6 +1518,10 @@ impl App {
         let dropped: Vec<PathBuf> = DROPPED.with(|d| d.borrow_mut().drain(..).collect());
         if let Some(p) = dropped.into_iter().next() {
             self.open_external(&p);
+        }
+
+        while let Ok(r) = self.media.requests.try_recv() {
+            self.media_request(r);
         }
 
         while let Ok(ev) = self.player.events.try_recv() {

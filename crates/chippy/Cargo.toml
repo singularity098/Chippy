@@ -35,6 +35,7 @@ slint = { version = "~1.14", default-features = false, features = [
     # Moving and resizing the frameless window with the window manager.
     "unstable-winit-030",
 ] }
+souvlaki = { version = "0.9.3", default-features = false, features = ["use_zbus"] }
 
 [build-dependencies]
 slint-build = "~1.14"

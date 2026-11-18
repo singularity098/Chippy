@@ -1,11 +1,11 @@
 name: Build
 
-# Builds the chippy binary for Linux on every push to main (kept as a
+# Builds the chippy binary for Linux on every push (kept as a
 # workflow artifact) and for every v* tag (attached to a GitHub release).
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
     tags: ["v*"]
   workflow_dispatch:
 

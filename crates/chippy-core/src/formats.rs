@@ -19,6 +19,10 @@ pub enum Codec {
     Midi,
     /// Audio Overload SDK: PSF, PSF2, SSF, DSF, QSF, SPU.
     Ao,
+    /// Commodore 64 SID tunes (libsidplayfp).
+    Sid,
+    /// Sega Master System / Game Gear SGC.
+    Sgc,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +56,8 @@ pub const AO: &[&str] = &[
     "psf", "minipsf", "psf1", "minipsf1", "psf2", "minipsf2", "ssf", "minissf", "dsf", "minidsf",
     "qsf", "miniqsf", "spu",
 ];
+pub const SID: &[&str] = &["sid", "psid", "rsid"];
+pub const SGC: &[&str] = &["sgc"];
 pub const MIDI: &[&str] = &["mid", "midi", "kar", "rmi", "smf"];
 pub const IMAGES: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "webp"];
 
@@ -107,6 +113,12 @@ pub fn kind_of(name: &str) -> FileKind {
     if AO.contains(&e) {
         return FileKind::Audio(Codec::Ao);
     }
+    if SID.contains(&e) {
+        return FileKind::Audio(Codec::Sid);
+    }
+    if SGC.contains(&e) {
+        return FileKind::Audio(Codec::Sgc);
+    }
     if MIDI.contains(&e) {
         return FileKind::Audio(Codec::Midi);
     }
@@ -130,7 +142,7 @@ pub fn may_hold_tracks(name: &str) -> bool {
     let ext = extension(name);
     match kind_of(name) {
         FileKind::Audio(Codec::Gme) => GME_MULTI.contains(&ext.as_str()),
-        FileKind::Audio(Codec::Vgmstream) => true,
+        FileKind::Audio(Codec::Vgmstream | Codec::Sid | Codec::Sgc) => true,
         _ => false,
     }
 }

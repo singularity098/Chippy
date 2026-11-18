@@ -6,6 +6,7 @@ members = [
     "crates/lazyusf-sys",
     "crates/aosdk-sys",
     "crates/archive-sys",
+    "crates/sidplayfp-sys",
     "crates/chippy-core",
     "crates/chippy",
 ]
@@ -24,6 +25,7 @@ vgmstream-sys = { path = "crates/vgmstream-sys" }
 lazyusf-sys = { path = "crates/lazyusf-sys" }
 aosdk-sys = { path = "crates/aosdk-sys" }
 archive-sys = { path = "crates/archive-sys" }
+sidplayfp-sys = { path = "crates/sidplayfp-sys" }
 chippy-core = { path = "crates/chippy-core" }
 anyhow = "1"
 log = "0.4"

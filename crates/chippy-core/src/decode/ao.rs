@@ -219,7 +219,11 @@ mod tests {
         // The mini file's own program overlays the library's.
         std::fs::write(
             dir.path().join("song.minipsf"),
-            psf(1, &exe(), "_lib=GAME.psflib\ntitle=Song\ngame=Game\nlength=0:02\nfade=1\n"),
+            psf(
+                1,
+                &exe(),
+                "_lib=GAME.psflib\ntitle=Song\ngame=Game\nlength=0:02\nfade=1\n",
+            ),
         )
         .unwrap();
         let loc = Location::Fs(dir.path().join("song.minipsf"));

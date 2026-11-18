@@ -248,7 +248,7 @@ pub fn meta(loc: &Location, track: u32, opts: &DecodeOptions) -> Result<TrackMet
 }
 
 /// A four-digit year in a copyright line ("1988 Capcom").
-fn year_in(s: &str) -> Option<String> {
+pub(crate) fn year_in(s: &str) -> Option<String> {
     let b = s.as_bytes();
     (0..b.len().saturating_sub(3)).find_map(|i| {
         let w = &s[i..i + 4];

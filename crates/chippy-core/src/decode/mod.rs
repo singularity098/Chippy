@@ -3,6 +3,8 @@
 pub mod ao;
 pub mod gme;
 pub mod midi;
+pub mod sgc;
+pub mod sid;
 pub mod sym;
 pub mod timed;
 pub mod usf;
@@ -84,6 +86,8 @@ pub fn open_decoder(t: &TrackRef, opts: &DecodeOptions) -> Result<Box<dyn Decode
         Some(Codec::Usf) => Ok(Box::new(usf::UsfDecoder::open(&t.loc, opts)?)),
         Some(Codec::Midi) => Ok(Box::new(midi::MidiDecoder::open(&t.loc, opts)?)),
         Some(Codec::Ao) => Ok(Box::new(ao::open(&t.loc, opts)?)),
+        Some(Codec::Sid) => Ok(Box::new(sid::open(&t.loc, t.sub, opts)?)),
+        Some(Codec::Sgc) => Ok(Box::new(sgc::open(&t.loc, t.sub, opts)?)),
         Some(Codec::Common) => match sym::SymDecoder::open(&t.loc) {
             Ok(d) => Ok(Box::new(d)),
             Err(e) => vgm::VgmDecoder::open(&t.loc, t.sub, opts)
@@ -104,6 +108,8 @@ pub fn track_list(loc: &Location, opts: &DecodeOptions) -> Result<Vec<SubTrack>>
     match codec_of(loc) {
         Some(Codec::Gme) => gme::track_list(loc, opts),
         Some(Codec::Vgmstream) => vgm::track_list(loc, opts),
+        Some(Codec::Sid) => sid::track_list(loc, opts),
+        Some(Codec::Sgc) => sgc::track_list(loc, opts),
         _ => Ok(vec![SubTrack {
             index: 0,
             title: loc.name(),
@@ -119,6 +125,8 @@ pub fn read_meta(t: &TrackRef, opts: &DecodeOptions) -> Result<TrackMeta> {
         Some(Codec::Usf) => usf::meta(&t.loc, opts),
         Some(Codec::Midi) => midi::meta(&t.loc),
         Some(Codec::Ao) => ao::meta(&t.loc, opts),
+        Some(Codec::Sid) => sid::meta(&t.loc, t.sub, opts),
+        Some(Codec::Sgc) => sgc::meta(&t.loc, t.sub, opts),
         Some(Codec::Common) => sym::meta(&t.loc).or_else(|_| vgm::meta(&t.loc, t.sub, opts)),
         Some(Codec::Vgmstream) | None => vgm::meta(&t.loc, t.sub, opts),
     }

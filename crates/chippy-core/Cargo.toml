@@ -10,6 +10,7 @@ repository.workspace = true
 gme-sys.workspace = true
 vgmstream-sys.workspace = true
 lazyusf-sys.workspace = true
+aosdk-sys.workspace = true
 anyhow.workspace = true
 log.workspace = true
 serde.workspace = true

@@ -7,3 +7,12 @@
 [submodule "third_party/lazyusf2"]
 	path = third_party/lazyusf2
 	url = https://github.com/derselbst/lazyusf2
+[submodule "third_party/libsidplayfp"]
+	path = third_party/libsidplayfp
+	url = https://github.com/libsidplayfp/libsidplayfp
+[submodule "third_party/libarchive"]
+	path = third_party/libarchive
+	url = https://github.com/libarchive/libarchive
+[submodule "third_party/mgba"]
+	path = third_party/mgba
+	url = https://github.com/mgba-emu/mgba

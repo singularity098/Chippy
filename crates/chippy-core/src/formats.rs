@@ -17,6 +17,8 @@ pub enum Codec {
     Vgmstream,
     /// Standard MIDI files, played through a SoundFont.
     Midi,
+    /// Audio Overload SDK: PSF, PSF2, SSF, DSF, QSF, SPU.
+    Ao,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +45,10 @@ pub const USF: &[&str] = &["usf", "miniusf"];
 pub const COMMON: &[&str] = &[
     "mp3", "mp2", "mp1", "flac", "wav", "wave", "ogg", "oga", "m4a", "m4b", "mp4", "aac", "alac",
     "aif", "aiff", "aifc", "caf", "mka", "webm",
+];
+pub const AO: &[&str] = &[
+    "psf", "minipsf", "psf1", "minipsf1", "psf2", "minipsf2", "ssf", "minissf", "dsf", "minidsf",
+    "qsf", "miniqsf", "spu",
 ];
 pub const MIDI: &[&str] = &["mid", "midi", "kar", "rmi", "smf"];
 pub const IMAGES: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "webp"];
@@ -94,6 +100,9 @@ pub fn kind_of(name: &str) -> FileKind {
     }
     if COMMON.contains(&e) {
         return FileKind::Audio(Codec::Common);
+    }
+    if AO.contains(&e) {
+        return FileKind::Audio(Codec::Ao);
     }
     if MIDI.contains(&e) {
         return FileKind::Audio(Codec::Midi);

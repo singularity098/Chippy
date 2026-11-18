@@ -1,8 +1,11 @@
-//! The PSF container, as used by USF (Nintendo 64) rips: a header, a
-//! "reserved" area (for USF, the ROM and save-state sections), an unused
-//! compressed program area, and a `[TAG]` block of `key=value` lines.
+//! The PSF container, shared by many rip formats (PSF, PSF2, SSF, DSF,
+//! QSF, USF, GSF, 2SF...): a header, a "reserved" area, a compressed
+//! program area, and a `[TAG]` block of `key=value` lines.
 
 use anyhow::{bail, Result};
+
+use crate::decode::DecodeOptions;
+use crate::meta::TrackMeta;
 
 pub const VERSION_USF: u8 = 0x21;
 
@@ -64,6 +67,46 @@ pub fn parse(data: &[u8]) -> Result<Psf> {
         }
     }
     Ok(psf)
+}
+
+/// When a track fades and for how long (ms), from its `length` and `fade`
+/// tags, or the defaults for an untimed track.
+pub fn timing(p: &Psf, opts: &DecodeOptions) -> (u64, u64) {
+    let length = p.tag("length").and_then(parse_time_ms).filter(|&l| l > 0);
+    let fade = p.tag("fade").and_then(parse_time_ms);
+    match length {
+        Some(l) => (l, fade.unwrap_or(opts.fade_ms.min(l / 4))),
+        None => (opts.default_length_ms, fade.unwrap_or(opts.fade_ms)),
+    }
+}
+
+/// The tags of a PSF-family file as track metadata.
+pub fn meta(p: &Psf, opts: &DecodeOptions, system: &str, format: &str) -> TrackMeta {
+    let (length, fade) = timing(p, opts);
+    let t = |k: &str| p.tag(k).unwrap_or("").to_string();
+    TrackMeta {
+        title: t("title"),
+        artist: t("artist"),
+        album: t("game"),
+        year: t("year"),
+        genre: t("genre"),
+        comment: t("comment"),
+        copyright: t("copyright"),
+        dumper: p
+            .tags
+            .iter()
+            .find(|(k, v)| k.ends_with("by") && !v.is_empty())
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default(),
+        track_no: p
+            .tag("track")
+            .and_then(|s| s.split('/').next()?.trim().parse().ok()),
+        length_ms: Some(length + fade),
+        system: system.into(),
+        format: format.into(),
+        channels: Some(2),
+        ..Default::default()
+    }
 }
 
 /// Parses a PSF time: "3:25.5", "1:02:03", "95", "95.25" (seconds).

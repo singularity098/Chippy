@@ -4,6 +4,7 @@ members = [
     "crates/gme-sys",
     "crates/vgmstream-sys",
     "crates/lazyusf-sys",
+    "crates/aosdk-sys",
     "crates/chippy-core",
     "crates/chippy",
 ]
@@ -20,6 +21,7 @@ rust-version = "1.80"
 gme-sys = { path = "crates/gme-sys" }
 vgmstream-sys = { path = "crates/vgmstream-sys" }
 lazyusf-sys = { path = "crates/lazyusf-sys" }
+aosdk-sys = { path = "crates/aosdk-sys" }
 chippy-core = { path = "crates/chippy-core" }
 anyhow = "1"
 log = "0.4"

@@ -1,8 +1,11 @@
-//! The PSF container, as used by USF (Nintendo 64) rips: a header, a
-//! "reserved" area (for USF, the ROM and save-state sections), an unused
-//! compressed program area, and a `[TAG]` block of `key=value` lines.
+//! The PSF container, shared by many rip formats (PSF, PSF2, SSF, DSF,
+//! QSF, USF, GSF, 2SF...): a header, a "reserved" area, a compressed
+//! program area, and a `[TAG]` block of `key=value` lines.
 
 use anyhow::{bail, Result};
+
+use crate::decode::DecodeOptions;
+use crate::meta::TrackMeta;
 
 pub const VERSION_USF: u8 = 0x21;
 
@@ -10,6 +13,8 @@ pub const VERSION_USF: u8 = 0x21;
 pub struct Psf {
     pub version: u8,
     pub reserved: Vec<u8>,
+    /// The program section, zlib-compressed.
+    pub program: Vec<u8>,
     /// Tags in file order; keys are lowercase. Multi-line values are joined
     /// with newlines.
     pub tags: Vec<(String, String)>,
@@ -40,6 +45,7 @@ pub fn parse(data: &[u8]) -> Result<Psf> {
     let mut psf = Psf {
         version,
         reserved: data[rstart..rend].to_vec(),
+        program: data[rend..pend].to_vec(),
         tags: Vec::new(),
     };
     let rest = &data[pend..];
@@ -64,6 +70,121 @@ pub fn parse(data: &[u8]) -> Result<Psf> {
         }
     }
     Ok(psf)
+}
+
+impl Psf {
+    /// The program section, inflated.
+    pub fn program_data(&self) -> Result<Vec<u8>> {
+        use std::io::Read;
+        let mut out = Vec::new();
+        if !self.program.is_empty() {
+            flate2::read::ZlibDecoder::new(&self.program[..])
+                .read_to_end(&mut out)
+                .map_err(|e| anyhow::anyhow!("bad PSF program data: {e}"))?;
+        }
+        Ok(out)
+    }
+}
+
+/// Loads a PSF-family file with its libraries in the order players use:
+/// `_lib` (and its own libraries) first, then the file, then `_lib2`,
+/// `_lib3`... `visit` gets each file in that order. Returns the file's own
+/// tags.
+pub fn load_chain(
+    loc: &crate::vfs::Location,
+    version: u8,
+    visit: &mut dyn FnMut(&Psf) -> Result<()>,
+) -> Result<Psf> {
+    fn go(
+        loc: &crate::vfs::Location,
+        version: u8,
+        depth: usize,
+        visit: &mut dyn FnMut(&Psf) -> Result<()>,
+    ) -> Result<Psf> {
+        if depth > 10 {
+            bail!("PSF libraries nest too deep");
+        }
+        let p = parse(&loc.read()?)?;
+        if p.version != version {
+            bail!(
+                "unexpected PSF version {:#x} (wanted {version:#x})",
+                p.version
+            );
+        }
+        let lib = |key: &str| -> Result<Option<crate::vfs::Location>> {
+            match p.tag(key) {
+                Some(name) if !name.is_empty() => loc
+                    .sibling(name)
+                    .map(Some)
+                    .ok_or_else(|| anyhow::anyhow!("missing library {name}")),
+                _ => Ok(None),
+            }
+        };
+        if let Some(l) = lib("_lib")? {
+            go(&l, version, depth + 1, visit)?;
+        }
+        visit(&p)?;
+        for n in 2..=9 {
+            match lib(&format!("_lib{n}"))? {
+                Some(l) => {
+                    go(&l, version, depth + 1, visit)?;
+                }
+                None => break,
+            }
+        }
+        Ok(p)
+    }
+    go(loc, version, 0, visit)
+}
+
+/// Copies `data` to `offset` in `image`, growing it (to a power of two when
+/// `pow2`) as needed.
+pub fn place(image: &mut Vec<u8>, offset: usize, data: &[u8], pow2: bool) {
+    let end = offset + data.len();
+    if image.len() < end {
+        image.resize(if pow2 { end.next_power_of_two() } else { end }, 0);
+    }
+    image[offset..end].copy_from_slice(data);
+}
+
+/// When a track fades and for how long (ms), from its `length` and `fade`
+/// tags, or the defaults for an untimed track.
+pub fn timing(p: &Psf, opts: &DecodeOptions) -> (u64, u64) {
+    let length = p.tag("length").and_then(parse_time_ms).filter(|&l| l > 0);
+    let fade = p.tag("fade").and_then(parse_time_ms);
+    match length {
+        Some(l) => (l, fade.unwrap_or(opts.fade_ms.min(l / 4))),
+        None => (opts.default_length_ms, fade.unwrap_or(opts.fade_ms)),
+    }
+}
+
+/// The tags of a PSF-family file as track metadata.
+pub fn meta(p: &Psf, opts: &DecodeOptions, system: &str, format: &str) -> TrackMeta {
+    let (length, fade) = timing(p, opts);
+    let t = |k: &str| p.tag(k).unwrap_or("").to_string();
+    TrackMeta {
+        title: t("title"),
+        artist: t("artist"),
+        album: t("game"),
+        year: t("year"),
+        genre: t("genre"),
+        comment: t("comment"),
+        copyright: t("copyright"),
+        dumper: p
+            .tags
+            .iter()
+            .find(|(k, v)| k.ends_with("by") && !v.is_empty())
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default(),
+        track_no: p
+            .tag("track")
+            .and_then(|s| s.split('/').next()?.trim().parse().ok()),
+        length_ms: Some(length + fade),
+        system: system.into(),
+        format: format.into(),
+        channels: Some(2),
+        ..Default::default()
+    }
 }
 
 /// Parses a PSF time: "3:25.5", "1:02:03", "95", "95.25" (seconds).

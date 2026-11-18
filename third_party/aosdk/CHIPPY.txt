@@ -1,0 +1,6 @@
+Audio Overload SDK 1.4.8 as modified by the DeaDBeeF project (reentrant engines),
+from https://github.com/DeaDBeeF-Player/deadbeef/tree/master/plugins/psf/aosdk
+
+Chippy's change: psfmain.c no longer includes DeaDBeeF's headers; ao_get_lib
+is provided by crates/aosdk-sys.
+eng_psf.c, eng_psf2.c: the SPU no longer stops or fades at the tagged length; Chippy does.

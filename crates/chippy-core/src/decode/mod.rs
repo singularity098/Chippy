@@ -1,9 +1,18 @@
 //! Decoding any supported track to interleaved stereo `f32` PCM.
 
+pub mod ao;
 pub mod gme;
+pub mod gsf;
+pub mod midi;
+pub mod sgc;
+pub mod sid;
 pub mod sym;
+pub mod timed;
+pub mod twosf;
 pub mod usf;
 pub mod vgm;
+pub mod wsr;
+pub mod xmp;
 
 use anyhow::Result;
 
@@ -79,6 +88,14 @@ pub fn open_decoder(t: &TrackRef, opts: &DecodeOptions) -> Result<Box<dyn Decode
             opts,
         )?)),
         Some(Codec::Usf) => Ok(Box::new(usf::UsfDecoder::open(&t.loc, opts)?)),
+        Some(Codec::Midi) => Ok(Box::new(midi::MidiDecoder::open(&t.loc, opts)?)),
+        Some(Codec::Ao) => Ok(Box::new(ao::open(&t.loc, opts)?)),
+        Some(Codec::Sid) => Ok(Box::new(sid::open(&t.loc, t.sub, opts)?)),
+        Some(Codec::Sgc) => Ok(Box::new(sgc::open(&t.loc, t.sub, opts)?)),
+        Some(Codec::Gsf) => Ok(Box::new(gsf::open(&t.loc, opts)?)),
+        Some(Codec::Twosf) => Ok(Box::new(twosf::open(&t.loc, opts)?)),
+        Some(Codec::Wsr) => Ok(Box::new(wsr::open(&t.loc, t.sub, opts)?)),
+        Some(Codec::Module) => Ok(Box::new(xmp::XmpDecoder::open(&t.loc, opts)?)),
         Some(Codec::Common) => match sym::SymDecoder::open(&t.loc) {
             Ok(d) => Ok(Box::new(d)),
             Err(e) => vgm::VgmDecoder::open(&t.loc, t.sub, opts)
@@ -99,6 +116,9 @@ pub fn track_list(loc: &Location, opts: &DecodeOptions) -> Result<Vec<SubTrack>>
     match codec_of(loc) {
         Some(Codec::Gme) => gme::track_list(loc, opts),
         Some(Codec::Vgmstream) => vgm::track_list(loc, opts),
+        Some(Codec::Sid) => sid::track_list(loc, opts),
+        Some(Codec::Sgc) => sgc::track_list(loc, opts),
+        Some(Codec::Wsr) => wsr::track_list(loc, opts),
         _ => Ok(vec![SubTrack {
             index: 0,
             title: loc.name(),
@@ -112,6 +132,14 @@ pub fn read_meta(t: &TrackRef, opts: &DecodeOptions) -> Result<TrackMeta> {
     match codec_of(&t.loc) {
         Some(Codec::Gme) => gme::meta(&t.loc, t.sub.unwrap_or(0), opts),
         Some(Codec::Usf) => usf::meta(&t.loc, opts),
+        Some(Codec::Midi) => midi::meta(&t.loc),
+        Some(Codec::Ao) => ao::meta(&t.loc, opts),
+        Some(Codec::Sid) => sid::meta(&t.loc, t.sub, opts),
+        Some(Codec::Sgc) => sgc::meta(&t.loc, t.sub, opts),
+        Some(Codec::Gsf) => gsf::meta(&t.loc, opts),
+        Some(Codec::Twosf) => twosf::meta(&t.loc, opts),
+        Some(Codec::Wsr) => wsr::meta(&t.loc, t.sub, opts),
+        Some(Codec::Module) => xmp::meta(&t.loc),
         Some(Codec::Common) => sym::meta(&t.loc).or_else(|_| vgm::meta(&t.loc, t.sub, opts)),
         Some(Codec::Vgmstream) | None => vgm::meta(&t.loc, t.sub, opts),
     }
@@ -154,7 +182,7 @@ pub fn apply_fade(buf: &mut [f32], pos: u64, start: u64, end: u64) {
     if end <= start {
         return;
     }
-    for (i, f) in buf.chunks_exact_mut(2).enumerate() {
+    for (i, f) in buf.as_chunks_mut::<2>().0.iter_mut().enumerate() {
         let p = pos + i as u64;
         if p >= start {
             let g = if p >= end {
@@ -165,6 +193,48 @@ pub fn apply_fade(buf: &mut [f32], pos: u64, start: u64, end: u64) {
             f[0] *= g;
             f[1] *= g;
         }
+    }
+}
+
+/// Helpers for the decoders' tests.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::io::Write;
+
+    pub fn hex(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// A PSF-family file: version `v`, the program section, tags.
+    pub fn psf(v: u8, program: &[u8], tags: &str) -> Vec<u8> {
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        z.write_all(program).unwrap();
+        let z = z.finish().unwrap();
+        let mut h = flate2::Crc::new();
+        h.update(&z);
+        let mut f = b"PSF".to_vec();
+        f.push(v);
+        f.extend(0u32.to_le_bytes());
+        f.extend((z.len() as u32).to_le_bytes());
+        f.extend(h.sum().to_le_bytes());
+        f.extend(z);
+        f.extend(b"[TAG]");
+        f.extend(tags.as_bytes());
+        f
+    }
+
+    /// The frequency (Hz) of the left channel's rising zero crossings.
+    pub fn pitch(frames: &[f32], rate: u32) -> f64 {
+        let left: Vec<f32> = frames.as_chunks::<2>().0.iter().map(|f| f[0]).collect();
+        let mean = left.iter().sum::<f32>() / left.len() as f32;
+        let n = left
+            .windows(2)
+            .filter(|w| w[0] < mean && w[1] >= mean)
+            .count();
+        n as f64 / left.len() as f64 * rate as f64
     }
 }
 

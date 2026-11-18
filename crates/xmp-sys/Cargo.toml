@@ -1,0 +1,12 @@
+[package]
+name = "xmp-sys"
+description = "Tracker modules (MOD, XM, S3M, IT and many more) through libxmp, built from third_party/libxmp"
+version.workspace = true
+edition.workspace = true
+license = "MIT"
+links = "xmp"
+build = "build.rs"
+
+[build-dependencies]
+cc = "1"
+cmake = "0.1"

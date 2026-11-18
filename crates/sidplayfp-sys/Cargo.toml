@@ -1,0 +1,11 @@
+[package]
+name = "sidplayfp-sys"
+description = "A small C API over libsidplayfp with reSIDfp (Commodore 64 SID music), built from third_party/libsidplayfp"
+version.workspace = true
+edition.workspace = true
+license = "GPL-2.0-or-later"
+links = "sidplayfp"
+build = "build.rs"
+
+[build-dependencies]
+cc = "1"

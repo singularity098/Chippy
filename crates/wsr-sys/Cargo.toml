@@ -1,0 +1,11 @@
+[package]
+name = "wsr-sys"
+description = "Bandai WonderSwan sound (WSR) through Mednafen's WonderSwan core, built from third_party/wsr"
+version.workspace = true
+edition.workspace = true
+license = "GPL-2.0-or-later"
+links = "wsr"
+build = "build.rs"
+
+[build-dependencies]
+cc = "1"

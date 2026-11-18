@@ -12,8 +12,11 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use chippy_core::decode::midi;
 use chippy_core::meta::{self, format_ms, TrackMeta};
 use chippy_core::playlist::Playlist as Queue;
 use chippy_core::settings::{default_columns, Repeat, Settings};
@@ -22,9 +25,10 @@ use chippy_core::{decode, formats, DecodeOptions};
 
 use crate::art::{self, Picture};
 use crate::audio::Output;
+use crate::media::{Media, Playback, Request};
 use crate::player::{Cmd, Event, Player};
 use crate::spectrum::{Spectrum, FFT_LEN};
-use crate::{Browser, ColumnItem, FileItem, MainWindow, Now, PlRow, Playlist, Prefs, Theme};
+use crate::{Browser, ColumnItem, Crumb, FileItem, MainWindow, Now, PlRow, Playlist, Prefs, Theme};
 
 #[derive(Default)]
 pub struct StartOptions {
@@ -43,23 +47,13 @@ fn ss(s: impl AsRef<str>) -> SharedString {
     SharedString::from(s.as_ref())
 }
 
-/// What is saved of the playlist between runs.
-#[derive(serde::Serialize, serde::Deserialize, Default)]
-struct SavedQueue {
-    tracks: Vec<TrackRef>,
-    current: Option<usize>,
-}
-
-fn queue_path() -> PathBuf {
-    chippy_core::settings::config_dir().join("playlist.json")
-}
-
 pub struct App {
     ui: slint::Weak<MainWindow>,
     settings: Settings,
     settings_dirty: Option<Instant>,
     output: Output,
     player: Player,
+    media: Media,
 
     // ---- file browser
     node: Option<Node>,
@@ -75,8 +69,8 @@ pub struct App {
     queue: Queue,
     queue_gen: u64,
     meta_cache: HashMap<TrackRef, TrackMeta>,
-    meta_tx: Sender<(u64, usize, TrackMeta)>,
-    meta_rx: Receiver<(u64, usize, TrackMeta)>,
+    meta_tx: Sender<(u64, usize, TrackRef, TrackMeta)>,
+    meta_rx: Receiver<(u64, usize, TrackRef, TrackMeta)>,
     rows: Rc<VecModel<PlRow>>,
     columns: Rc<VecModel<ColumnItem>>,
     all_columns: Rc<VecModel<ColumnItem>>,
@@ -97,6 +91,22 @@ pub struct App {
     levels: [f32; 2],
     last_tick: Instant,
     toast_until: Option<Instant>,
+
+    // ---- MIDI
+    /// The SF2 files of the SoundFont folder.
+    soundfonts: Vec<PathBuf>,
+    /// Recently used SoundFonts, kept loaded so switching back is instant.
+    font_cache: Vec<(PathBuf, Arc<rustysynth::SoundFont>)>,
+    /// Bumped for each load, so only the last one asked for is used.
+    font_request: Arc<AtomicU64>,
+    font_tx: Sender<FontLoaded>,
+    font_rx: Receiver<FontLoaded>,
+}
+
+/// A SoundFont finished loading (or failed to).
+struct FontLoaded {
+    path: PathBuf,
+    result: Result<Arc<rustysynth::SoundFont>, String>,
 }
 
 macro_rules! on {
@@ -132,6 +142,7 @@ impl App {
         let (meta_tx, meta_rx) = crossbeam_channel::unbounded();
         let (art_tx, art_rx) = crossbeam_channel::unbounded();
         let bands = settings.spectrum_bars as usize;
+        let (font_tx, font_rx) = crossbeam_channel::unbounded();
 
         let app = App {
             ui: ui.as_weak(),
@@ -139,6 +150,7 @@ impl App {
             settings_dirty: None,
             output,
             player,
+            media: Media::connect(),
             node: None,
             entries: Vec::new(),
             shown: Vec::new(),
@@ -169,14 +181,20 @@ impl App {
             levels: [0.0; 2],
             last_tick: Instant::now(),
             toast_until: None,
+            soundfonts: Vec::new(),
+            font_cache: Vec::new(),
+            font_request: Arc::new(AtomicU64::new(0)),
+            font_tx,
+            font_rx,
         };
         let app = Rc::new(RefCell::new(app));
         Self::wire(&app, ui);
         {
             let mut a = app.borrow_mut();
             a.init_ui();
-            a.restore_queue();
-            let start = a.start_dir();
+            a.scan_soundfonts();
+            a.load_soundfont();
+            let start = a.home_dir();
             a.navigate(&start, true);
             if let Some(p) = opts.open {
                 a.open_external(&p);
@@ -319,6 +337,25 @@ impl App {
             .set_flag(&id, v));
         on!(app, s, on_step, |a, id: SharedString, d: i32| a
             .step(&id, d));
+        on!(app, s, on_set_soundfont_dir, |a, t: SharedString| {
+            let p = expand(&t);
+            if p.is_dir() {
+                a.set_soundfont_dir(p);
+            } else {
+                a.toast(&format!("{} is not a folder", p.display()), true);
+                a.sync_prefs();
+            }
+        });
+        on!(app, s, on_soundfont_use_browser_dir, |a| {
+            if let Some(Node::Dir(d)) = &a.node {
+                let d = d.clone();
+                a.set_soundfont_dir(d);
+            } else {
+                a.toast("SoundFonts have to be in a folder on disk", true);
+            }
+        });
+        on!(app, s, on_pick_soundfont, |a, i: i32| a.pick_soundfont(i));
+        on!(app, n, on_cycle_soundfont, |a, d: i32| a.cycle_soundfont(d));
         on!(app, s, on_set_theme, |a, i: i32| {
             let names: Vec<String> = a
                 .ui()
@@ -335,9 +372,12 @@ impl App {
             }
         });
 
-        on!(app, ui, on_start_drag, |a| a.with_winit(|w| {
-            let _ = w.drag_window();
-        }));
+        on!(app, ui, on_start_drag, |a| {
+            a.with_winit(|w| {
+                let _ = w.drag_window();
+            });
+            a.release_pointer();
+        });
         on!(app, ui, on_start_resize, |a, dir: SharedString| {
             use slint::winit_030::winit::window::ResizeDirection as D;
             let d = match dir.as_str() {
@@ -353,6 +393,7 @@ impl App {
             a.with_winit(|w| {
                 let _ = w.drag_resize_window(d);
             });
+            a.release_pointer();
         });
         on!(app, ui, on_minimize_window, |a| a
             .ui()
@@ -393,6 +434,7 @@ impl App {
                     WindowEvent::CursorMoved { position, .. } => {
                         let s = w.scale_factor();
                         cursor = (position.x as f32 / s, position.y as f32 / s);
+                        CURSOR.with(|c| c.set(cursor));
                         if let Some(ui) = weak.upgrade() {
                             ui.invoke_pointer_moved(cursor.0, cursor.1);
                         }
@@ -434,6 +476,25 @@ impl App {
                 }
                 slint::CloseRequestResponse::HideWindow
             }
+        });
+    }
+
+    /// Once the window manager has taken over a move or a resize, the
+    /// button's release goes to it, not to us: without one, the element
+    /// pressed would keep the pointer and the window would ignore the mouse.
+    fn release_pointer(&self) {
+        let (x, y) = CURSOR.with(|c| c.get());
+        let position = slint::LogicalPosition::new(x, y);
+        let weak = self.ui.clone();
+        // After the press being handled now has been delivered.
+        slint::Timer::single_shot(Duration::ZERO, move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let w = ui.window();
+            w.dispatch_event(slint::platform::WindowEvent::PointerReleased {
+                position,
+                button: slint::platform::PointerEventButton::Left,
+            });
+            w.dispatch_event(slint::platform::WindowEvent::PointerExited);
         });
     }
 
@@ -525,6 +586,19 @@ impl App {
         p.set_fade(ss(format!("{} s", s.fade_s)));
         p.set_loops(ss(format!("{}", s.loops)));
         p.set_bars(ss(format!("{}", s.spectrum_bars)));
+        p.set_soundfont_dir(ss(s
+            .soundfont_dir
+            .as_ref()
+            .map(|d| tilde(d))
+            .unwrap_or_default()));
+        let names: Vec<SharedString> = self.soundfonts.iter().map(|f| ss(file_name(f))).collect();
+        p.set_soundfonts(ModelRc::new(VecModel::from(names)));
+        p.set_soundfont(self.soundfont_index().map(|i| i as i32).unwrap_or(-1));
+        ui.global::<Now>().set_soundfont(ss(s
+            .soundfont
+            .as_deref()
+            .map(|n| formats::split_name(n).0)
+            .unwrap_or("")));
         let theme = ui.global::<Theme>();
         p.set_theme(theme.get_index());
         let b = ui.global::<Browser>();
@@ -634,7 +708,6 @@ impl App {
     pub fn shutdown(&mut self) {
         self.settings.volume = self.settings.volume.clamp(0.0, 1.0);
         self.save_settings();
-        self.save_queue();
         self.player.send(Cmd::Stop);
     }
 
@@ -646,6 +719,137 @@ impl App {
             Some(Instant::now() + Duration::from_millis(if error { 5000 } else { 2500 }));
     }
 
+    // ----------------------------------------------------------------- MIDI
+
+    fn scan_soundfonts(&mut self) {
+        self.soundfonts = self
+            .settings
+            .soundfont_dir
+            .as_ref()
+            .and_then(|d| std::fs::read_dir(d).ok())
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.is_file() && formats::extension(&file_name(p)) == "sf2")
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.soundfonts.sort_by_key(|p| file_name(p).to_lowercase());
+        // The one chosen is gone (or none was): take the first.
+        if self.soundfont_index().is_none() {
+            self.settings.soundfont = self.soundfonts.first().map(|p| file_name(p));
+        }
+        self.sync_prefs();
+    }
+
+    fn soundfont_index(&self) -> Option<usize> {
+        let name = self.settings.soundfont.as_deref()?;
+        self.soundfonts.iter().position(|p| file_name(p) == name)
+    }
+
+    fn set_soundfont_dir(&mut self, dir: PathBuf) {
+        self.settings.soundfont_dir = Some(dir);
+        self.settings.soundfont = None;
+        self.scan_soundfonts();
+        self.load_soundfont();
+        self.mark_dirty();
+        if self.soundfonts.is_empty() {
+            self.toast("No SoundFonts (.sf2) in that folder", true);
+        }
+    }
+
+    fn pick_soundfont(&mut self, i: i32) {
+        let Some(p) = self.soundfonts.get(i.max(0) as usize) else {
+            return;
+        };
+        self.settings.soundfont = Some(file_name(p));
+        self.mark_dirty();
+        self.sync_prefs();
+        self.load_soundfont();
+    }
+
+    fn cycle_soundfont(&mut self, d: i32) {
+        let n = self.soundfonts.len() as i32;
+        if n == 0 {
+            self.toast(
+                "Choose a folder of SoundFonts in Settings, under MIDI",
+                true,
+            );
+            return;
+        }
+        let i = self
+            .soundfont_index()
+            .map(|i| i as i32)
+            .unwrap_or(-d.signum());
+        self.pick_soundfont((i + d).rem_euclid(n));
+        let name = self.settings.soundfont.clone().unwrap_or_default();
+        self.toast(
+            &format!("SoundFont: {}", formats::split_name(&name).0),
+            false,
+        );
+    }
+
+    /// Loads the chosen SoundFont in the background and hands it to the
+    /// MIDI player, which switches to it even in the middle of a song.
+    fn load_soundfont(&mut self) {
+        let id = self.font_request.fetch_add(1, Ordering::SeqCst) + 1;
+        let Some(path) = self.soundfont_index().map(|i| self.soundfonts[i].clone()) else {
+            midi::set_soundfont(None);
+            self.ui()
+                .global::<Prefs>()
+                .set_soundfont_status(SharedString::new());
+            return;
+        };
+        if let Some(i) = self.font_cache.iter().position(|(p, _)| *p == path) {
+            let entry = self.font_cache.remove(i);
+            midi::set_soundfont(Some(entry.1.clone()));
+            self.font_cache.push(entry);
+            self.ui()
+                .global::<Prefs>()
+                .set_soundfont_status(SharedString::new());
+            return;
+        }
+        midi::soundfont_loading();
+        self.ui()
+            .global::<Prefs>()
+            .set_soundfont_status(ss(format!("Loading {}…", file_name(&path))));
+        let (tx, latest) = (self.font_tx.clone(), self.font_request.clone());
+        std::thread::Builder::new()
+            .name("soundfont".into())
+            .spawn(move || {
+                let result = midi::load_soundfont(&path).map_err(|e| format!("{e:#}"));
+                // Only the last SoundFont asked for plays.
+                if latest.load(Ordering::SeqCst) == id {
+                    match &result {
+                        Ok(f) => midi::set_soundfont(Some(f.clone())),
+                        Err(_) => midi::set_soundfont(None),
+                    }
+                }
+                let _ = tx.send(FontLoaded { path, result });
+            })
+            .ok();
+    }
+
+    fn font_loaded(&mut self, f: FontLoaded) {
+        let ui = self.ui();
+        let p = ui.global::<Prefs>();
+        match f.result {
+            Ok(font) => {
+                self.font_cache.retain(|(p, _)| *p != f.path);
+                self.font_cache.push((f.path, font));
+                // Large SoundFonts take a lot of memory: keep a few.
+                if self.font_cache.len() > 3 {
+                    self.font_cache.remove(0);
+                }
+                p.set_soundfont_status(SharedString::new());
+            }
+            Err(e) => {
+                p.set_soundfont_status(ss(&e));
+                self.toast(&e, true);
+            }
+        }
+    }
+
     // -------------------------------------------------------- file browser
 
     fn home_dir(&self) -> PathBuf {
@@ -655,14 +859,6 @@ impl App {
             .filter(|d| d.is_dir())
             .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
             .unwrap_or_else(|| PathBuf::from("/"))
-    }
-
-    fn start_dir(&self) -> PathBuf {
-        self.settings
-            .last_dir
-            .clone()
-            .filter(|d| vfs::resolve(d).is_ok())
-            .unwrap_or_else(|| self.home_dir())
     }
 
     /// Shows a virtual path in the browser. Returns false when it cannot.
@@ -697,8 +893,6 @@ impl App {
         self.node = Some(node);
         self.entries = entries;
         self.filter.clear();
-        self.settings.last_dir = Some(vp.clone());
-        self.mark_dirty();
         let ui = self.ui();
         let b = ui.global::<Browser>();
         b.set_filter(SharedString::new());
@@ -781,8 +975,18 @@ impl App {
             0
         });
         if let Some(n) = &self.node {
-            b.set_path(ss(n.vpath().to_string_lossy()));
+            let vp = n.vpath();
+            b.set_path(ss(tilde(&vp)));
             b.set_title(ss(n.display_name()));
+            let crumbs: Vec<Crumb> = crumbs(&vp)
+                .into_iter()
+                .map(|(label, path, sep)| Crumb {
+                    label: ss(label),
+                    path: ss(path.to_string_lossy()),
+                    sep,
+                })
+                .collect();
+            b.set_crumbs(ModelRc::new(VecModel::from(crumbs)));
         }
         self.update_nav_buttons();
         let (mut dirs, mut files, mut tracks) = (0, 0, 0);
@@ -1066,7 +1270,7 @@ impl App {
             .spawn(move || {
                 for (i, t) in todo {
                     let m = meta::read(&t, &opts);
-                    if tx.send((generation, i, m)).is_err() {
+                    if tx.send((generation, i, t, m)).is_err() {
                         return;
                     }
                 }
@@ -1225,35 +1429,6 @@ impl App {
         self.mark_dirty();
     }
 
-    fn save_queue(&self) {
-        let saved = SavedQueue {
-            tracks: self.queue.items.iter().map(|i| i.track.clone()).collect(),
-            current: self.queue.current,
-        };
-        let p = queue_path();
-        if let Some(d) = p.parent() {
-            let _ = std::fs::create_dir_all(d);
-        }
-        if let Ok(j) = serde_json::to_vec(&saved) {
-            let _ = std::fs::write(p, j);
-        }
-    }
-
-    fn restore_queue(&mut self) {
-        let Some(saved) = std::fs::read(queue_path())
-            .ok()
-            .and_then(|d| serde_json::from_slice::<SavedQueue>(&d).ok())
-        else {
-            return;
-        };
-        if saved.tracks.is_empty() {
-            return;
-        }
-        self.set_queue(saved.tracks, saved.current);
-        self.update_now();
-        self.load_art();
-    }
-
     // ------------------------------------------------------------ playback
 
     fn play_index(&mut self, i: usize) {
@@ -1354,6 +1529,7 @@ impl App {
             .map(|d| ms.min(d.saturating_sub(250)))
             .unwrap_or(ms);
         self.player.send(Cmd::Seek { ms });
+        self.media.moved();
         // Show the new place at once.
         let mut s = self.output.shared.lock().unwrap();
         s.buf.clear();
@@ -1384,6 +1560,7 @@ impl App {
             self.settings.volume
         };
         self.output.shared.lock().unwrap().volume = v;
+        self.media.set_volume(self.settings.volume);
         let ui = self.ui();
         let n = ui.global::<Now>();
         n.set_volume(self.settings.volume);
@@ -1433,6 +1610,10 @@ impl App {
                     self.duration_ms = m.length_ms;
                 }
                 ui.set_subtitle(ss(item.track.loc.vpath().to_string_lossy()));
+                n.set_midi(matches!(
+                    formats::kind_of(&item.track.loc.name()),
+                    formats::FileKind::Audio(formats::Codec::Midi)
+                ));
             }
             None => {
                 n.set_title(SharedString::new());
@@ -1440,6 +1621,7 @@ impl App {
                 n.set_album(SharedString::new());
                 n.set_info(SharedString::new());
                 ui.set_subtitle(SharedString::new());
+                n.set_midi(false);
             }
         }
         if self.state == State::Stopped {
@@ -1451,6 +1633,52 @@ impl App {
             .map(format_ms)
             .unwrap_or_else(|| "–:––".into())));
         n.set_seekable(self.state != State::Stopped && self.duration_ms.is_some());
+        let (title, artist, album) = (n.get_title(), n.get_artist(), n.get_album());
+        self.media.show(&title, &artist, &album, self.duration_ms);
+        let pos = self.position_ms();
+        self.media.set_playback(
+            match self.state {
+                State::Stopped => Playback::Stopped,
+                State::Playing => Playback::Playing,
+                State::Paused => Playback::Paused,
+            },
+            pos,
+        );
+    }
+
+    /// Media keys and the desktop's player controls.
+    fn media_request(&mut self, r: Request) {
+        match r {
+            Request::Play => {
+                if self.state != State::Playing {
+                    self.play_pause();
+                }
+            }
+            Request::Pause => {
+                if self.state == State::Playing {
+                    self.play_pause();
+                }
+            }
+            Request::Toggle => self.play_pause(),
+            Request::Next => self.next(false),
+            Request::Previous => self.previous(),
+            Request::Stop => self.stop(),
+            Request::SeekBy(s) => {
+                let pos = self.position_ms() as i64 + s * 1000;
+                self.seek(pos.max(0) as u64);
+            }
+            Request::SeekTo(ms) => self.seek(ms),
+            Request::Volume(v) => self.set_volume(v),
+            Request::Raise => {
+                let ui = self.ui();
+                ui.window().set_minimized(false);
+                let _ = ui.show();
+            }
+            Request::Quit => {
+                self.remember_window();
+                let _ = slint::quit_event_loop();
+            }
+        }
     }
 
     fn load_art(&mut self) {
@@ -1485,6 +1713,14 @@ impl App {
             self.open_external(&p);
         }
 
+        while let Ok(f) = self.font_rx.try_recv() {
+            self.font_loaded(f);
+        }
+
+        while let Ok(r) = self.media.requests.try_recv() {
+            self.media_request(r);
+        }
+
         while let Ok(ev) = self.player.events.try_recv() {
             match ev {
                 Event::Started {
@@ -1517,10 +1753,12 @@ impl App {
         }
 
         let mut meta_changed = false;
-        while let Ok((generation, i, m)) = self.meta_rx.try_recv() {
+        while let Ok((generation, i, track, m)) = self.meta_rx.try_recv() {
+            // Cached under the track that was read: the playlist may have
+            // changed since, and row `i` may now be another track.
+            self.meta_cache.insert(track.clone(), m.clone());
             if let Some(item) = self.queue.items.get_mut(i) {
-                self.meta_cache.insert(item.track.clone(), m.clone());
-                if generation == self.queue_gen {
+                if generation == self.queue_gen && item.track == track {
                     item.meta = Some(m);
                     self.update_row(i);
                     meta_changed = true;
@@ -1624,6 +1862,8 @@ impl App {
 }
 
 thread_local! {
+    /// Where the pointer is, in logical pixels.
+    static CURSOR: std::cell::Cell<(f32, f32)> = const { std::cell::Cell::new((0.0, 0.0)) };
     static DROPPED: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -1638,6 +1878,62 @@ fn expand(s: &str) -> PathBuf {
     PathBuf::from(s)
 }
 
+fn file_name(p: &Path) -> String {
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|h| h.components().count() > 1)
+}
+
+/// A path with the home folder written as `~`.
+fn tilde(p: &Path) -> String {
+    match home().and_then(|h| p.strip_prefix(&h).ok().map(Path::to_path_buf)) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".into(),
+        Some(rest) => format!("~/{}", rest.to_string_lossy()),
+        None => p.to_string_lossy().into_owned(),
+    }
+}
+
+/// The levels of a path, for the path bar: (label, path, after a "/").
+/// The home folder is one level, `~`.
+fn crumbs(p: &Path) -> Vec<(String, PathBuf, bool)> {
+    use std::path::Component;
+    let mut out = Vec::new();
+    let mut acc = PathBuf::new();
+    let home = home();
+    for c in p.components() {
+        acc.push(c.as_os_str());
+        match c {
+            Component::RootDir => out.push(("/".to_string(), acc.clone(), false)),
+            Component::Prefix(pre) => out.push((
+                pre.as_os_str().to_string_lossy().into_owned(),
+                acc.clone(),
+                false,
+            )),
+            _ => {
+                if home.as_deref() == Some(acc.as_path()) {
+                    out.clear();
+                    out.push(("~".to_string(), acc.clone(), false));
+                    continue;
+                }
+                // No "/" straight after the root.
+                let sep = !matches!(out.last(), Some((l, _, _)) if l == "/" || l.ends_with('\\'));
+                out.push((
+                    c.as_os_str().to_string_lossy().into_owned(),
+                    acc.clone(),
+                    sep,
+                ));
+            }
+        }
+    }
+    out
+}
+
 fn human_size(n: u64) -> String {
     const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
     let mut v = n as f64;
@@ -1650,5 +1946,27 @@ fn human_size(n: u64) -> String {
         format!("{n} B")
     } else {
         format!("{v:.1} {}", UNITS[u])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_bar() {
+        std::env::set_var("HOME", "/home/me");
+        assert_eq!(tilde(Path::new("/home/me/music")), "~/music");
+        assert_eq!(tilde(Path::new("/home/me")), "~");
+        assert_eq!(tilde(Path::new("/srv/x")), "/srv/x");
+        let c = crumbs(Path::new("/home/me/music/nes.zip"));
+        let labels: Vec<&str> = c.iter().map(|x| x.0.as_str()).collect();
+        assert_eq!(labels, ["~", "music", "nes.zip"]);
+        assert_eq!(c[1].1, PathBuf::from("/home/me/music"));
+        let c = crumbs(Path::new("/srv/x"));
+        assert_eq!(
+            c.iter().map(|x| (x.0.as_str(), x.2)).collect::<Vec<_>>(),
+            [("/", false), ("srv", false), ("x", true)]
+        );
     }
 }

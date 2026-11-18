@@ -35,10 +35,17 @@ fn cstr(p: *const c_char) -> String {
     if p.is_null() {
         String::new()
     } else {
-        unsafe { CStr::from_ptr(p) }
-            .to_string_lossy()
-            .trim()
-            .to_string()
+        let bytes = unsafe { CStr::from_ptr(p) }.to_bytes();
+        match std::str::from_utf8(bytes) {
+            Ok(s) => s.trim().to_string(),
+            // Older rips (SPC ID666 tags in particular) are Latin-1.
+            Err(_) => bytes
+                .iter()
+                .map(|&c| c as char)
+                .collect::<String>()
+                .trim()
+                .to_string(),
+        }
     }
 }
 
@@ -63,8 +70,13 @@ fn open_emu(loc: &Location, rate: u32) -> Result<Emu> {
         bail!("not a supported chiptune");
     }
     let emu = Emu(emu);
-    // An M3U playlist next to the file names (and orders) its tracks.
+    // An M3U playlist next to the file names (and orders) its tracks. NSFE
+    // carries its own names, lengths and order, which an M3U would replace
+    // (loading one turns off the NSFE's playlist).
     let name = loc.name();
+    if crate::formats::extension(&name) == "nsfe" {
+        return Ok(emu);
+    }
     let (stem, _) = crate::formats::split_name(&name);
     if let Some(m3u) = loc.sibling(&format!("{stem}.m3u")) {
         if let Ok(d) = m3u.read() {
@@ -236,7 +248,7 @@ pub fn meta(loc: &Location, track: u32, opts: &DecodeOptions) -> Result<TrackMet
 }
 
 /// A four-digit year in a copyright line ("1988 Capcom").
-fn year_in(s: &str) -> Option<String> {
+pub(crate) fn year_in(s: &str) -> Option<String> {
     let b = s.as_bytes();
     (0..b.len().saturating_sub(3)).find_map(|i| {
         let w = &s[i..i + 4];

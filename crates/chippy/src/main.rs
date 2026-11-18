@@ -5,6 +5,7 @@ mod app;
 mod art;
 mod audio;
 mod icons;
+mod media;
 mod player;
 mod spectrum;
 

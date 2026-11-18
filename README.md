@@ -19,8 +19,21 @@ files as if they were folders.
 | [Game Music Emu](https://github.com/libgme/game-music-emu) | NSF, NSFE, SPC, VGM, VGZ, GBS, HES, KSS, AY, SAP, GYM (M3U track lists next to NSF/GBS/etc. are read for track names and lengths) |
 | [lazyusf2](https://github.com/derselbst/lazyusf2) | USF and miniUSF (Nintendo 64), with `_lib` chains |
 | [vgmstream](https://github.com/vgmstream/vgmstream) | Hundreds of game formats: ADX, HCA, BRSTM, BCSTM, XWB, FSB, AT3, DSP, GENH/TXTH... including multi-subsong files, with MP3, Vorbis, Opus, ATRAC3, XMA and WMA streams inside them (through mpg123, libvorbis and FFmpeg) |
+| [Audio Overload SDK](https://github.com/DeaDBeeF-Player/deadbeef/tree/master/plugins/psf) | PSF/miniPSF (PlayStation), PSF2/miniPSF2 (PlayStation 2), SSF/miniSSF (Saturn), DSF/miniDSF (Dreamcast), QSF/miniQSF (Capcom QSound), SPU. No console BIOS needed |
+| [lazyusf2](https://github.com/derselbst/lazyusf2) | USF and miniUSF (Nintendo 64) |
+| [mGBA](https://mgba.io) (GBA core) | GSF and miniGSF (Game Boy Advance) |
+| vio2sf (DeSmuME) | 2SF and mini2SF (Nintendo DS) |
+| [Mednafen](https://mednafen.github.io)'s WonderSwan core | WSR (Bandai WonderSwan); a NEZplug-style M3U beside it lists its songs |
+| [libsidplayfp](https://github.com/libsidplayfp/libsidplayfp) with reSIDfp | SID (PSID/RSID, Commodore 64), all subtunes; HVSC's `Songlengths.md5` gives lengths when found above the tune |
+| Chippy's own Z80 + SN76489 | SGC (Sega Master System / Game Gear; not the FM unit or ColecoVision) |
+| [libxmp](https://github.com/libxmp/libxmp) | Tracker modules: MOD, XM, S3M, IT, MED, MTM, 669, OKT, STM, FAR, ULT, PTM, DBM, AMF, MDL, PSM, GDM, IMF, UMX... |
+| [RustySynth](https://github.com/sinshu/rustysynth) | MIDI (MID, MIDI, KAR, RMI, SMF) through SF2 SoundFonts |
+| [vgmstream](https://github.com/vgmstream/vgmstream) | Hundreds of game formats: ADX, HCA, BRSTM, BCSTM, XWB, FSB, AT3, DSP, GENH/TXTH... including multi-subsong files |
 | [Symphonia](https://github.com/pdeljanov/Symphonia) | MP3, FLAC, WAV, OGG Vorbis, M4A/AAC, ALAC, AIFF, CAF, MKV/WebM audio |
 | vgmstream's FFmpeg | Opus, WMA, AC-3 |
+
+All the PSF-family formats follow `_lib` chains to their libraries, beside
+the file or inside the same archive.
 
 Tags come from [lofty](https://github.com/Serial-ATA/lofty-rs) for common
 formats, and from each emulator's own metadata for chiptunes (GME track
@@ -30,16 +43,19 @@ info, PSF tags, vgmstream stream names).
 
 * **File browser (left edge).** Rest the mouse on the left edge, swipe in,
   tap the edge, press `B`, or click the ☰ button. It has back, forward, up,
-  refresh and home (your music folder), an editable path, and a filter box
+  refresh and home (your music folder), a path bar whose levels you click to
+  jump to (the home folder shows as `~`; click beside them to type a path),
+  and a filter box
   that shows only the entries containing what you type. Extensions are
   drawn dimmer than names. By default only folders, archives and music are
   listed; the eye button shows every file.
 * **Double-click a track** and the whole folder's music becomes the
   playlist, in order, starting from that track. Right-click for *Add to
   playlist*.
-* **Archives** (`.zip`, `.7z`, `.tar`, `.tar.gz`) open like folders.
-* **Multi-track files** (NSF, NSFE, GBS, HES, KSS, AY, SAP, and vgmstream
-  files with subsongs) open like folders listing their tracks by number and
+* **Archives** (`.zip`, `.7z`, `.tar`, `.tar.gz`, `.rar`, and `.rsn` SNES
+  music packs) open like folders.
+* **Multi-track files** (NSF, NSFE, GBS, HES, KSS, AY, SAP, SID, SGC, WSR
+  with an M3U, and vgmstream files with subsongs) open like folders listing their tracks by number and
   title. A file with one track just plays.
 * **Paths run through all of this**: you can type
   `~/music/nes.zip/Mega Man 2.nsfe` in the path box, or pass it on the
@@ -60,12 +76,18 @@ info, PSF tags, vgmstream stream names).
   the length and fade of chiptunes that loop forever, vgmstream loop count,
   emulation options, the theme (Carlita's eleven), fullscreen, artwork
   preference and spectrum bar count. Everything applies at once and is kept
-  in `~/.config/chippy/settings.json`; the playlist is kept too.
+  in `~/.config/chippy/settings.json`. Each start begins in the music folder
+  with an empty playlist.
+* **MIDI**: choose a folder of SF2 SoundFonts in Settings. The SoundFont in
+  use can change while a song plays (the list in Settings, the arrows beside
+  the title in the bottom bar, or `[` and `]`); the song crossfades to it.
+* **Media keys** and the desktop's player controls work (MPRIS on Linux).
 * **Touch**: panels follow a swipe, everything is finger-sized, and
   *Open with a single tap* in Settings replaces double-clicks.
 
 Keys: `Space` play/pause, `←`/`→` seek 5 s (`Shift` 30 s), `↑`/`↓` volume,
-`N`/`P` next/previous, `S` shuffle, `R` repeat, `M` mute, `B` browser, `,`
+`N`/`P` next/previous, `S` shuffle, `R` repeat, `M` mute, `[`/`]` SoundFont,
+`B` browser, `,`
 settings, `F11` fullscreen, `Esc` closes panels. In the browser: arrows,
 `Enter`, `Backspace` (up), `Alt+←/→`, `F5`.
 
@@ -77,6 +99,13 @@ chippy [--fullscreen|--windowed] [FILE or FOLDER]
 
 A file plays at once with the rest of its folder (unless turned off in
 Settings); dropping a file on the window does the same.
+
+## Downloads
+
+GitHub Actions builds the `chippy` binary for Linux (x86_64 and aarch64)
+on every push (as a workflow artifact) and attaches it to a release for
+every `v*` tag. It needs ALSA, fontconfig and xkbcommon at run time, which
+desktop distributions have.
 
 ## Building
 
@@ -90,6 +119,8 @@ git clone --recursive https://github.com/singularity098/Chippy
 You need Rust (1.80+), CMake, pkg-config, a C/C++ compiler, and on Linux
 the ALSA, xkbcommon and fontconfig headers, plus mpg123, libvorbis and
 FFmpeg for vgmstream:
+You need Rust (1.88+), CMake, a C/C++ compiler, and on Linux the ALSA,
+xkbcommon and fontconfig headers:
 
 ```bash
 sudo apt install cmake clang pkg-config libasound2-dev libxkbcommon-dev libfontconfig-dev zlib1g-dev \
@@ -123,6 +154,13 @@ crates/
   vgmstream-sys/   builds third_party/vgmstream, with the system's mpg123,
                    libvorbis and FFmpeg
   lazyusf-sys/     builds third_party/lazyusf2
+  aosdk-sys/       third_party/aosdk (PSF, PSF2, SSF, DSF, QSF)
+  gsf-sys/         third_party/mgba-gsf (GSF)
+  twosf-sys/       third_party/vio2sf (2SF)
+  wsr-sys/         third_party/wsr (WSR)
+  sidplayfp-sys/   third_party/libsidplayfp (SID)
+  xmp-sys/         third_party/libxmp (tracker modules)
+  archive-sys/     third_party/libarchive (RAR, RSN)
 ```
 
 `cargo run -p chippy-core --example probe -- PATH` lists a path the way the
@@ -139,4 +177,7 @@ GPL-3.0-or-later. The vendored libraries keep their own licences: Game Music
 Emu is LGPL-2.1, lazyusf2 is GPL-2.0, vgmstream is ISC-style; the
 AppImage also carries the system's mpg123 and libvorbis, and FFmpeg
 (LGPL-2.1 or GPL, depending on how the distribution built it). The Jost font
+Emu is LGPL-2.1, lazyusf2, vio2sf, Mednafen and libsidplayfp are GPL-2.0+,
+the Audio Overload SDK is BSD with MAME-licensed parts, mGBA is MPL-2.0,
+libxmp is MIT, libarchive is BSD, vgmstream is ISC-style. The Jost font
 is under the SIL Open Font Licence (`assets/fonts/OFL.txt`).

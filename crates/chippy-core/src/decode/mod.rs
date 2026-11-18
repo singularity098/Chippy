@@ -182,7 +182,7 @@ pub fn apply_fade(buf: &mut [f32], pos: u64, start: u64, end: u64) {
     if end <= start {
         return;
     }
-    for (i, f) in buf.chunks_exact_mut(2).enumerate() {
+    for (i, f) in buf.as_chunks_mut::<2>().0.iter_mut().enumerate() {
         let p = pos + i as u64;
         if p >= start {
             let g = if p >= end {
@@ -228,7 +228,7 @@ pub(crate) mod testing {
 
     /// The frequency (Hz) of the left channel's rising zero crossings.
     pub fn pitch(frames: &[f32], rate: u32) -> f64 {
-        let left: Vec<f32> = frames.chunks_exact(2).map(|f| f[0]).collect();
+        let left: Vec<f32> = frames.as_chunks::<2>().0.iter().map(|f| f[0]).collect();
         let mean = left.iter().sum::<f32>() / left.len() as f32;
         let n = left
             .windows(2)

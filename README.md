@@ -113,7 +113,7 @@ them:
 git clone --recursive https://github.com/singularity098/Chippy
 ```
 
-You need Rust (1.80+), CMake, a C/C++ compiler, and on Linux the ALSA,
+You need Rust (1.88+), CMake, a C/C++ compiler, and on Linux the ALSA,
 xkbcommon and fontconfig headers:
 
 ```bash

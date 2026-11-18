@@ -534,7 +534,9 @@ mod tests {
         // A square wave of clock / (32 × 0xfe) ≈ 440 Hz: count its cycles.
         let tail = &buf[buf.len() / 2..];
         let crossings = tail
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|f| f[0])
             .collect::<Vec<_>>()
             .windows(2)

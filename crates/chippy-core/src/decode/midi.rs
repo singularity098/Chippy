@@ -405,7 +405,7 @@ impl MidiDecoder {
         self.synth.render(l, r);
         match &mut self.old {
             None => {
-                for (i, f) in out.chunks_exact_mut(2).take(n).enumerate() {
+                for (i, f) in out.as_chunks_mut::<2>().0.iter_mut().take(n).enumerate() {
                     f[0] = l[i];
                     f[1] = r[i];
                 }
@@ -414,7 +414,7 @@ impl MidiDecoder {
                 let (ol, or) = (&mut self.old_left[..n], &mut self.old_right[..n]);
                 old.render(ol, or);
                 let total = self.fade_frames.max(1) as f32;
-                for (i, f) in out.chunks_exact_mut(2).take(n).enumerate() {
+                for (i, f) in out.as_chunks_mut::<2>().0.iter_mut().take(n).enumerate() {
                     let g = (left.saturating_sub(i as u32)) as f32 / total;
                     // Equal-power crossfade.
                     let (go, gn) = (

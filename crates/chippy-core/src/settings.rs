@@ -70,6 +70,15 @@ pub struct Settings {
     /// in use.
     pub soundfont_dir: Option<PathBuf>,
     pub soundfont: Option<String>,
+    /// Linux: run as a native Wayland window. Off, a Wayland desktop runs
+    /// Chippy through XWayland, where dropping files on the window and the
+    /// window's icon work (the toolkit supports neither on Wayland yet).
+    pub native_wayland: bool,
+    /// Export: 0 WAV, 1 FLAC, 2 MP3, 3 Opus; bitrates in kbps; the folder.
+    pub export_format: u32,
+    pub export_mp3_kbps: u32,
+    pub export_opus_kbps: u32,
+    pub export_dir: Option<PathBuf>,
 }
 
 pub fn default_columns() -> Vec<Column> {
@@ -118,6 +127,11 @@ impl Default for Settings {
             fade_s: 8,
             loops: 2.0,
             usf_hle: true,
+            native_wayland: false,
+            export_format: 1,
+            export_mp3_kbps: 320,
+            export_opus_kbps: 160,
+            export_dir: None,
             gme_accuracy: true,
             spectrum_bars: 32,
             soundfont_dir: None,

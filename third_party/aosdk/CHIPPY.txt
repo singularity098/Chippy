@@ -4,3 +4,7 @@ from https://github.com/DeaDBeeF-Player/deadbeef/tree/master/plugins/psf/aosdk
 Chippy's change: psfmain.c no longer includes DeaDBeeF's headers; ao_get_lib
 is provided by crates/aosdk-sys.
 eng_psf.c, eng_psf2.c: the SPU no longer stops or fades at the tagged length; Chippy does.
+eng_psf.c: PS-X EXEs are loaded whole (to the end of the decoded program, within RAM), not
+  only the header's text size: rips put SEQ/VAB data past it (Mega Man X6's PSFs played silence).
+psx.c: misaligned LH/LHU/LW/SH/SW use the aligned address instead of raising an address error,
+  as Highly Experimental does; some rips' drivers make such accesses and hung in the exception.

@@ -4,6 +4,8 @@
 mod app;
 mod art;
 mod audio;
+mod desktop;
+mod export;
 mod icons;
 mod media;
 mod player;
@@ -38,6 +40,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    desktop::select_backend(chippy_core::settings::Settings::load().native_wayland);
     let ui = MainWindow::new()?;
     icons::install(&ui);
     if std::env::var_os("CHIPPY_LAZY_REDRAW").is_none() {

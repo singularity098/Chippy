@@ -1,7 +1,9 @@
 //! Bandai WonderSwan WSR through Mednafen's WonderSwan core. A WSR holds
-//! the game's sound program and no song list: a NEZplug-style M3U beside
-//! it (`game.wsr::WSR,$03,Title,1:30,,5`) names, times and lists its songs;
-//! without one, the song the file says to start with plays.
+//! the game's sound program and no song list: NEZplug-style M3Us beside it
+//! (`game.wsr::WSR,$03,Title,1:30,,5`) name, time and list its songs —
+//! either one `game.m3u` for them all, or one M3U per song (`01 Title.m3u`),
+//! which the file browser also shows as the songs themselves. Without any,
+//! the song the file says to start with plays.
 //!
 //! The core is one global machine, so only one WSR plays at a time.
 
@@ -18,11 +20,66 @@ static IN_USE: AtomicBool = AtomicBool::new(false);
 
 /// A song listed in an M3U: (song number, title, length, fade).
 #[derive(Debug, Clone, PartialEq)]
-struct Listed {
+pub struct Listed {
+    /// The file the line points at ("game.wsr").
+    file: String,
     song: u32,
     title: String,
     length_ms: Option<u64>,
     fade_ms: Option<u64>,
+}
+
+/// One song of a WSR as listed in a per-song M3U: the M3U's name, and the
+/// song's index in the WSR's track list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct M3uSong {
+    pub m3u_name: String,
+    pub index: u32,
+    pub length_ms: Option<u64>,
+}
+
+/// M3U text: UTF-8 (with or without a BOM), else Windows-1252,
+/// which is what most rips were written in.
+pub(crate) fn decode_text(d: &[u8]) -> String {
+    let d = d.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(d);
+    match std::str::from_utf8(d) {
+        Ok(s) => s.to_string(),
+        Err(_) => d.iter().map(|&b| cp1252(b)).collect(),
+    }
+}
+
+/// A Windows-1252 byte as a character (Latin-1, but for 0x80..0x9F).
+fn cp1252(b: u8) -> char {
+    const HIGH: [char; 32] = [
+        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8d}', 'Ž',
+        '\u{8f}', '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{9d}',
+        'ž', 'Ÿ',
+    ];
+    match b {
+        0x80..=0x9f => HIGH[(b - 0x80) as usize],
+        b => b as char,
+    }
+}
+
+/// Many rips pack "Title - Artist - Game - ©Copyright" into the title field.
+struct Packed<'a> {
+    title: &'a str,
+    artist: &'a str,
+    game: &'a str,
+    copyright: &'a str,
+}
+
+fn unpack_title(t: &str) -> Option<Packed<'_>> {
+    let parts: Vec<&str> = t.split(" - ").collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    Some(Packed {
+        title: parts[0].trim(),
+        artist: parts[1].trim(),
+        game: parts[2].trim(),
+        copyright: parts[3].trim().trim_start_matches(['\u{a9}', ' ']),
+    })
 }
 
 fn parse_number(s: &str) -> Option<u32> {
@@ -57,7 +114,7 @@ fn parse_m3u(text: &str) -> Vec<Listed> {
             if line.starts_with('#') {
                 return None;
             }
-            let (_, rest) = line.split_once("::")?;
+            let (file, rest) = line.split_once("::")?;
             let fields = split_fields(rest);
             let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
             if !fields.first()?.trim().eq_ignore_ascii_case("wsr") {
@@ -70,6 +127,7 @@ fn parse_m3u(text: &str) -> Vec<Listed> {
                     .filter(|&t| t > 0)
             };
             Some(Listed {
+                file: file.trim().replace('\\', "/"),
                 song: parse_number(fields.get(1)?)?,
                 title: fields.get(2).map(|t| t.to_string()).unwrap_or_default(),
                 length_ms: time(3),
@@ -81,13 +139,67 @@ fn parse_m3u(text: &str) -> Vec<Listed> {
         .collect()
 }
 
-fn listed(loc: &Location) -> Vec<Listed> {
+/// The songs of a WSR, each with the M3U that listed it.
+fn listed_with_sources(loc: &Location) -> Vec<(Listed, String)> {
     let name = loc.name();
     let (stem, _) = crate::formats::split_name(&name);
-    loc.sibling(&format!("{stem}.m3u"))
-        .and_then(|m| m.read().ok())
-        .map(|d| parse_m3u(&String::from_utf8_lossy(&d)))
-        .unwrap_or_default()
+    if let Some(m) = loc.sibling(&format!("{stem}.m3u")) {
+        if let Ok(d) = m.read() {
+            let list = parse_m3u(&decode_text(&d));
+            if !list.is_empty() {
+                let n = m.name();
+                return list.into_iter().map(|l| (l, n.clone())).collect();
+            }
+        }
+    }
+    // One M3U per song: every M3U in the folder that points at this file,
+    // in name order.
+    let mut m3us: Vec<Location> = loc
+        .folder_files()
+        .into_iter()
+        .filter(|l| l.extension() == "m3u")
+        .collect();
+    m3us.sort_by(|a, b| crate::vfs::natural_cmp(&a.name(), &b.name()));
+    let mut out = Vec::new();
+    for m in m3us {
+        let Ok(d) = m.read() else { continue };
+        if d.len() > 64 * 1024 {
+            continue;
+        }
+        let mname = m.name();
+        for l in parse_m3u(&decode_text(&d)) {
+            let target = l.file.rsplit('/').next().unwrap_or(&l.file);
+            if target.eq_ignore_ascii_case(&name) {
+                out.push((l, mname.clone()));
+            }
+        }
+    }
+    out
+}
+
+fn listed(loc: &Location) -> Vec<Listed> {
+    listed_with_sources(loc)
+        .into_iter()
+        .map(|(l, _)| l)
+        .collect()
+}
+
+/// The songs of `wsr` that per-song M3Us list, for the file browser to show
+/// those M3Us as tracks. Empty when one M3U lists them all.
+pub fn m3u_songs(wsr: &Location) -> Vec<M3uSong> {
+    let name = wsr.name();
+    let (stem, _) = crate::formats::split_name(&name);
+    let whole = format!("{stem}.m3u");
+    listed_with_sources(wsr)
+        .into_iter()
+        .enumerate()
+        .filter(|(_, (_, m))| !m.eq_ignore_ascii_case(&whole))
+        .map(|(i, (l, m))| M3uSong {
+            m3u_name: m,
+            index: i as u32,
+            length_ms: l.length_ms.map(|t| t + l.fade_ms.unwrap_or(0)),
+        })
+        .collect()
 }
 
 fn first_song(data: &[u8]) -> Result<u32> {
@@ -163,7 +275,9 @@ pub fn track_list(loc: &Location, opts: &DecodeOptions) -> Result<Vec<SubTrack>>
         .enumerate()
         .map(|(i, e)| SubTrack {
             index: i as u32,
-            title: e.title.clone(),
+            title: unpack_title(&e.title)
+                .map(|p| p.title.to_string())
+                .unwrap_or_else(|| e.title.clone()),
             length_ms: Some(
                 e.length_ms.unwrap_or(opts.default_length_ms) + e.fade_ms.unwrap_or(opts.fade_ms),
             ),
@@ -175,8 +289,26 @@ pub fn meta(loc: &Location, sub: Option<u32>, opts: &DecodeOptions) -> Result<Tr
     first_song(&loc.read()?)?;
     let list = listed(loc);
     let entry = sub.and_then(|i| list.get(i as usize));
+    let packed = entry.and_then(|e| unpack_title(&e.title));
+    let copyright = packed
+        .as_ref()
+        .map(|p| p.copyright.to_string())
+        .unwrap_or_default();
     Ok(TrackMeta {
-        title: entry.map(|e| e.title.clone()).unwrap_or_default(),
+        title: match &packed {
+            Some(p) => p.title.to_string(),
+            None => entry.map(|e| e.title.clone()).unwrap_or_default(),
+        },
+        artist: packed
+            .as_ref()
+            .map(|p| p.artist.to_string())
+            .unwrap_or_default(),
+        album: packed
+            .as_ref()
+            .map(|p| p.game.to_string())
+            .unwrap_or_default(),
+        year: super::gme::year_in(&copyright).unwrap_or_default(),
+        copyright,
         track_no: sub.filter(|_| list.len() > 1).map(|i| i + 1),
         length_ms: Some(
             entry
@@ -240,6 +372,55 @@ mod tests {
     }
 
     #[test]
+    fn lists_songs_from_one_m3u_per_song() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("SWJ-GAME.wsr");
+        std::fs::write(&p, wsr()).unwrap();
+        // Latin-1 text, as many rips are: \xa9 is the copyright sign.
+        std::fs::write(
+            dir.path().join("02 Second.m3u"),
+            b"SWJ-GAME.wsr::WSR,9,Second - Composer - The Game - \xa92002 Maker,1:00,,5\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("01 First.m3u"),
+            "SWJ-GAME.wsr::WSR,$02,First,0:30,,\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("other.m3u"), "x.wsr::WSR,1,Nope\n").unwrap();
+        let loc = Location::Fs(p);
+        let opts = DecodeOptions::default();
+        let list = track_list(&loc, &opts).unwrap();
+        let titles: Vec<&str> = list.iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(titles, ["First", "Second"]);
+        let m = meta(&loc, Some(1), &opts).unwrap();
+        assert_eq!(
+            (m.title.as_str(), m.artist.as_str(), m.album.as_str()),
+            ("Second", "Composer", "The Game")
+        );
+        assert_eq!(
+            (m.copyright.as_str(), m.year.as_str()),
+            ("2002 Maker", "2002")
+        );
+        assert_eq!(m.length_ms, Some(65_000));
+        // The browser shows the M3Us as the songs.
+        let node = crate::vfs::Node::Dir(dir.path().to_path_buf());
+        let entries = crate::vfs::list(&node, false, &opts).unwrap();
+        let songs: Vec<(String, Option<u32>)> = entries
+            .iter()
+            .filter(|e| e.kind == crate::vfs::EntryKind::Track)
+            .map(|e| (e.name.clone(), e.track.as_ref().and_then(|t| t.sub)))
+            .collect();
+        assert_eq!(
+            songs,
+            [
+                ("01 First".to_string(), Some(0)),
+                ("02 Second".to_string(), Some(1))
+            ]
+        );
+    }
+
+    #[test]
     fn reads_nezplug_m3u() {
         let l =
             parse_m3u("# comment\ngame.wsr::WSR,$0A,Title\\, Two,1:30,,5\ngame.wsr::WSR,3,,,\n");
@@ -249,5 +430,9 @@ mod tests {
         assert_eq!(l[0].length_ms, Some(90_000));
         assert_eq!(l[1].song, 3);
         assert_eq!(l[1].length_ms, None);
+        assert_eq!(
+            decode_text(b"Sting\x82 Square \xa9"),
+            "Sting\u{201a} Square \u{a9}"
+        );
     }
 }

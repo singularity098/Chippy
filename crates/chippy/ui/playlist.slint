@@ -32,6 +32,12 @@ export global Playlist {
     callback toggle-column(string);
     callback resize-column(string, length);
     callback reset-columns;
+    // The properties dialog of a row.
+    callback show-info(int);
+    // The export dialog, for one row or (-1) all of them.
+    callback export(int);
+    // The system's file picker, to open a file or folder.
+    callback open-file;
 }
 
 component HeaderCell inherits Rectangle {
@@ -189,6 +195,15 @@ export component PlaylistPanel inherits Rectangle {
                     y: (parent.height - self.height) / 2;
                     size: 34px;
                     icon-size: 18px;
+                    icon: Icons.export-line;
+                    weight: 1.6;
+                    tip: "Export the playlist to audio files";
+                    clicked => { Playlist.export(-1); }
+                }
+                if Playlist.rows.length > 0: IconButton {
+                    y: (parent.height - self.height) / 2;
+                    size: 34px;
+                    icon-size: 18px;
                     icon: Icons.trash-line;
                     tip: "Clear the playlist";
                     clicked => { Playlist.clear(); }
@@ -267,11 +282,18 @@ export component PlaylistPanel inherits Rectangle {
                     }
                     HorizontalLayout {
                         alignment: center;
+                        spacing: 10px;
                         BigButton {
                             text: "Browse files";
                             icon-line: Icons.folder-line;
                             primary: true;
                             clicked => { root.open-browser(); }
+                        }
+                        BigButton {
+                            text: "Open a file…";
+                            icon-line: Icons.open-line;
+                            tip: "Or drop files on the window";
+                            clicked => { Playlist.open-file(); }
                         }
                     }
                 }
@@ -319,8 +341,11 @@ export component PlaylistPanel inherits Rectangle {
                 padding: 6px;
                 MenuItem { text: "Play"; clicked => { Playlist.play(Playlist.selected); } }
                 MenuItem { text: "Show in file browser"; clicked => { Playlist.reveal(Playlist.selected); } }
+                MenuItem { text: "Properties…"; clicked => { Playlist.show-info(Playlist.selected); } }
                 MenuItem { text: "Remove from playlist"; clicked => { Playlist.remove(Playlist.selected); } }
                 Rectangle { height: 1px; background: Theme.border; }
+                MenuItem { text: "Export this track…"; clicked => { Playlist.export(Playlist.selected); } }
+                MenuItem { text: "Export playlist…"; clicked => { Playlist.export(-1); } }
                 MenuItem { text: "Clear playlist"; clicked => { Playlist.clear(); } }
             }
         }

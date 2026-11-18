@@ -1053,7 +1053,7 @@ int mips_execute( mips_cpu_context *cpu, int cycles )
 			{
 				UINT32 n_adr;
 				n_adr = cpu->r[ INS_RS( cpu->op ) ] + MIPS_WORD_EXTEND( INS_IMMEDIATE( cpu->op ) );
-				if( ( n_adr & ( ( ( cpu->cp0r[ CP0_SR ] & SR_KUC ) << 30 ) | 1 ) ) != 0 )
+				if( ( n_adr & ( ( ( cpu->cp0r[ CP0_SR ] & SR_KUC ) << 30 ) ) ) != 0 ) // Chippy: misaligned accesses use the aligned address
 				{
 					mips_exception(cpu, EXC_ADEL );
 					mips_set_cp0r(cpu, CP0_BADVADDR, n_adr );
@@ -1067,7 +1067,7 @@ int mips_execute( mips_cpu_context *cpu, int cycles )
 			{
 				UINT32 n_adr;
 				n_adr = cpu->r[ INS_RS( cpu->op ) ] + MIPS_WORD_EXTEND( INS_IMMEDIATE( cpu->op ) );
-				if( ( n_adr & ( ( ( cpu->cp0r[ CP0_SR ] & SR_KUC ) << 30 ) | 1 ) ) != 0 )
+				if( ( n_adr & ( ( ( cpu->cp0r[ CP0_SR ] & SR_KUC ) << 30 ) ) ) != 0 ) // Chippy: misaligned accesses use the aligned address
 				{
 					mips_exception(cpu, EXC_ADEL );
 					mips_set_cp0r(cpu, CP0_BADVADDR, n_adr );
@@ -1158,7 +1158,7 @@ int mips_execute( mips_cpu_context *cpu, int cycles )
 				UINT32 n_adr;
 				n_adr = cpu->r[ INS_RS( cpu->op ) ] + MIPS_WORD_EXTEND( INS_IMMEDIATE( cpu->op ) );
 #if 0
-				if( ( n_adr & ( ( ( cpu->cp0r[ CP0_SR ] & SR_KUC ) << 30 ) | 3 ) ) != 0 )
+				if( ( n_adr & ( ( ( cpu->cp0r[ CP0_SR ] & SR_KUC ) << 30 ) ) ) != 0 ) // Chippy: misaligned accesses use the aligned address
 				{
 					printf("ADEL\n");
 					mips_exception(cpu, EXC_ADEL );
@@ -1220,7 +1220,7 @@ int mips_execute( mips_cpu_context *cpu, int cycles )
 			{
 				UINT32 n_adr;
 				n_adr = cpu->r[ INS_RS( cpu->op ) ] + MIPS_WORD_EXTEND( INS_IMMEDIATE( cpu->op ) );
-				if( ( n_adr & ( ( ( cpu->cp0r[ CP0_SR ] & SR_KUC ) << 30 ) | 1 ) ) != 0 )
+				if( ( n_adr & ( ( ( cpu->cp0r[ CP0_SR ] & SR_KUC ) << 30 ) ) ) != 0 ) // Chippy: misaligned accesses use the aligned address
 				{
 					mips_exception(cpu, EXC_ADEL );
 					mips_set_cp0r(cpu, CP0_BADVADDR, n_adr );
@@ -1234,7 +1234,7 @@ int mips_execute( mips_cpu_context *cpu, int cycles )
 			{
 				UINT32 n_adr;
 				n_adr = cpu->r[ INS_RS( cpu->op ) ] + MIPS_WORD_EXTEND( INS_IMMEDIATE( cpu->op ) );
-				if( ( n_adr & ( ( ( cpu->cp0r[ CP0_SR ] & SR_KUC ) << 30 ) | 1 ) ) != 0 )
+				if( ( n_adr & ( ( ( cpu->cp0r[ CP0_SR ] & SR_KUC ) << 30 ) ) ) != 0 ) // Chippy: misaligned accesses use the aligned address
 				{
 					mips_exception(cpu, EXC_ADEL );
 					mips_set_cp0r(cpu, CP0_BADVADDR, n_adr );
@@ -1363,7 +1363,7 @@ int mips_execute( mips_cpu_context *cpu, int cycles )
 			{
 				UINT32 n_adr;
 				n_adr = cpu->r[ INS_RS( cpu->op ) ] + MIPS_WORD_EXTEND( INS_IMMEDIATE( cpu->op ) );
-				if( ( n_adr & ( ( ( cpu->cp0r[ CP0_SR ] & SR_KUC ) << 30 ) | 1 ) ) != 0 )
+				if( ( n_adr & ( ( ( cpu->cp0r[ CP0_SR ] & SR_KUC ) << 30 ) ) ) != 0 ) // Chippy: misaligned accesses use the aligned address
 				{
 					mips_exception(cpu, EXC_ADES );
 					mips_set_cp0r(cpu, CP0_BADVADDR, n_adr );
@@ -1378,7 +1378,7 @@ int mips_execute( mips_cpu_context *cpu, int cycles )
 			{
 				UINT32 n_adr;
 				n_adr = cpu->r[ INS_RS( cpu->op ) ] + MIPS_WORD_EXTEND( INS_IMMEDIATE( cpu->op ) );
-				if( ( n_adr & ( ( ( cpu->cp0r[ CP0_SR ] & SR_KUC ) << 30 ) | 1 ) ) != 0 )
+				if( ( n_adr & ( ( ( cpu->cp0r[ CP0_SR ] & SR_KUC ) << 30 ) ) ) != 0 ) // Chippy: misaligned accesses use the aligned address
 				{
 					mips_exception(cpu, EXC_ADES );
 					mips_set_cp0r(cpu, CP0_BADVADDR, n_adr );

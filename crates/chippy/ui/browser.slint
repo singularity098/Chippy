@@ -141,6 +141,14 @@ export component BrowserPanel inherits Rectangle {
     border-width: 1px;
     border-color: Theme.border;
 
+    // Clicks on the panel's empty parts stay in the panel (they would
+    // otherwise reach the dimmed area behind it, which closes it).
+    TouchArea {
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down { root.interacted(); }
+        }
+    }
+
     property <string> path: Browser.path;
     changed path => { path-field.text = Browser.path; root.editing-path = false; }
     // The path bar shows clickable levels; clicking beside them edits it.

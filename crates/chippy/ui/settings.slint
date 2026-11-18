@@ -16,6 +16,7 @@ export global Prefs {
     in property <bool> usf-hle;
     in property <bool> gme-accuracy;
     in property <bool> fullscreen;
+    in property <bool> native-wayland;
     in property <string> default-length;
     in property <string> fade;
     in property <string> loops;
@@ -27,7 +28,7 @@ export global Prefs {
     callback set-music-dir(string);
     callback use-browser-dir;
     // Toggles by id: show-all, single-tap, hover-opens, folder-playlist,
-    // embedded-art, usf-hle, gme-accuracy, fullscreen.
+    // embedded-art, usf-hle, gme-accuracy, fullscreen, native-wayland.
     callback set-flag(string, bool);
     // Steppers by id: default-length, fade, loops, bars.
     callback step(string, int);
@@ -42,6 +43,8 @@ export global Prefs {
     callback set-soundfont-dir(string);
     callback soundfont-use-browser-dir;
     callback pick-soundfont(int);
+    // Opens the system's folder picker for a setting: "music", "soundfont".
+    callback choose-dir(string);
 }
 
 component Card inherits Rectangle {
@@ -65,6 +68,14 @@ export component SettingsPanel inherits Rectangle {
     background: Theme.popup;
     border-width: 1px;
     border-color: Theme.border;
+
+    // Clicks on the panel's empty parts stay in the panel (they would
+    // otherwise reach the dimmed area behind it, which closes it).
+    TouchArea {
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down { root.interacted(); }
+        }
+    }
 
     property <string> dir: Prefs.music-dir;
     changed dir => { dir-field.text = Prefs.music-dir; }
@@ -127,8 +138,13 @@ export component SettingsPanel inherits Rectangle {
                         spacing: 8px;
                         alignment: start;
                         BigButton {
-                            text: "Use the browser's folder";
+                            text: "Choose…";
                             icon-line: Icons.folder-line;
+                            tip: "Pick the folder in a file dialog";
+                            clicked => { root.interacted(); Prefs.choose-dir("music"); }
+                        }
+                        BigButton {
+                            text: "Use the browser's folder";
                             tip: Prefs.browser-dir;
                             clicked => { root.interacted(); Prefs.use-browser-dir(); }
                         }
@@ -217,8 +233,13 @@ export component SettingsPanel inherits Rectangle {
                         spacing: 8px;
                         alignment: start;
                         BigButton {
-                            text: "Use the browser's folder";
+                            text: "Choose…";
                             icon-line: Icons.folder-line;
+                            tip: "Pick the folder in a file dialog";
+                            clicked => { root.interacted(); Prefs.choose-dir("soundfont"); }
+                        }
+                        BigButton {
+                            text: "Use the browser's folder";
                             tip: Prefs.browser-dir;
                             clicked => { root.interacted(); Prefs.soundfont-use-browser-dir(); }
                         }
@@ -277,6 +298,11 @@ export component SettingsPanel inherits Rectangle {
                         label: "Fullscreen";
                         detail: "F11 switches too.";
                         Toggle { checked: Prefs.fullscreen; toggled(v) => { root.interacted(); Prefs.set-flag("fullscreen", v); } }
+                    }
+                    SettingRow {
+                        label: "Native Wayland window (Linux)";
+                        detail: "Off, Chippy runs through XWayland on Wayland desktops, where dropping files on the window and its icon work. Takes effect at the next start.";
+                        Toggle { checked: Prefs.native-wayland; toggled(v) => { root.interacted(); Prefs.set-flag("native-wayland", v); } }
                     }
                     SettingRow {
                         label: "Prefer embedded artwork";

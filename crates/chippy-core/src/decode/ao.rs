@@ -16,6 +16,12 @@ use aosdk_sys as ffi;
 
 pub const RATE: u32 = 44_100;
 
+/// The engines advance their emulated vertical blank (PS1) or thread
+/// scheduler (PS2) once per `ao_decode` call, so they must be called with a
+/// 60th of a second each time, as Audio Overload does; other sizes play at
+/// the wrong tempo, or garbled with static.
+const FRAMES_PER_CALL: usize = 735;
+
 /// The engine for a file, from its first bytes.
 fn kind_of(data: &[u8]) -> Option<u32> {
     if data.len() < 4 {
@@ -57,6 +63,9 @@ pub struct AoEngine {
     handle: *mut c_void,
     loc: Location,
     data: Vec<u8>,
+    /// Rendered samples not yet handed out (interleaved stereo).
+    pending: Vec<i16>,
+    pending_pos: usize,
 }
 
 // The engine state is owned by this value alone.
@@ -68,11 +77,24 @@ impl AoEngine {
         let Some(kind) = kind_of(&data) else {
             bail!("not a PSF/SSF/DSF/QSF file");
         };
+        // Name a missing library instead of the engine's bare failure.
+        if let Ok(p) = psf::parse(&data) {
+            for (k, v) in &p.tags {
+                let k = k.to_ascii_lowercase();
+                let is_lib =
+                    k == "_lib" || (k.starts_with("_lib") && k[4..].parse::<u32>().is_ok());
+                if is_lib && !v.trim().is_empty() && loc.sibling(v.trim()).is_none() {
+                    bail!("it needs {}, which is not in the same folder", v.trim());
+                }
+            }
+        }
         let mut e = AoEngine {
             kind,
             handle: std::ptr::null_mut(),
             loc: loc.clone(),
             data,
+            pending: vec![0; FRAMES_PER_CALL * 2],
+            pending_pos: FRAMES_PER_CALL * 2,
         };
         e.start()?;
         Ok(e)
@@ -103,6 +125,7 @@ impl AoEngine {
             bail!("the emulator could not load this file (a missing library?)");
         }
         self.handle = handle;
+        self.pending_pos = self.pending.len();
         Ok(())
     }
 
@@ -124,17 +147,23 @@ impl Engine for AoEngine {
     fn rate(&self) -> u32 {
         RATE
     }
-    fn render(&mut self, out: &mut [i16]) -> Result<()> {
-        // The engines render in small steps; keep the calls modest.
-        for chunk in out.chunks_mut(2048) {
-            unsafe {
-                ffi::ao_decode(
-                    self.kind,
-                    self.handle,
-                    chunk.as_mut_ptr(),
-                    (chunk.len() / 2) as u32,
-                )
-            };
+    fn render(&mut self, mut out: &mut [i16]) -> Result<()> {
+        while !out.is_empty() {
+            if self.pending_pos == self.pending.len() {
+                unsafe {
+                    ffi::ao_decode(
+                        self.kind,
+                        self.handle,
+                        self.pending.as_mut_ptr(),
+                        FRAMES_PER_CALL as u32,
+                    )
+                };
+                self.pending_pos = 0;
+            }
+            let n = out.len().min(self.pending.len() - self.pending_pos);
+            out[..n].copy_from_slice(&self.pending[self.pending_pos..self.pending_pos + n]);
+            self.pending_pos += n;
+            out = &mut out[n..];
         }
         Ok(())
     }

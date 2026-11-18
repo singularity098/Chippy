@@ -1,0 +1,263 @@
+// Modal dialogs over the whole window: a track's properties, and exporting
+// the playlist to audio files.
+import { Theme } from "theme.slint";
+import { IconButton, BigButton, Chip, SettingRow, Stepper } from "widgets.slint";
+import { Icon, Icons } from "icons.slint";
+import { InfoField } from "types.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export global Info {
+    in property <bool> shown;
+    in property <string> title;
+    in property <[InfoField]> fields;
+    // Every field as text, for "Copy all".
+    in property <string> all-text;
+    callback close;
+}
+
+export global Export {
+    in property <bool> shown;
+    // "24 tracks" or the one track's title.
+    in property <string> what;
+    // 0 WAV, 1 FLAC, 2 MP3, 3 Opus.
+    in property <int> format;
+    in property <string> format-detail;
+    // kbps, for MP3 and Opus.
+    in property <int> bitrate;
+    in property <string> folder;
+    in property <bool> running;
+    in property <float> progress;
+    in property <string> status;
+    callback set-format(int);
+    callback step-bitrate(int);
+    callback choose-folder;
+    callback start;
+    callback cancel;
+    callback close;
+}
+
+// A dimmed backdrop and a card in the middle; a click beside the card or
+// Esc closes it.
+component Modal inherits Rectangle {
+    in property <length> card-width: 560px;
+    in property <length> card-height: 480px;
+    in property <string> heading;
+    in property <string> icon;
+    in property <bool> closable: true;
+    callback close;
+    background: #000000a0;
+    TouchArea {
+        clicked => { if root.closable { root.close(); } }
+    }
+    FocusScope {
+        init => { self.focus(); }
+        key-pressed(e) => {
+            if e.text == Key.Escape && root.closable { root.close(); return accept; }
+            reject
+        }
+    }
+    card := Rectangle {
+        width: min(root.card-width, root.width - 32px);
+        height: min(root.card-height, root.height - 32px);
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
+        background: Theme.popup;
+        border-radius: 14px;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #000000c0;
+        // Clicks on the card stay on it.
+        TouchArea { }
+        VerticalLayout {
+            padding: 16px;
+            padding-top: 10px;
+            spacing: 10px;
+            HorizontalLayout {
+                spacing: 10px;
+                height: 44px;
+                Icon {
+                    y: (parent.height - self.height) / 2;
+                    width: 22px;
+                    height: 22px;
+                    line: root.icon;
+                    weight: 1.6;
+                    tint: Theme.paint;
+                }
+                Text {
+                    text: root.heading;
+                    font-size: Theme.font-large;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                IconButton {
+                    y: (parent.height - self.height) / 2;
+                    opacity: root.closable ? 1 : 0;
+                    enabled: root.closable;
+                    icon: Icons.close;
+                    tip: "Close (Esc)";
+                    clicked => { if root.closable { root.close(); } }
+                }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            @children
+        }
+    }
+}
+
+export component InfoDialog inherits Modal {
+    heading: Info.title;
+    icon: Icons.info-line;
+    card-width: 640px;
+    card-height: 620px;
+    close => { Info.close(); }
+    ScrollView {
+        vertical-stretch: 1;
+        VerticalLayout {
+            spacing: 2px;
+            for f in Info.fields: HorizontalLayout {
+                spacing: 14px;
+                padding-top: 5px;
+                padding-bottom: 5px;
+                Text {
+                    width: 150px;
+                    text: f.label;
+                    color: Theme.text-dim;
+                    font-size: Theme.font-small;
+                    font-weight: Theme.regular;
+                    horizontal-alignment: right;
+                    wrap: word-wrap;
+                }
+                // Selectable, to copy a value.
+                TextInput {
+                    horizontal-stretch: 1;
+                    text: f.value;
+                    read-only: true;
+                    color: Theme.text;
+                    selection-background-color: Theme.paint;
+                    wrap: word-wrap;
+                    single-line: false;
+                }
+            }
+        }
+    }
+    HorizontalLayout {
+        alignment: end;
+        spacing: 8px;
+        // Holds the text that "Copy all" puts on the clipboard.
+        copier := TextInput {
+            width: 0px;
+            height: 0px;
+            opacity: 0;
+            read-only: true;
+            text: Info.all-text;
+        }
+        BigButton {
+            text: "Copy all";
+            tip: "Copy every field as text";
+            clicked => { copier.select-all(); copier.copy(); copier.clear-selection(); }
+        }
+        BigButton {
+            text: "Close";
+            primary: true;
+            clicked => { Info.close(); }
+        }
+    }
+}
+
+export component ExportDialog inherits Modal {
+    heading: "Export " + Export.what;
+    icon: Icons.export-line;
+    card-width: 600px;
+    card-height: 470px;
+    closable: !Export.running;
+    close => { Export.close(); }
+    VerticalLayout {
+        spacing: 12px;
+        vertical-stretch: 1;
+        SettingRow {
+            label: "Format";
+            detail: Export.format-detail;
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: end;
+                for name[i] in ["WAV", "FLAC", "MP3", "Opus"]: Chip {
+                    text: name;
+                    selected: i == Export.format;
+                    clicked => { if !Export.running { Export.set-format(i); } }
+                }
+            }
+        }
+        if Export.format >= 2: SettingRow {
+            label: "Bitrate";
+            detail: Export.format == 2 ? "Constant bitrate." : "Variable bitrate; 128 kbps is transparent for most music.";
+            Stepper {
+                text: Export.bitrate + " kbps";
+                tip: "Change the bitrate";
+                step(d) => { if !Export.running { Export.step-bitrate(d); } }
+            }
+        }
+        SettingRow {
+            label: "Folder";
+            detail: Export.folder == "" ? "Choose where the files go." : Export.folder;
+            BigButton {
+                y: (parent.height - self.height) / 2;
+                min-width: 140px;
+                text: "Choose…";
+                icon-line: Icons.folder-line;
+                enabled: !Export.running;
+                clicked => { Export.choose-folder(); }
+            }
+        }
+        Text {
+            text: "One file per track, named by track number and title, with its tags. Looping chiptunes end as they do when played: at their length, with the fade.";
+            color: Theme.text-faint;
+            font-size: Theme.font-small;
+            wrap: word-wrap;
+        }
+        Rectangle { vertical-stretch: 1; }
+        // Always there (shown or not by opacity): elements made and removed
+        // while the export runs upset the renderer.
+        Rectangle {
+            height: 30px;
+            opacity: Export.running || Export.status != "" ? 1 : 0;
+            VerticalLayout {
+            spacing: 6px;
+            Text {
+                text: Export.status;
+                color: Theme.text-dim;
+                font-size: Theme.font-small;
+                overflow: elide;
+            }
+            Rectangle {
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.surface-2;
+                Rectangle {
+                    x: 0;
+                    width: parent.width * max(0, min(1, Export.progress));
+                    border-radius: 3px;
+                    background: Theme.paint;
+                }
+            }
+            }
+        }
+    }
+    HorizontalLayout {
+        alignment: end;
+        spacing: 8px;
+        BigButton {
+            text: Export.running ? "Cancel" : "Close";
+            clicked => { if Export.running { Export.cancel(); } else { Export.close(); } }
+        }
+        BigButton {
+            text: "Export";
+            icon-line: Icons.export-line;
+            primary: true;
+            enabled: !Export.running && Export.folder != "";
+            clicked => { Export.start(); }
+        }
+    }
+}

@@ -28,7 +28,13 @@ use crate::audio::Output;
 use crate::media::{Media, Playback, Request};
 use crate::player::{Cmd, Event, Player};
 use crate::spectrum::{Spectrum, FFT_LEN};
-use crate::{Browser, ColumnItem, Crumb, FileItem, MainWindow, Now, PlRow, Playlist, Prefs, Theme};
+use crate::{
+    Browser, ColumnItem, Crumb, Export, FileItem, Info, MainWindow, Now, PlRow, Playlist, Prefs,
+    Theme,
+};
+
+mod tools;
+use tools::{ExportState, Picked};
 
 #[derive(Default)]
 pub struct StartOptions {
@@ -101,6 +107,15 @@ pub struct App {
     font_request: Arc<AtomicU64>,
     font_tx: Sender<FontLoaded>,
     font_rx: Receiver<FontLoaded>,
+
+    // ---- dialogs
+    pick_tx: Sender<Picked>,
+    pick_rx: Receiver<Picked>,
+    /// A file picker is showing (one at a time).
+    picker_open: bool,
+    export: ExportState,
+    export_tx: Sender<crate::export::Progress>,
+    export_rx: Receiver<crate::export::Progress>,
 }
 
 /// A SoundFont finished loading (or failed to).
@@ -143,6 +158,8 @@ impl App {
         let (art_tx, art_rx) = crossbeam_channel::unbounded();
         let bands = settings.spectrum_bars as usize;
         let (font_tx, font_rx) = crossbeam_channel::unbounded();
+        let (pick_tx, pick_rx) = crossbeam_channel::unbounded();
+        let (export_tx, export_rx) = crossbeam_channel::unbounded();
 
         let app = App {
             ui: ui.as_weak(),
@@ -186,6 +203,12 @@ impl App {
             font_request: Arc::new(AtomicU64::new(0)),
             font_tx,
             font_rx,
+            pick_tx,
+            pick_rx,
+            picker_open: false,
+            export: ExportState::default(),
+            export_tx,
+            export_rx,
         };
         let app = Rc::new(RefCell::new(app));
         Self::wire(&app, ui);
@@ -263,6 +286,9 @@ impl App {
             .toggle_column(&id));
         on!(app, p, on_resize_column, |a, id: SharedString, w: f32| a
             .resize_column(&id, w));
+        on!(app, p, on_show_info, |a, i: i32| a.show_info(i));
+        on!(app, p, on_export, |a, i: i32| a.open_export(i));
+        on!(app, p, on_open_file, |a| a.pick_open());
         on!(app, p, on_reset_columns, |a| {
             a.settings.columns = default_columns();
             a.columns_changed();
@@ -355,6 +381,19 @@ impl App {
             }
         });
         on!(app, s, on_pick_soundfont, |a, i: i32| a.pick_soundfont(i));
+        on!(app, s, on_choose_dir, |a, which: SharedString| a
+            .choose_dir(&which));
+
+        let info = ui.global::<Info>();
+        on!(app, info, on_close, |a| a.close_info());
+        let ex = ui.global::<Export>();
+        on!(app, ex, on_set_format, |a, i: i32| a.set_export_format(i));
+        on!(app, ex, on_step_bitrate, |a, d: i32| a
+            .step_export_bitrate(d));
+        on!(app, ex, on_choose_folder, |a| a.choose_dir("export"));
+        on!(app, ex, on_start, |a| a.start_export());
+        on!(app, ex, on_cancel, |a| a.cancel_export());
+        on!(app, ex, on_close, |a| a.close_export());
         on!(app, n, on_cycle_soundfont, |a, d: i32| a.cycle_soundfont(d));
         on!(app, s, on_set_theme, |a, i: i32| {
             let names: Vec<String> = a
@@ -582,6 +621,7 @@ impl App {
         p.set_usf_hle(s.usf_hle);
         p.set_gme_accuracy(s.gme_accuracy);
         p.set_fullscreen(s.fullscreen);
+        p.set_native_wayland(s.native_wayland);
         p.set_default_length(ss(format_ms(s.default_length_s as u64 * 1000)));
         p.set_fade(ss(format!("{} s", s.fade_s)));
         p.set_loops(ss(format!("{}", s.loops)));
@@ -639,6 +679,13 @@ impl App {
             }
             "usf-hle" => s.usf_hle = v,
             "gme-accuracy" => s.gme_accuracy = v,
+            "native-wayland" => {
+                s.native_wayland = v;
+                self.sync_prefs();
+                self.mark_dirty();
+                self.toast("Takes effect when Chippy is next started", false);
+                return;
+            }
             "fullscreen" => {
                 self.set_fullscreen(v);
                 return;
@@ -1269,7 +1316,16 @@ impl App {
             .name("tags".into())
             .spawn(move || {
                 for (i, t) in todo {
-                    let m = meta::read(&t, &opts);
+                    // A decoder bug on one file must not leave the rest of
+                    // the playlist without tags.
+                    let m = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        meta::read(&t, &opts)
+                    }))
+                    .unwrap_or_else(|_| {
+                        let mut m = meta::TrackMeta::default();
+                        m.fill_gaps(&t);
+                        m
+                    });
                     if tx.send((generation, i, t, m)).is_err() {
                         return;
                     }
@@ -1708,9 +1764,17 @@ impl App {
         self.last_tick = now;
 
         // Files dropped on the window.
+        // (Each file arrives as an event of its own, all in one go.)
         let dropped: Vec<PathBuf> = DROPPED.with(|d| d.borrow_mut().drain(..).collect());
-        if let Some(p) = dropped.into_iter().next() {
-            self.open_external(&p);
+        if !dropped.is_empty() {
+            self.open_paths(dropped);
+        }
+
+        while let Ok(p) = self.pick_rx.try_recv() {
+            self.picked(p);
+        }
+        while let Ok(p) = self.export_rx.try_recv() {
+            self.export_progress(p);
         }
 
         while let Ok(f) = self.font_rx.try_recv() {

@@ -264,7 +264,7 @@ pub fn meta(loc: &Location, sub: Option<u32>, opts: &DecodeOptions) -> Result<Tr
     };
     let chips = unsafe { ffi::csid_sid_chips(tune.p) };
     let format =
-        String::from_utf8_lossy(&loc.read()?.get(..4).unwrap_or(b"PSID").to_vec()).into_owned();
+        String::from_utf8_lossy(loc.read()?.get(..4).unwrap_or(b"PSID")).into_owned();
     Ok(TrackMeta {
         title: info(0),
         artist: info(1),

@@ -475,7 +475,7 @@ impl Decoder for MidiDecoder {
         let target = ms * self.rate as u64 / 1000;
         self.synth.reset();
         self.old = None;
-        self.held = Box::new([[0; 128]; 16]);
+        *self.held = [[0; 128]; 16];
         let upto = self
             .song
             .events

@@ -12,6 +12,7 @@ pub mod twosf;
 pub mod usf;
 pub mod vgm;
 pub mod wsr;
+pub mod xmp;
 
 use anyhow::Result;
 
@@ -94,6 +95,7 @@ pub fn open_decoder(t: &TrackRef, opts: &DecodeOptions) -> Result<Box<dyn Decode
         Some(Codec::Gsf) => Ok(Box::new(gsf::open(&t.loc, opts)?)),
         Some(Codec::Twosf) => Ok(Box::new(twosf::open(&t.loc, opts)?)),
         Some(Codec::Wsr) => Ok(Box::new(wsr::open(&t.loc, t.sub, opts)?)),
+        Some(Codec::Module) => Ok(Box::new(xmp::XmpDecoder::open(&t.loc, opts)?)),
         Some(Codec::Common) => match sym::SymDecoder::open(&t.loc) {
             Ok(d) => Ok(Box::new(d)),
             Err(e) => vgm::VgmDecoder::open(&t.loc, t.sub, opts)
@@ -137,6 +139,7 @@ pub fn read_meta(t: &TrackRef, opts: &DecodeOptions) -> Result<TrackMeta> {
         Some(Codec::Gsf) => gsf::meta(&t.loc, opts),
         Some(Codec::Twosf) => twosf::meta(&t.loc, opts),
         Some(Codec::Wsr) => wsr::meta(&t.loc, t.sub, opts),
+        Some(Codec::Module) => xmp::meta(&t.loc),
         Some(Codec::Common) => sym::meta(&t.loc).or_else(|_| vgm::meta(&t.loc, t.sub, opts)),
         Some(Codec::Vgmstream) | None => vgm::meta(&t.loc, t.sub, opts),
     }

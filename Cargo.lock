@@ -921,6 +921,7 @@ dependencies = [
  "twosf-sys",
  "vgmstream-sys",
  "wsr-sys",
+ "xmp-sys",
  "zip",
 ]
 
@@ -7029,6 +7030,14 @@ name = "xmlwriter"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
+
+[[package]]
+name = "xmp-sys"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "cmake",
+]
 
 [[package]]
 name = "y4m"

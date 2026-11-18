@@ -29,6 +29,8 @@ pub enum Codec {
     Twosf,
     /// Bandai WonderSwan WSR.
     Wsr,
+    /// Tracker modules (libxmp).
+    Module,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +69,11 @@ pub const SGC: &[&str] = &["sgc"];
 pub const GSF: &[&str] = &["gsf", "minigsf"];
 pub const TWOSF: &[&str] = &["2sf", "mini2sf"];
 pub const WSR: &[&str] = &["wsr"];
+pub const MODULES: &[&str] = &[
+    "mod", "xm", "s3m", "it", "mtm", "669", "med", "mmd0", "mmd1", "mmd2", "mmd3", "okt", "stm",
+    "far", "ult", "ptm", "dbm", "amf", "mdl", "digi", "psm", "j2b", "gdm", "imf", "dsm", "stx",
+    "liq", "masi", "mgt", "rtm", "emod", "fnk", "ims", "xmf", "umx", "abk", "coco",
+];
 pub const MIDI: &[&str] = &["mid", "midi", "kar", "rmi", "smf"];
 pub const IMAGES: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "webp"];
 
@@ -136,6 +143,9 @@ pub fn kind_of(name: &str) -> FileKind {
     }
     if WSR.contains(&e) {
         return FileKind::Audio(Codec::Wsr);
+    }
+    if MODULES.contains(&e) {
+        return FileKind::Audio(Codec::Module);
     }
     if MIDI.contains(&e) {
         return FileKind::Audio(Codec::Midi);

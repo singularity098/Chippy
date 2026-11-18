@@ -13,3 +13,6 @@
 [submodule "third_party/libsidplayfp"]
 	path = third_party/libsidplayfp
 	url = https://github.com/kode54/libsidplayfp
+[submodule "third_party/libxmp"]
+	path = third_party/libxmp
+	url = https://github.com/libxmp/libxmp

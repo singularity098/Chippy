@@ -920,6 +920,7 @@ dependencies = [
  "tempfile",
  "twosf-sys",
  "vgmstream-sys",
+ "wsr-sys",
  "zip",
 ]
 
@@ -6921,6 +6922,13 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
+
+[[package]]
+name = "wsr-sys"
+version = "0.1.0"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "x11-clipboard"

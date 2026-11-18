@@ -27,6 +27,8 @@ pub enum Codec {
     Gsf,
     /// Nintendo DS 2SF (vio2sf).
     Twosf,
+    /// Bandai WonderSwan WSR.
+    Wsr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +66,7 @@ pub const SID: &[&str] = &["sid", "psid", "rsid"];
 pub const SGC: &[&str] = &["sgc"];
 pub const GSF: &[&str] = &["gsf", "minigsf"];
 pub const TWOSF: &[&str] = &["2sf", "mini2sf"];
+pub const WSR: &[&str] = &["wsr"];
 pub const MIDI: &[&str] = &["mid", "midi", "kar", "rmi", "smf"];
 pub const IMAGES: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "webp"];
 
@@ -131,6 +134,9 @@ pub fn kind_of(name: &str) -> FileKind {
     if TWOSF.contains(&e) {
         return FileKind::Audio(Codec::Twosf);
     }
+    if WSR.contains(&e) {
+        return FileKind::Audio(Codec::Wsr);
+    }
     if MIDI.contains(&e) {
         return FileKind::Audio(Codec::Midi);
     }
@@ -154,7 +160,7 @@ pub fn may_hold_tracks(name: &str) -> bool {
     let ext = extension(name);
     match kind_of(name) {
         FileKind::Audio(Codec::Gme) => GME_MULTI.contains(&ext.as_str()),
-        FileKind::Audio(Codec::Vgmstream | Codec::Sid | Codec::Sgc) => true,
+        FileKind::Audio(Codec::Vgmstream | Codec::Sid | Codec::Sgc | Codec::Wsr) => true,
         _ => false,
     }
 }

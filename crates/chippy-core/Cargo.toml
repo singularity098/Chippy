@@ -15,6 +15,7 @@ archive-sys.workspace = true
 sidplayfp-sys.workspace = true
 gsf-sys.workspace = true
 twosf-sys.workspace = true
+wsr-sys.workspace = true
 anyhow.workspace = true
 log.workspace = true
 serde.workspace = true

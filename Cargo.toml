@@ -9,6 +9,7 @@ members = [
     "crates/sidplayfp-sys",
     "crates/gsf-sys",
     "crates/twosf-sys",
+    "crates/wsr-sys",
     "crates/chippy-core",
     "crates/chippy",
 ]
@@ -30,6 +31,7 @@ archive-sys = { path = "crates/archive-sys" }
 sidplayfp-sys = { path = "crates/sidplayfp-sys" }
 gsf-sys = { path = "crates/gsf-sys" }
 twosf-sys = { path = "crates/twosf-sys" }
+wsr-sys = { path = "crates/wsr-sys" }
 chippy-core = { path = "crates/chippy-core" }
 anyhow = "1"
 log = "0.4"

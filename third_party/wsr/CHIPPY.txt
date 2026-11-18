@@ -1,0 +1,3 @@
+Mednafen's WonderSwan core (GPL-2.0-or-later), trimmed for WSR playback, as vendored
+by rePlayer (https://github.com/arnaud-neny/rePlayer, source/Replays/WonderSwan).
+crates/wsr-sys/shim.cpp drives it through mednafen/wsr_player.cpp.

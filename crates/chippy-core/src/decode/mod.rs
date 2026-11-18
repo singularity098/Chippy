@@ -11,6 +11,7 @@ pub mod timed;
 pub mod twosf;
 pub mod usf;
 pub mod vgm;
+pub mod wsr;
 
 use anyhow::Result;
 
@@ -92,6 +93,7 @@ pub fn open_decoder(t: &TrackRef, opts: &DecodeOptions) -> Result<Box<dyn Decode
         Some(Codec::Sgc) => Ok(Box::new(sgc::open(&t.loc, t.sub, opts)?)),
         Some(Codec::Gsf) => Ok(Box::new(gsf::open(&t.loc, opts)?)),
         Some(Codec::Twosf) => Ok(Box::new(twosf::open(&t.loc, opts)?)),
+        Some(Codec::Wsr) => Ok(Box::new(wsr::open(&t.loc, t.sub, opts)?)),
         Some(Codec::Common) => match sym::SymDecoder::open(&t.loc) {
             Ok(d) => Ok(Box::new(d)),
             Err(e) => vgm::VgmDecoder::open(&t.loc, t.sub, opts)
@@ -114,6 +116,7 @@ pub fn track_list(loc: &Location, opts: &DecodeOptions) -> Result<Vec<SubTrack>>
         Some(Codec::Vgmstream) => vgm::track_list(loc, opts),
         Some(Codec::Sid) => sid::track_list(loc, opts),
         Some(Codec::Sgc) => sgc::track_list(loc, opts),
+        Some(Codec::Wsr) => wsr::track_list(loc, opts),
         _ => Ok(vec![SubTrack {
             index: 0,
             title: loc.name(),
@@ -133,6 +136,7 @@ pub fn read_meta(t: &TrackRef, opts: &DecodeOptions) -> Result<TrackMeta> {
         Some(Codec::Sgc) => sgc::meta(&t.loc, t.sub, opts),
         Some(Codec::Gsf) => gsf::meta(&t.loc, opts),
         Some(Codec::Twosf) => twosf::meta(&t.loc, opts),
+        Some(Codec::Wsr) => wsr::meta(&t.loc, t.sub, opts),
         Some(Codec::Common) => sym::meta(&t.loc).or_else(|_| vgm::meta(&t.loc, t.sub, opts)),
         Some(Codec::Vgmstream) | None => vgm::meta(&t.loc, t.sub, opts),
     }

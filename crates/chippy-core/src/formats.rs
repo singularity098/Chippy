@@ -11,7 +11,9 @@ pub enum Codec {
     Gme,
     /// Nintendo 64 USF / miniUSF (lazyusf2).
     Usf,
-    /// Common formats through Symphonia: MP3, FLAC, WAV, OGG, M4A...
+    /// Common formats through Symphonia: MP3, FLAC, WAV, OGG, M4A...; the
+    /// ones it cannot decode (Opus, WMA, AC-3) fall through to vgmstream's
+    /// FFmpeg.
     Common,
     /// Everything else vgmstream knows (hundreds of game formats).
     Vgmstream,
@@ -40,7 +42,7 @@ pub const GME_SINGLE: &[&str] = &["spc", "vgm", "vgz", "gym"];
 pub const USF: &[&str] = &["usf", "miniusf"];
 pub const COMMON: &[&str] = &[
     "mp3", "mp2", "mp1", "flac", "wav", "wave", "ogg", "oga", "m4a", "m4b", "mp4", "aac", "alac",
-    "aif", "aiff", "aifc", "caf", "mka", "webm",
+    "aif", "aiff", "aifc", "caf", "mka", "webm", "opus", "wma", "ac3",
 ];
 pub const IMAGES: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "webp"];
 
@@ -142,6 +144,7 @@ mod tests {
         assert_eq!(kind_of("a.NSFE"), FileKind::Audio(Codec::Gme));
         assert_eq!(kind_of("a.miniusf"), FileKind::Audio(Codec::Usf));
         assert_eq!(kind_of("a.flac"), FileKind::Audio(Codec::Common));
+        assert_eq!(kind_of("a.opus"), FileKind::Audio(Codec::Common));
         assert_eq!(kind_of("x.tar.gz"), FileKind::Archive(ArchiveKind::TarGz));
         assert_eq!(kind_of("cover.JPG"), FileKind::Image);
         assert_eq!(kind_of("song.adx"), FileKind::Audio(Codec::Vgmstream));

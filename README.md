@@ -18,8 +18,9 @@ files as if they were folders.
 | --- | --- |
 | [Game Music Emu](https://github.com/libgme/game-music-emu) | NSF, NSFE, SPC, VGM, VGZ, GBS, HES, KSS, AY, SAP, GYM (M3U track lists next to NSF/GBS/etc. are read for track names and lengths) |
 | [lazyusf2](https://github.com/derselbst/lazyusf2) | USF and miniUSF (Nintendo 64), with `_lib` chains |
-| [vgmstream](https://github.com/vgmstream/vgmstream) | Hundreds of game formats: ADX, HCA, BRSTM, BCSTM, XWB, FSB, AT3, DSP, GENH/TXTH... including multi-subsong files |
+| [vgmstream](https://github.com/vgmstream/vgmstream) | Hundreds of game formats: ADX, HCA, BRSTM, BCSTM, XWB, FSB, AT3, DSP, GENH/TXTH... including multi-subsong files, with MP3, Vorbis, Opus, ATRAC3, XMA and WMA streams inside them (through mpg123, libvorbis and FFmpeg) |
 | [Symphonia](https://github.com/pdeljanov/Symphonia) | MP3, FLAC, WAV, OGG Vorbis, M4A/AAC, ALAC, AIFF, CAF, MKV/WebM audio |
+| vgmstream's FFmpeg | Opus, WMA, AC-3 |
 
 Tags come from [lofty](https://github.com/Serial-ATA/lofty-rs) for common
 formats, and from each emulator's own metadata for chiptunes (GME track
@@ -86,16 +87,25 @@ them:
 git clone --recursive https://github.com/singularity098/Chippy
 ```
 
-You need Rust (1.80+), CMake, a C/C++ compiler, and on Linux the ALSA,
-xkbcommon and fontconfig headers:
+You need Rust (1.80+), CMake, pkg-config, a C/C++ compiler, and on Linux
+the ALSA, xkbcommon and fontconfig headers, plus mpg123, libvorbis and
+FFmpeg for vgmstream:
 
 ```bash
-sudo apt install cmake clang libasound2-dev libxkbcommon-dev libfontconfig-dev zlib1g-dev
+sudo apt install cmake clang pkg-config libasound2-dev libxkbcommon-dev libfontconfig-dev zlib1g-dev \
+  libmpg123-dev libvorbis-dev libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
 ```
 
 ```bash
 cargo run --release
 ```
+
+### AppImage
+
+Every push builds a Linux AppImage (`.github/workflows/appimage.yml`).
+Download it from the run's *Artifacts* on the Actions tab, unzip it, make
+it executable and run it. It needs glibc 2.35 or newer (Ubuntu 22.04,
+Debian 12, Fedora 36 and later).
 
 The Skia renderer is used by default (it antialiases best); its prebuilt
 binaries are downloaded during the build. Where that is not possible, build
@@ -110,12 +120,15 @@ crates/
   chippy-core/     no UI: virtual file system (folders, archives, multi-track
                    files), decoders, tags, album art, playlist, settings
   gme-sys/         builds third_party/game-music-emu
-  vgmstream-sys/   builds third_party/vgmstream (built-in codecs only)
+  vgmstream-sys/   builds third_party/vgmstream, with the system's mpg123,
+                   libvorbis and FFmpeg
   lazyusf-sys/     builds third_party/lazyusf2
 ```
 
 `cargo run -p chippy-core --example probe -- PATH` lists a path the way the
-browser does, with each track's tags.
+browser does, with each track's tags;
+`cargo run -p chippy-core --example decode -- FILE` decodes a file to the
+end to check that it plays.
 
 The look (fonts, colours, themes, icons, the edge strips and sliding panels)
 follows [Carlita](https://github.com/singularity098/Carlita).
@@ -123,5 +136,7 @@ follows [Carlita](https://github.com/singularity098/Carlita).
 ## Licence
 
 GPL-3.0-or-later. The vendored libraries keep their own licences: Game Music
-Emu is LGPL-2.1, lazyusf2 is GPL-2.0, vgmstream is ISC-style. The Jost font
+Emu is LGPL-2.1, lazyusf2 is GPL-2.0, vgmstream is ISC-style; the
+AppImage also carries the system's mpg123 and libvorbis, and FFmpeg
+(LGPL-2.1 or GPL, depending on how the distribution built it). The Jost font
 is under the SIL Open Font Licence (`assets/fonts/OFL.txt`).

@@ -75,9 +75,17 @@ impl Media {
     }
 
     fn attach(tx: Sender<Request>) -> Result<MediaControls, String> {
+        // Souvlaki's D-Bus thread panics when there is no session bus.
+        #[cfg(target_os = "linux")]
+        if !session_bus_present() {
+            return Err("no D-Bus session bus".into());
+        }
+        // Each instance its own name, as MPRIS asks (a taken name would
+        // fail the connection).
+        let dbus_name = format!("chippy.instance{}", std::process::id());
         let config = PlatformConfig {
             display_name: "Chippy",
-            dbus_name: "chippy",
+            dbus_name: &dbus_name,
             hwnd: None,
         };
         let mut c = MediaControls::new(config).map_err(|e| format!("{e:?}"))?;
@@ -143,4 +151,14 @@ impl Media {
 
     #[cfg(not(target_os = "linux"))]
     pub fn set_volume(&mut self, _v: f32) {}
+}
+
+#[cfg(target_os = "linux")]
+fn session_bus_present() -> bool {
+    if let Some(addr) = std::env::var_os("DBUS_SESSION_BUS_ADDRESS") {
+        return !addr.is_empty();
+    }
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(|d| std::path::Path::new(&d).join("bus").exists())
+        .unwrap_or(false)
 }

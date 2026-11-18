@@ -255,6 +255,8 @@ export component MainWindow inherits Window {
             if e.text == "s" { Now.toggle-shuffle(); return accept; }
             if e.text == "r" { Now.cycle-repeat(); return accept; }
             if e.text == "m" { Now.toggle-mute(); return accept; }
+            if e.text == "[" { Now.cycle-soundfont(-1); return accept; }
+            if e.text == "]" { Now.cycle-soundfont(1); return accept; }
             if e.text == "b" || e.text == Key.Tab { root.open-left(); return accept; }
             if e.text == "," { root.open-right(); return accept; }
             reject

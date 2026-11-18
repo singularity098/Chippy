@@ -66,6 +66,10 @@ pub struct Settings {
     pub gme_accuracy: bool,
     /// Spectrum bar count.
     pub spectrum_bars: u32,
+    /// A folder of SF2 SoundFonts for MIDI, and the file name of the one
+    /// in use.
+    pub soundfont_dir: Option<PathBuf>,
+    pub soundfont: Option<String>,
 }
 
 pub fn default_columns() -> Vec<Column> {
@@ -116,6 +120,8 @@ impl Default for Settings {
             usf_hle: true,
             gme_accuracy: true,
             spectrum_bars: 32,
+            soundfont_dir: None,
+            soundfont: None,
         }
     }
 }

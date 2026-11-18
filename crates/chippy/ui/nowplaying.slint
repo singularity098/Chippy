@@ -42,6 +42,10 @@ export global Now {
     callback toggle-mute;
     callback toggle-shuffle;
     callback cycle-repeat;
+    // A MIDI file plays: its SoundFont can be changed from here.
+    in property <bool> midi;
+    in property <string> soundfont;
+    callback cycle-soundfont(int);
 }
 
 // Bars rising from the bottom in the theme's paint, with peak caps.
@@ -216,11 +220,38 @@ export component BottomBar inherits Rectangle {
                     font-size: Theme.font-small;
                     overflow: elide;
                 }
-                Text {
+                if !Now.midi: Text {
                     text: Now.album;
                     color: Theme.text-faint;
                     font-size: Theme.font-small;
                     overflow: elide;
+                }
+                // The SoundFont, with buttons to try the others.
+                if Now.midi: HorizontalLayout {
+                    spacing: 2px;
+                    height: 20px;
+                    IconButton {
+                        size: 20px;
+                        icon-size: 12px;
+                        icon: Icons.chevron-left;
+                        tip: "Previous SoundFont ([)";
+                        clicked => { Now.cycle-soundfont(-1); }
+                    }
+                    IconButton {
+                        size: 20px;
+                        icon-size: 12px;
+                        icon: Icons.chevron-right;
+                        tip: "Next SoundFont (])";
+                        clicked => { Now.cycle-soundfont(1); }
+                    }
+                    Text {
+                        text: Now.soundfont != "" ? Now.soundfont : "No SoundFont";
+                        color: Theme.paint-b;
+                        font-size: Theme.font-small;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
                 }
             }
             if !root.narrow: Spectrum {

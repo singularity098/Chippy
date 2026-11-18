@@ -15,6 +15,8 @@ pub enum Codec {
     Common,
     /// Everything else vgmstream knows (hundreds of game formats).
     Vgmstream,
+    /// Standard MIDI files, played through a SoundFont.
+    Midi,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +44,7 @@ pub const COMMON: &[&str] = &[
     "mp3", "mp2", "mp1", "flac", "wav", "wave", "ogg", "oga", "m4a", "m4b", "mp4", "aac", "alac",
     "aif", "aiff", "aifc", "caf", "mka", "webm",
 ];
+pub const MIDI: &[&str] = &["mid", "midi", "kar", "rmi", "smf"];
 pub const IMAGES: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "webp"];
 
 /// Extensions vgmstream accepts that are better shown as something else, or
@@ -91,6 +94,9 @@ pub fn kind_of(name: &str) -> FileKind {
     }
     if COMMON.contains(&e) {
         return FileKind::Audio(Codec::Common);
+    }
+    if MIDI.contains(&e) {
+        return FileKind::Audio(Codec::Midi);
     }
     if IMAGES.contains(&e) {
         return FileKind::Image;

@@ -163,18 +163,22 @@ impl Decoder for UsfDecoder {
         Ok(frames)
     }
     fn seek(&mut self, ms: u64) -> Result<()> {
+        while !self.seek_step(ms)? {}
+        Ok(())
+    }
+    fn seek_step(&mut self, ms: u64) -> Result<bool> {
         let target = (ms * self.rate as u64 / 1000).min(self.end);
         if target < self.pos {
             unsafe { ffi::usf_restart(self.state.ptr()) };
             self.pos = 0;
         }
-        // Emulate up to the target, throwing the sound away.
-        while self.pos < target {
-            let n = (target - self.pos).min(self.rate as u64) as usize;
-            self.render(None, n)?;
-            self.pos += n as u64;
+        // Emulate towards the target, throwing the sound away.
+        let n = (target - self.pos).min(self.rate as u64 * super::SEEK_STEP_MS / 1000);
+        if n > 0 {
+            self.render(None, n as usize)?;
+            self.pos += n;
         }
-        Ok(())
+        Ok(self.pos == target)
     }
 }
 

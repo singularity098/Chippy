@@ -121,6 +121,30 @@ on every push (as a workflow artifact) and attaches it to a release for
 every `v*` tag. It needs ALSA, fontconfig and xkbcommon at run time, which
 desktop distributions have.
 
+An Android APK (arm64, Android 8 or newer) is built on every push too
+(`.github/workflows/android.yml`): download it from the run's *Artifacts*
+on the Actions tab, unzip it and open the `.apk` on the phone (allow
+installing from that app when asked). Every build is signed with the same
+key, so a new one installs over the last without losing settings.
+
+### On Android
+
+Held upright, the player looks like a phone's: the cover large, the title
+under it, the timeline and transport below, and the playlist one tap away:
+the playlist button at the top, the title, or the *Up next* line at the
+bottom, whose page slides up (the back button brings the player back).
+Turned sideways, or on a tablet, it is the desktop's layout. The file
+browser and the settings slide in from the left and right edges as on the
+desktop (or from the ☰ and gear buttons); a single tap plays.
+
+At the first start Chippy asks for *All files access*, as the file browser
+reads folders anywhere in shared storage (it starts in `/storage/emulated/0`;
+set the music folder in Settings with *Use the browser's folder*). Music
+keeps playing with the screen off or another app in front, with the usual
+media notification, lock-screen and headset controls; a call or unplugged
+headphones pause it. Back with nothing open sends Chippy to the background;
+swiping it away from the recent apps stops it.
+
 ## Building
 
 The decoders are C/C++ libraries vendored as git submodules, so clone with
@@ -144,6 +168,23 @@ sudo apt install cmake clang pkg-config libasound2-dev libxkbcommon-dev libfontc
 cargo run --release
 ```
 
+### Android
+
+You need the Android SDK (platform 35, build-tools 35) and NDK (r27),
+JDK 17+, Gradle 8, the Rust target and cargo-ndk:
+
+```bash
+rustup target add aarch64-linux-android
+cargo install cargo-ndk
+export ANDROID_HOME=~/Android/Sdk ANDROID_NDK_HOME=~/Android/Sdk/ndk/27.2.12479018
+android/build-apk.sh          # or: android/build-apk.sh debug
+```
+
+The first run builds FFmpeg, mpg123, libvorbis and libogg for vgmstream
+into `android/deps` (`android/build-deps.sh`, a minute or two). The APK is
+in `android/app/build/outputs/apk/`. `CHIPPY_MOBILE=1 cargo run` shows the
+phone's layout on the desktop (make the window taller than wide).
+
 ### AppImage
 
 Every push builds a Linux AppImage (`.github/workflows/appimage.yml`).
@@ -161,6 +202,7 @@ runs without OpenGL.
 ```
 crates/
   chippy/          the app: Slint UI (ui/), audio output, player thread, spectrum
+  chippy-android/  the library Android's activity loads (android_main)
   chippy-core/     no UI: virtual file system (folders, archives, multi-track
                    files), decoders, tags, album art, playlist, settings
   gme-sys/         builds third_party/game-music-emu
@@ -174,6 +216,8 @@ crates/
   sidplayfp-sys/   third_party/libsidplayfp (SID)
   xmp-sys/         third_party/libxmp (tracker modules)
   archive-sys/     third_party/libarchive (RAR, RSN)
+android/           the Android app (Gradle, a little Java: the activity,
+                   media session and playback service) and its build scripts
 ```
 
 `cargo run -p chippy-core --example probe -- PATH` lists a path the way the

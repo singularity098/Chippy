@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The notification's small icon: the chip in white. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="256" android:viewportHeight="256">
+    <path android:pathData="M86,66 h84 a20,20 0 0 1 20,20 v84 a20,20 0 0 1 -20,20 h-84 a20,20 0 0 1 -20,-20 v-84 a20,20 0 0 1 20,-20 z M97,40v26M128,40v26M159,40v26M97,190v26M128,190v26M159,190v26M40,97h26M40,128h26M40,159h26M190,97h26M190,128h26M190,159h26" android:fillColor="#00000000"
+        android:strokeColor="#ffffff" android:strokeWidth="16" android:strokeLineCap="round" />
+    <path android:pathData="M84,144H100V112H124V144H148V112H172" android:fillColor="#00000000"
+        android:strokeColor="#ffffff" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>

@@ -1,10 +1,12 @@
 //! The system's media controls: media keys, and the player widgets of the
-//! desktop (MPRIS on Linux, Now Playing on macOS). Their requests come in
-//! on a channel the clock reads; what plays is told back to them.
+//! desktop (MPRIS on Linux, Now Playing on macOS; on Android the media
+//! session and its notification, in `crate::android`). Their requests come
+//! in on a channel the clock reads; what plays is told back to them.
 
-use crossbeam_channel::{Receiver, Sender};
-use souvlaki::{MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, PlatformConfig};
-use std::time::Duration;
+#[cfg(target_os = "android")]
+pub use crate::android::Media;
+#[cfg(not(target_os = "android"))]
+pub use desktop::Media;
 
 /// What the system asked for.
 #[derive(Debug, Clone, PartialEq)]
@@ -21,6 +23,12 @@ pub enum Request {
     Volume(f32),
     Raise,
     Quit,
+    /// Android's back button or gesture.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    Back,
+    /// Storage access was granted (Android): list the folder again.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    Refresh,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,135 +38,145 @@ pub enum Playback {
     Paused,
 }
 
-pub struct Media {
-    controls: Option<MediaControls>,
-    pub requests: Receiver<Request>,
-    shown: Option<(String, String, String, Option<u64>)>,
-    playback: Option<Playback>,
-}
+#[cfg(not(target_os = "android"))]
+mod desktop {
+    use super::{Playback, Request};
+    use crossbeam_channel::{Receiver, Sender};
+    use souvlaki::{
+        MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, PlatformConfig,
+    };
+    use std::time::Duration;
 
-fn translate(e: MediaControlEvent) -> Option<Request> {
-    use souvlaki::SeekDirection::*;
-    Some(match e {
-        MediaControlEvent::Play => Request::Play,
-        MediaControlEvent::Pause => Request::Pause,
-        MediaControlEvent::Toggle => Request::Toggle,
-        MediaControlEvent::Next => Request::Next,
-        MediaControlEvent::Previous => Request::Previous,
-        MediaControlEvent::Stop => Request::Stop,
-        MediaControlEvent::Seek(Forward) => Request::SeekBy(10),
-        MediaControlEvent::Seek(Backward) => Request::SeekBy(-10),
-        MediaControlEvent::SeekBy(Forward, d) => Request::SeekBy(d.as_secs() as i64),
-        MediaControlEvent::SeekBy(Backward, d) => Request::SeekBy(-(d.as_secs() as i64)),
-        MediaControlEvent::SetPosition(p) => Request::SeekTo(p.0.as_millis() as u64),
-        MediaControlEvent::SetVolume(v) => Request::Volume(v as f32),
-        MediaControlEvent::Raise => Request::Raise,
-        MediaControlEvent::Quit => Request::Quit,
-        _ => return None,
-    })
-}
-
-impl Media {
-    /// Connects to the system's media controls; without them (no session
-    /// bus, say) the player works as before.
-    pub fn connect() -> Media {
-        let (tx, rx) = crossbeam_channel::unbounded();
-        let controls = Self::attach(tx)
-            .map_err(|e| log::info!("no system media controls: {e}"))
-            .ok();
-        Media {
-            controls,
-            requests: rx,
-            shown: None,
-            playback: None,
-        }
+    pub struct Media {
+        controls: Option<MediaControls>,
+        pub requests: Receiver<Request>,
+        shown: Option<(String, String, String, Option<u64>)>,
+        playback: Option<Playback>,
     }
 
-    fn attach(tx: Sender<Request>) -> Result<MediaControls, String> {
-        // Souvlaki's D-Bus thread panics when there is no session bus.
-        #[cfg(target_os = "linux")]
-        if !session_bus_present() {
-            return Err("no D-Bus session bus".into());
-        }
-        // Each instance its own name, as MPRIS asks (a taken name would
-        // fail the connection).
-        let dbus_name = format!("chippy.instance{}", std::process::id());
-        let config = PlatformConfig {
-            display_name: "Chippy",
-            dbus_name: &dbus_name,
-            hwnd: None,
-        };
-        let mut c = MediaControls::new(config).map_err(|e| format!("{e:?}"))?;
-        c.attach(move |e| {
-            if let Some(r) = translate(e) {
-                let _ = tx.send(r);
-            }
+    fn translate(e: MediaControlEvent) -> Option<Request> {
+        use souvlaki::SeekDirection::*;
+        Some(match e {
+            MediaControlEvent::Play => Request::Play,
+            MediaControlEvent::Pause => Request::Pause,
+            MediaControlEvent::Toggle => Request::Toggle,
+            MediaControlEvent::Next => Request::Next,
+            MediaControlEvent::Previous => Request::Previous,
+            MediaControlEvent::Stop => Request::Stop,
+            MediaControlEvent::Seek(Forward) => Request::SeekBy(10),
+            MediaControlEvent::Seek(Backward) => Request::SeekBy(-10),
+            MediaControlEvent::SeekBy(Forward, d) => Request::SeekBy(d.as_secs() as i64),
+            MediaControlEvent::SeekBy(Backward, d) => Request::SeekBy(-(d.as_secs() as i64)),
+            MediaControlEvent::SetPosition(p) => Request::SeekTo(p.0.as_millis() as u64),
+            MediaControlEvent::SetVolume(v) => Request::Volume(v as f32),
+            MediaControlEvent::Raise => Request::Raise,
+            MediaControlEvent::Quit => Request::Quit,
+            _ => return None,
         })
-        .map_err(|e| format!("{e:?}"))?;
-        Ok(c)
     }
 
-    /// Tells the system what plays (called whenever it may have changed;
-    /// only changes are passed on).
-    pub fn show(&mut self, title: &str, artist: &str, album: &str, length_ms: Option<u64>) {
-        let Some(c) = self.controls.as_mut() else {
-            return;
-        };
-        let now = (title.into(), artist.into(), album.into(), length_ms);
-        if self.shown.as_ref() == Some(&now) {
-            return;
+    impl Media {
+        /// Connects to the system's media controls; without them (no session
+        /// bus, say) the player works as before.
+        pub fn connect() -> Media {
+            let (tx, rx) = crossbeam_channel::unbounded();
+            let controls = Self::attach(tx)
+                .map_err(|e| log::info!("no system media controls: {e}"))
+                .ok();
+            Media {
+                controls,
+                requests: rx,
+                shown: None,
+                playback: None,
+            }
         }
-        fn none_if_empty(s: &str) -> Option<&str> {
-            (!s.is_empty()).then_some(s)
-        }
-        let _ = c.set_metadata(MediaMetadata {
-            title: none_if_empty(title),
-            artist: none_if_empty(artist),
-            album: none_if_empty(album),
-            duration: length_ms.map(Duration::from_millis),
-            cover_url: None,
-        });
-        self.shown = Some(now);
-    }
 
-    pub fn set_playback(&mut self, p: Playback, position_ms: u64) {
-        let Some(c) = self.controls.as_mut() else {
-            return;
-        };
-        if self.playback == Some(p) {
-            return;
+        fn attach(tx: Sender<Request>) -> Result<MediaControls, String> {
+            // Souvlaki's D-Bus thread panics when there is no session bus.
+            #[cfg(target_os = "linux")]
+            if !session_bus_present() {
+                return Err("no D-Bus session bus".into());
+            }
+            // Each instance its own name, as MPRIS asks (a taken name would
+            // fail the connection).
+            let dbus_name = format!("chippy.instance{}", std::process::id());
+            let config = PlatformConfig {
+                display_name: "Chippy",
+                dbus_name: &dbus_name,
+                hwnd: None,
+            };
+            let mut c = MediaControls::new(config).map_err(|e| format!("{e:?}"))?;
+            c.attach(move |e| {
+                if let Some(r) = translate(e) {
+                    let _ = tx.send(r);
+                }
+            })
+            .map_err(|e| format!("{e:?}"))?;
+            Ok(c)
         }
-        let progress = Some(souvlaki::MediaPosition(Duration::from_millis(position_ms)));
-        let _ = c.set_playback(match p {
-            Playback::Stopped => MediaPlayback::Stopped,
-            Playback::Playing => MediaPlayback::Playing { progress },
-            Playback::Paused => MediaPlayback::Paused { progress },
-        });
-        self.playback = Some(p);
-    }
 
-    /// A seek: the system's position has to be told afresh.
-    pub fn moved(&mut self) {
-        self.playback = None;
+        /// Tells the system what plays (called whenever it may have changed;
+        /// only changes are passed on).
+        pub fn show(&mut self, title: &str, artist: &str, album: &str, length_ms: Option<u64>) {
+            let Some(c) = self.controls.as_mut() else {
+                return;
+            };
+            let now = (title.into(), artist.into(), album.into(), length_ms);
+            if self.shown.as_ref() == Some(&now) {
+                return;
+            }
+            fn none_if_empty(s: &str) -> Option<&str> {
+                (!s.is_empty()).then_some(s)
+            }
+            let _ = c.set_metadata(MediaMetadata {
+                title: none_if_empty(title),
+                artist: none_if_empty(artist),
+                album: none_if_empty(album),
+                duration: length_ms.map(Duration::from_millis),
+                cover_url: None,
+            });
+            self.shown = Some(now);
+        }
+
+        pub fn set_playback(&mut self, p: Playback, position_ms: u64) {
+            let Some(c) = self.controls.as_mut() else {
+                return;
+            };
+            if self.playback == Some(p) {
+                return;
+            }
+            let progress = Some(souvlaki::MediaPosition(Duration::from_millis(position_ms)));
+            let _ = c.set_playback(match p {
+                Playback::Stopped => MediaPlayback::Stopped,
+                Playback::Playing => MediaPlayback::Playing { progress },
+                Playback::Paused => MediaPlayback::Paused { progress },
+            });
+            self.playback = Some(p);
+        }
+
+        /// A seek: the system's position has to be told afresh.
+        pub fn moved(&mut self) {
+            self.playback = None;
+        }
+
+        #[cfg(target_os = "linux")]
+        pub fn set_volume(&mut self, v: f32) {
+            if let Some(c) = self.controls.as_mut() {
+                let _ = c.set_volume(v as f64);
+            }
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        pub fn set_volume(&mut self, _v: f32) {}
     }
 
     #[cfg(target_os = "linux")]
-    pub fn set_volume(&mut self, v: f32) {
-        if let Some(c) = self.controls.as_mut() {
-            let _ = c.set_volume(v as f64);
+    fn session_bus_present() -> bool {
+        if let Some(addr) = std::env::var_os("DBUS_SESSION_BUS_ADDRESS") {
+            return !addr.is_empty();
         }
+        std::env::var_os("XDG_RUNTIME_DIR")
+            .map(|d| std::path::Path::new(&d).join("bus").exists())
+            .unwrap_or(false)
     }
-
-    #[cfg(not(target_os = "linux"))]
-    pub fn set_volume(&mut self, _v: f32) {}
-}
-
-#[cfg(target_os = "linux")]
-fn session_bus_present() -> bool {
-    if let Some(addr) = std::env::var_os("DBUS_SESSION_BUS_ADDRESS") {
-        return !addr.is_empty();
-    }
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(|d| std::path::Path::new(&d).join("bus").exists())
-        .unwrap_or(false)
 }

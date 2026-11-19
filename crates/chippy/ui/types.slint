@@ -20,6 +20,9 @@ export struct PlRow {
     playing: bool,
     // Metadata not read yet (shown dimmer).
     pending: bool,
+    // For the phone's playlist: the title, and "artist · length" under it.
+    title: string,
+    detail: string,
 }
 
 export struct ColumnItem {

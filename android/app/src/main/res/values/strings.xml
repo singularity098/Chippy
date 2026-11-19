@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Chippy</string>
+    <string name="channel_playback">Playback</string>
+    <string name="previous">Previous</string>
+    <string name="play">Play</string>
+    <string name="pause">Pause</string>
+    <string name="next">Next</string>
+    <string name="storage_title">Your music folders</string>
+    <string name="storage_message">Chippy plays music straight from your folders, archives and chiptune files, with a file browser instead of a library. For that it needs to see your files: allow \"All files access\" on the next screen.</string>
+    <string name="storage_allow">Continue</string>
+    <string name="storage_later">Not now</string>
+</resources>

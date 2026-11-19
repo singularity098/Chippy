@@ -32,7 +32,7 @@ export component Tip {
     property <int> mine: -1;
 
     function update() {
-        if root.hover && !root.pressed && root.text != "" {
+        if root.hover && !root.pressed && root.text != "" && !Theme.mobile {
             Tips.serial += 1;
             root.mine = Tips.serial;
             Tips.x = root.absolute-position.x;

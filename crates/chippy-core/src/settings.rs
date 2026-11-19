@@ -111,8 +111,9 @@ impl Default for Settings {
             music_dir: directories::UserDirs::new().and_then(|u| u.audio_dir().map(PathBuf::from)),
             show_all_files: false,
             open_folder_as_playlist: true,
-            single_tap: false,
-            hover_opens_browser: true,
+            // Touch first on Android: a tap plays, and nothing hovers.
+            single_tap: cfg!(target_os = "android"),
+            hover_opens_browser: !cfg!(target_os = "android"),
             volume: 0.8,
             repeat: Repeat::All,
             shuffle: false,

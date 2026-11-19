@@ -7,6 +7,10 @@
 // or tap the edge's tab. A panel brought in by hovering goes again when the
 // mouse leaves it, unless something in it was used; then it stays until a
 // click outside it or its close button.
+//
+// On a phone held upright (Theme.mobile, taller than wide) the middle and
+// the bottom bar give way to the phone's player (phone.slint), and the
+// playlist becomes a page of its own that slides up over it.
 import "../../../assets/fonts/Jost-Light.ttf";
 import "../../../assets/fonts/Jost-Regular.ttf";
 import { Theme, ThemeLook } from "theme.slint";
@@ -19,6 +23,7 @@ import { Playlist, PlaylistPanel } from "playlist.slint";
 import { Now, ArtPanel, BottomBar } from "nowplaying.slint";
 import { Prefs, SettingsPanel } from "settings.slint";
 import { Info, Export, InfoDialog, ExportDialog } from "dialogs.slint";
+import { PhoneTopBar, PhonePlayer, QueuePage } from "phone.slint";
 
 export { Theme, IconArt, Browser, Playlist, Now, Prefs, Info, Export, FileItem, PlRow, ColumnItem, Crumb, InfoField }
 
@@ -137,7 +142,7 @@ component TopBar inherits Rectangle {
             tip: "File browser";
             clicked => { root.open-browser(); }
         }
-        IconButton {
+        if !Theme.mobile: IconButton {
             y: (parent.height - self.height) / 2;
             size: 34px;
             icon-size: 18px;
@@ -172,10 +177,10 @@ component TopBar inherits Rectangle {
             overflow: elide;
         }
         IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: Icons.gear-line; weight: 1.6; tip: "Settings"; clicked => { root.open-settings(); } }
-        IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: Icons.fullscreen-line; tip: "Fullscreen (F11)"; clicked => { root.toggle-fullscreen(); } }
-        IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: Icons.minimize-line; tip: "Minimise"; clicked => { root.minimize(); } }
-        IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: root.maximized ? Icons.restore-line : Icons.maximize-line; weight: 1.6; tip: root.maximized ? "Restore" : "Maximise"; clicked => { root.toggle-maximize(); } }
-        IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: Icons.close; tip: "Quit"; clicked => { root.close-window(); } }
+        if !Theme.mobile: IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: Icons.fullscreen-line; tip: "Fullscreen (F11)"; clicked => { root.toggle-fullscreen(); } }
+        if !Theme.mobile: IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: Icons.minimize-line; tip: "Minimise"; clicked => { root.minimize(); } }
+        if !Theme.mobile: IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: root.maximized ? Icons.restore-line : Icons.maximize-line; weight: 1.6; tip: root.maximized ? "Restore" : "Maximise"; clicked => { root.toggle-maximize(); } }
+        if !Theme.mobile: IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: Icons.close; tip: "Quit"; clicked => { root.close-window(); } }
     }
 }
 
@@ -184,10 +189,10 @@ export component MainWindow inherits Window {
     no-frame: true;
     icon: @image-url("../../../assets/chippy-icon.svg");
     background: Theme.bg;
-    min-width: 760px;
-    min-height: 520px;
-    preferred-width: 1360px;
-    preferred-height: 820px;
+    min-width: Theme.mobile ? 0 : 760px;
+    min-height: Theme.mobile ? 0 : 520px;
+    preferred-width: Theme.mobile ? 412px : 1360px;
+    preferred-height: Theme.mobile ? 880px : 820px;
     default-font-size: Theme.font;
     default-font-family: "Jost";
     default-font-weight: Theme.light;
@@ -199,6 +204,10 @@ export component MainWindow inherits Window {
     in-out property <string> toast;
     in property <bool> toast-error;
     in property <string> subtitle;
+    // The phone's playlist page is showing.
+    in-out property <bool> queue-open;
+    // The next track's title, for the phone's "up next" line.
+    in property <string> up-next;
 
     callback start-drag;
     callback start-resize(string);
@@ -213,10 +222,14 @@ export component MainWindow inherits Window {
     // playlist and the art, so they are easy to find without covering them.
     property <length> strip-width: 22px;
     property <length> gutter: 8px;
-    property <bool> docked: !root.fullscreen;
-    property <length> top-inset: root.docked ? 44px : 0;
-    property <length> bottom-height: 96px;
+    property <bool> phone: Theme.mobile && root.height > root.width;
+    property <bool> docked: !root.fullscreen && !Theme.mobile;
+    property <length> top-inset: root.phone ? 58px : Theme.mobile ? 50px : root.docked ? 44px : 0;
+    property <length> bottom-height: root.phone ? 0 : 96px;
     property <length> mid-height: root.height - root.top-inset - root.bottom-height;
+    // Where the sidebars go: over everything on a phone, as drawers do.
+    property <length> side-top: root.phone ? 0 : root.top-inset;
+    property <length> side-height: root.phone ? root.height : root.mid-height;
     property <bool> framed: root.docked && !root.window-maximized;
     property <length> edge-inset: root.framed ? 5px : 0;
 
@@ -238,6 +251,18 @@ export component MainWindow inherits Window {
     public function open-right() { root.right-pos = 1; root.left-pos = 0; root.left-by-hover = false; root.right-by-hover = false; }
     public function close-right() { root.right-pos = 0; root.right-by-hover = false; keys.focus(); }
     public function focus-main() { keys.focus(); }
+    public function open-queue() { root.queue-open = true; root.close-left(); root.close-right(); }
+
+    // Android's back button: closes what is on top, and says whether there
+    // was anything (if not, the app goes to the background).
+    public function back() -> bool {
+        if Export.shown { Export.close(); return true; }
+        if Info.shown { Info.close(); return true; }
+        if root.left-pos > 0 { root.close-left(); return true; }
+        if root.right-pos > 0 { root.close-right(); return true; }
+        if root.queue-open { root.queue-open = false; return true; }
+        return false;
+    }
 
     function over-left(x: length, y: length) -> bool { x < root.left-width && y >= root.top-inset && y < root.top-inset + root.mid-height }
     function over-right(x: length, y: length) -> bool { x >= root.width - root.right-width && y >= root.top-inset && y < root.top-inset + root.mid-height }
@@ -285,7 +310,7 @@ export component MainWindow inherits Window {
     }
 
     // ---------------------------------------------------------- main area
-    Rectangle {
+    if !root.phone: Rectangle {
         y: root.top-inset;
         height: root.mid-height;
         HorizontalLayout {
@@ -305,12 +330,38 @@ export component MainWindow inherits Window {
         }
     }
 
-    BottomBar {
+    if !root.phone: BottomBar {
         y: root.height - root.bottom-height;
         height: root.bottom-height;
     }
 
-    if root.docked: TopBar {
+    if root.phone: PhonePlayer {
+        y: root.top-inset;
+        height: root.mid-height;
+        up-next: root.up-next;
+        open-queue => { root.open-queue(); }
+        open-browser => { root.open-left(); }
+    }
+
+    if root.phone: PhoneTopBar {
+        y: 0;
+        height: root.top-inset;
+        title: "NOW PLAYING";
+        open-browser => { root.open-left(); }
+        open-queue => { root.open-queue(); }
+        open-settings => { root.open-right(); }
+    }
+
+    QueuePage {
+        y: root.queue-open && root.phone ? 0 : root.height;
+        height: root.height;
+        visible: root.phone && self.y < root.height;
+        animate y { duration: Theme.slide; easing: ease-out; }
+        close => { root.queue-open = false; }
+        open-browser => { root.open-left(); }
+    }
+
+    if (root.docked || Theme.mobile) && !root.phone: TopBar {
         y: 0;
         height: root.top-inset;
         maximized: root.window-maximized;
@@ -326,8 +377,8 @@ export component MainWindow inherits Window {
 
     // ----------------------------------------------------------- sidebars
     if root.left-pos > 0 || root.right-pos > 0: Rectangle {
-        y: root.top-inset;
-        height: root.mid-height;
+        y: root.side-top;
+        height: root.side-height;
         background: Colors.rgba(0, 0, 0, 0.55 * max(root.left-pos, root.right-pos));
         TouchArea {
             pointer-event(e) => {
@@ -340,9 +391,9 @@ export component MainWindow inherits Window {
     }
 
     browser-panel := BrowserPanel {
-        y: root.top-inset;
+        y: root.side-top;
         width: root.left-width;
-        height: root.mid-height;
+        height: root.side-height;
         x: (root.left-pos - 1) * root.left-width;
         visible: root.left-pos > 0;
         animate x { duration: root.left-dragging ? 0ms : Theme.slide; easing: ease-out; }
@@ -351,9 +402,9 @@ export component MainWindow inherits Window {
     }
 
     SettingsPanel {
-        y: root.top-inset;
+        y: root.side-top;
         width: root.right-width;
-        height: root.mid-height;
+        height: root.side-height;
         x: root.width - root.right-pos * root.right-width;
         visible: root.right-pos > 0;
         animate x { duration: root.right-dragging ? 0ms : Theme.slide; easing: ease-out; }
@@ -409,7 +460,7 @@ export component MainWindow inherits Window {
     // ---------------------------------------------------------- the toast
     if root.toast != "": Rectangle {
         x: (root.width - self.width) / 2;
-        y: root.height - root.bottom-height - self.height - 16px;
+        y: root.height - root.bottom-height - self.height - (root.phone ? 84px : 16px);
         width: min(root.width - 40px, toast-text.preferred-width + 40px);
         height: 44px;
         border-radius: 22px;

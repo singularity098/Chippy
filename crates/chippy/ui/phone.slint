@@ -1,0 +1,577 @@
+// The player on a phone held upright, laid out as phones' music players
+// are: a bar on top, the cover large in the middle, the title under it, the
+// timeline and the transport below, and the playlist one tap away (its
+// button, the title, or the "up next" line at the bottom) on a page of its
+// own. The file browser and the settings slide in from the sides as on the
+// desktop.
+import { Theme } from "theme.slint";
+import { IconButton, PlayButton, Scrubber } from "widgets.slint";
+import { Icon, Icons } from "icons.slint";
+import { MenuItem, BigButton } from "widgets.slint";
+import { Now, Spectrum } from "nowplaying.slint";
+import { Playlist } from "playlist.slint";
+import { ListView } from "std-widgets.slint";
+
+export component PhoneTopBar inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    callback open-browser;
+    callback open-queue;
+    callback open-settings;
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        spacing: 2px;
+        alignment: stretch;
+        IconButton {
+            y: (parent.height - self.height) / 2;
+            size: 46px;
+            icon-size: 22px;
+            icon: Icons.menu-line;
+            tip: "File browser";
+            clicked => { root.open-browser(); }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            padding-left: 6px;
+            Text {
+                text: root.title;
+                font-size: Theme.font-small;
+                font-weight: Theme.regular;
+                letter-spacing: 1.5px;
+                color: Theme.text-dim;
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+            if root.subtitle != "": Text {
+                text: root.subtitle;
+                font-size: Theme.font-small - 1px;
+                color: Theme.text-faint;
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+        }
+        IconButton {
+            y: (parent.height - self.height) / 2;
+            size: 46px;
+            icon-size: 22px;
+            icon: Icons.queue-line;
+            icon-solid: Icons.queue-solid;
+            weight: 1.7;
+            tip: "Playlist";
+            clicked => { root.open-queue(); }
+        }
+        IconButton {
+            y: (parent.height - self.height) / 2;
+            size: 46px;
+            icon-size: 21px;
+            icon: Icons.gear-line;
+            weight: 1.6;
+            tip: "Settings";
+            clicked => { root.open-settings(); }
+        }
+    }
+}
+
+// The cover, square-ish and as wide as the screen allows.
+component Cover inherits Rectangle {
+    property <float> aspect: Now.has-art ? max(0.6, min(1.6, Now.art-aspect)) : 1;
+    property <length> w: min(root.width, root.height * root.aspect);
+    frame := Rectangle {
+        width: root.w;
+        height: root.w / root.aspect;
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
+        border-radius: Theme.radius + 6px;
+        background: Now.has-art ? #000000 : Theme.surface;
+        border-width: Now.has-art ? 0 : 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 36px;
+        drop-shadow-offset-y: 10px;
+        drop-shadow-color: Now.has-art ? #000000d0 : transparent;
+        clip: true;
+        if Now.has-art: Image {
+            width: parent.width;
+            height: parent.height;
+            source: Now.art;
+            image-fit: cover;
+            image-rendering: smooth;
+            accessible-role: image;
+            accessible-label: "Album art";
+        }
+        if !Now.has-art: Rectangle {
+            background: @radial-gradient(circle, Theme.paint-c.transparentize(82%) 0%, transparent 70%);
+            Icon {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: min(parent.width, parent.height) * 0.38;
+                height: self.width;
+                line: Now.has-track ? Icons.disc-line : Icons.chip-line;
+                solid: Now.has-track ? "" : Icons.chip-solid;
+                weight: 0.9;
+                tint: Theme.paint;
+                opacity: 0.55;
+            }
+        }
+    }
+}
+
+export component PhonePlayer inherits Rectangle {
+    // The track after this one, for the line at the bottom.
+    in property <string> up-next;
+    callback open-queue;
+    callback open-browser;
+
+    VerticalLayout {
+        padding-left: 26px;
+        padding-right: 26px;
+        padding-top: 8px;
+        padding-bottom: 10px;
+        spacing: 0;
+
+        Cover { vertical-stretch: 1; min-height: 120px; }
+
+        Rectangle { height: 22px; }
+
+        // ---- title and artist: a tap shows the playlist
+        HorizontalLayout {
+            spacing: 8px;
+            title-area := Rectangle {
+                horizontal-stretch: 1;
+                height: title-col.preferred-height;
+                title-col := VerticalLayout {
+                    spacing: 3px;
+                    Text {
+                        text: Now.has-track ? Now.title : "Not playing";
+                        font-size: Theme.font-title - 2px;
+                        font-weight: Theme.regular;
+                        color: Theme.text;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: Now.has-track ? Now.artist : "Open the file browser to find some music";
+                        font-size: Theme.font;
+                        color: Theme.paint-a;
+                        overflow: elide;
+                    }
+                    if !Now.midi: Text {
+                        text: Now.has-track ? Now.album : "";
+                        font-size: Theme.font-small;
+                        color: Theme.text-dim;
+                        overflow: elide;
+                    }
+                    // The SoundFont, with buttons to try the others.
+                    if Now.midi: HorizontalLayout {
+                        spacing: 2px;
+                        height: 30px;
+                        IconButton {
+                            size: 30px;
+                            icon-size: 14px;
+                            icon: Icons.chevron-left;
+                            clicked => { Now.cycle-soundfont(-1); }
+                        }
+                        IconButton {
+                            size: 30px;
+                            icon-size: 14px;
+                            icon: Icons.chevron-right;
+                            clicked => { Now.cycle-soundfont(1); }
+                        }
+                        Text {
+                            text: Now.soundfont != "" ? Now.soundfont : "No SoundFont";
+                            color: Theme.paint-b;
+                            font-size: Theme.font-small;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                        }
+                    }
+                }
+                TouchArea {
+                    // Not over the SoundFont buttons.
+                    height: Now.midi ? parent.height - 30px : parent.height;
+                    y: 0;
+                    clicked => {
+                        if Now.has-track { root.open-queue(); } else { root.open-browser(); }
+                    }
+                }
+            }
+            Spectrum {
+                width: 64px;
+                height: 40px;
+                y: (parent.height - self.height) / 2;
+                opacity: Now.state == 1 ? 1 : 0.35;
+            }
+        }
+
+        Rectangle { height: 14px; }
+
+        // ---- timeline
+        scrub := Scrubber {
+            height: 34px;
+            value: Now.position;
+            enabled: Now.seekable;
+            released(v) => { Now.seek(v); }
+        }
+        HorizontalLayout {
+            Text {
+                text: scrub.dragging ? Now.time-at(scrub.drag-value) : Now.elapsed;
+                color: Theme.text-dim;
+                font-size: Theme.font-small;
+                font-weight: Theme.regular;
+            }
+            Text {
+                text: Now.info;
+                horizontal-stretch: 1;
+                horizontal-alignment: center;
+                color: Theme.text-faint;
+                font-size: Theme.font-small - 2px;
+                font-weight: Theme.regular;
+                overflow: elide;
+            }
+            Text {
+                text: Now.total;
+                color: Theme.text-dim;
+                font-size: Theme.font-small;
+                font-weight: Theme.regular;
+                horizontal-alignment: right;
+            }
+        }
+
+        Rectangle { height: 12px; }
+
+        // ---- transport
+        HorizontalLayout {
+            alignment: space-between;
+            height: 84px;
+            IconButton {
+                y: (parent.height - self.height) / 2;
+                size: 50px;
+                icon: Icons.shuffle-line;
+                icon-size: 22px;
+                active: Now.shuffle;
+                tip: Now.shuffle ? "Shuffle: on" : "Shuffle: off";
+                clicked => { Now.toggle-shuffle(); }
+            }
+            IconButton {
+                y: (parent.height - self.height) / 2;
+                size: 60px;
+                icon-solid: Icons.prev-solid;
+                icon-size: 30px;
+                tip: "Previous track";
+                clicked => { Now.previous(); }
+            }
+            PlayButton {
+                y: (parent.height - self.height) / 2;
+                size: 78px;
+                playing: Now.state == 1;
+                tip: Now.state == 1 ? "Pause" : "Play";
+                clicked => { Now.play-pause(); }
+            }
+            IconButton {
+                y: (parent.height - self.height) / 2;
+                size: 60px;
+                icon-solid: Icons.next-solid;
+                icon-size: 30px;
+                tip: "Next track";
+                clicked => { Now.next(); }
+            }
+            IconButton {
+                y: (parent.height - self.height) / 2;
+                size: 50px;
+                icon: Now.repeat == 2 ? Icons.repeat-one-line : Icons.repeat-line;
+                icon-size: 22px;
+                active: Now.repeat > 0;
+                tip: Now.repeat == 0 ? "Repeat: off" : Now.repeat == 1 ? "Repeat: the playlist" : "Repeat: this track";
+                clicked => { Now.cycle-repeat(); }
+            }
+        }
+
+        Rectangle { height: 10px; }
+
+        // ---- up next: the way into the playlist
+        Rectangle {
+            height: 52px;
+            border-radius: 26px;
+            background: next-touch.pressed ? Theme.pressed : Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            HorizontalLayout {
+                padding-left: 18px;
+                padding-right: 10px;
+                spacing: 12px;
+                Icon {
+                    y: (parent.height - self.height) / 2;
+                    width: 22px;
+                    height: 22px;
+                    line: Icons.queue-line;
+                    solid: Icons.queue-solid;
+                    weight: 1.7;
+                    tint: Theme.paint;
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    text: root.up-next != "" ? "Up next: " + root.up-next
+                        : Playlist.rows.length > 0 ? "Playlist · " + Playlist.summary : "The playlist is empty";
+                    color: Theme.text-dim;
+                    font-size: Theme.font-small;
+                    overflow: elide;
+                }
+                Icon {
+                    y: (parent.height - self.height) / 2;
+                    width: 20px;
+                    height: 20px;
+                    line: Icons.chevron-right;
+                    tint: Theme.text-dim;
+                }
+            }
+            next-touch := TouchArea { clicked => { root.open-queue(); } }
+        }
+    }
+}
+
+// One track on the playlist page: the title over the artist and length.
+component QueueRow inherits Rectangle {
+    in property <int> index;
+    in property <string> title;
+    in property <string> detail;
+    in property <bool> playing;
+    in property <bool> pending;
+    callback menu(length, length);
+    height: 64px;
+    background: touch.pressed ? Theme.pressed : root.playing ? #ffffff0c : transparent;
+    border-radius: 10px;
+    HorizontalLayout {
+        padding-left: 6px;
+        spacing: 12px;
+        Rectangle {
+            width: 34px;
+            if root.playing: Icon {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: 20px;
+                height: 20px;
+                solid: Icons.bars-solid;
+                tint: Theme.paint;
+            }
+            if !root.playing: Text {
+                width: parent.width;
+                height: parent.height;
+                text: root.index + 1;
+                color: Theme.text-faint;
+                font-size: Theme.font-small;
+                font-weight: Theme.regular;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.title;
+                color: root.playing ? Theme.paint-a : root.pending ? Theme.text-dim : Theme.text;
+                font-size: Theme.font;
+                font-weight: root.playing ? Theme.regular : Theme.light;
+                overflow: elide;
+            }
+            if root.detail != "": Text {
+                text: root.detail;
+                color: Theme.text-dim;
+                font-size: Theme.font-small;
+                overflow: elide;
+            }
+        }
+        IconButton {
+            y: (parent.height - self.height) / 2;
+            size: 46px;
+            icon-size: 20px;
+            icon-solid: Icons.more-solid;
+            tip: "More";
+            clicked => { root.menu(self.x, self.y + self.height); }
+        }
+    }
+    touch := TouchArea {
+        width: parent.width - 52px;
+        x: 0;
+        clicked => { Playlist.selected = root.index; Playlist.play(root.index); }
+    }
+}
+
+// The playlist as a page of its own.
+export component QueuePage inherits Rectangle {
+    callback close;
+    callback open-browser;
+    background: Theme.bg;
+
+    property <length> menu-x;
+    property <length> menu-y;
+    property <int> serial: Playlist.reveal-serial;
+    changed serial => { root.show-playing(); }
+    // Coming into view: the track playing shows.
+    changed visible => { if self.visible { root.show-playing(); } }
+    function show-playing() {
+        if Playlist.playing >= 0 {
+            let top = Playlist.playing * 64px;
+            if top < -list.viewport-y || top + 64px > -list.viewport-y + list.visible-height {
+                list.viewport-y = -max(0, top - list.visible-height / 3);
+            }
+        }
+    }
+
+    // Swallow touches so nothing under the page reacts.
+    TouchArea {}
+
+    VerticalLayout {
+        HorizontalLayout {
+            height: 60px;
+            padding-left: 6px;
+            padding-right: 6px;
+            spacing: 4px;
+            IconButton {
+                y: (parent.height - self.height) / 2;
+                size: 46px;
+                icon-size: 22px;
+                icon: Icons.chevron-down;
+                tip: "Back to the player";
+                clicked => { root.close(); }
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                Text {
+                    text: "Playlist";
+                    font-size: Theme.font-large;
+                    color: Theme.text;
+                }
+                if Playlist.summary != "": Text {
+                    text: Playlist.summary;
+                    font-size: Theme.font-small - 1px;
+                    font-weight: Theme.regular;
+                    color: Theme.text-faint;
+                    overflow: elide;
+                }
+            }
+            IconButton {
+                y: (parent.height - self.height) / 2;
+                size: 46px;
+                icon-size: 20px;
+                icon: Icons.folder-line;
+                tip: "File browser";
+                clicked => { root.open-browser(); }
+            }
+            IconButton {
+                y: (parent.height - self.height) / 2;
+                size: 46px;
+                icon-size: 20px;
+                icon-solid: Icons.more-solid;
+                enabled: Playlist.rows.length > 0;
+                tip: "Playlist actions";
+                clicked => {
+                    root.menu-x = root.width - 230px;
+                    root.menu-y = 56px;
+                    page-menu.show();
+                }
+            }
+        }
+        Rectangle { height: 1px; background: Theme.border; }
+        Rectangle {
+            vertical-stretch: 1;
+            list := ListView {
+                for row[i] in Playlist.rows: QueueRow {
+                    index: i;
+                    title: row.title;
+                    detail: row.detail;
+                    playing: row.playing;
+                    pending: row.pending;
+                    menu(x, y) => {
+                        Playlist.selected = i;
+                        root.menu-x = root.width - 230px;
+                        root.menu-y = min(root.height - 300px, self.absolute-position.y - root.absolute-position.y + y);
+                        row-menu.show();
+                    }
+                }
+            }
+            if Playlist.rows.length == 0: VerticalLayout {
+                alignment: center;
+                spacing: 16px;
+                padding: 30px;
+                Icon {
+                    x: (parent.width - self.width) / 2;
+                    width: 64px;
+                    height: 64px;
+                    line: Icons.chip-line;
+                    solid: Icons.chip-solid;
+                    weight: 1.2;
+                    tint: Theme.paint;
+                    opacity: 0.8;
+                }
+                Text {
+                    text: "Nothing queued yet";
+                    font-size: Theme.font-large;
+                    color: Theme.text;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Find music in the file browser (swipe in from the left edge, or the ☰ button) and tap a track: its whole folder comes along.";
+                    color: Theme.text-dim;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    BigButton {
+                        text: "Browse files";
+                        icon-line: Icons.folder-line;
+                        primary: true;
+                        clicked => { root.open-browser(); }
+                    }
+                }
+            }
+        }
+    }
+
+    row-menu := PopupWindow {
+        x: root.menu-x;
+        y: root.menu-y;
+        width: 220px;
+        Rectangle {
+            background: Theme.popup;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #000000a0;
+            VerticalLayout {
+                padding: 6px;
+                MenuItem { text: "Play"; clicked => { Playlist.play(Playlist.selected); } }
+                MenuItem { text: "Show in file browser"; clicked => { Playlist.reveal(Playlist.selected); } }
+                MenuItem { text: "Properties…"; clicked => { Playlist.show-info(Playlist.selected); } }
+                MenuItem { text: "Remove from playlist"; clicked => { Playlist.remove(Playlist.selected); } }
+                Rectangle { height: 1px; background: Theme.border; }
+                MenuItem { text: "Export this track…"; clicked => { Playlist.export(Playlist.selected); } }
+            }
+        }
+    }
+
+    page-menu := PopupWindow {
+        x: root.menu-x;
+        y: root.menu-y;
+        width: 220px;
+        Rectangle {
+            background: Theme.popup;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #000000a0;
+            VerticalLayout {
+                padding: 6px;
+                MenuItem { text: "Export playlist…"; clicked => { Playlist.export(-1); } }
+                MenuItem { text: "Clear playlist"; clicked => { Playlist.clear(); } }
+            }
+        }
+    }
+}

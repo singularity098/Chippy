@@ -1,0 +1,17 @@
+[package]
+name = "chippy-android"
+description = "Chippy for Android: the native library the app's activity loads"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "chippy_android"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[target.'cfg(target_os = "android")'.dependencies]
+chippy = { path = "../chippy", default-features = false }
+jni = "0.21"

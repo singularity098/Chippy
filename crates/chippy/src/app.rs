@@ -109,6 +109,7 @@ pub struct App {
     font_rx: Receiver<FontLoaded>,
 
     // ---- dialogs
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     pick_tx: Sender<Picked>,
     pick_rx: Receiver<Picked>,
     /// A file picker is showing (one at a time).
@@ -313,11 +314,13 @@ impl App {
             a.settings.shuffle = !a.settings.shuffle;
             a.queue.set_shuffle(a.settings.shuffle);
             a.ui().global::<Now>().set_shuffle(a.settings.shuffle);
+            a.update_now();
             a.mark_dirty();
         });
         on!(app, n, on_cycle_repeat, |a| {
             a.settings.repeat = a.settings.repeat.next();
             a.ui().global::<Now>().set_repeat(a.settings.repeat.index());
+            a.update_now();
             a.mark_dirty();
         });
         {
@@ -411,12 +414,14 @@ impl App {
             }
         });
 
+        #[cfg(not(target_os = "android"))]
         on!(app, ui, on_start_drag, |a| {
             a.with_winit(|w| {
                 let _ = w.drag_window();
             });
             a.release_pointer();
         });
+        #[cfg(not(target_os = "android"))]
         on!(app, ui, on_start_resize, |a, dir: SharedString| {
             use slint::winit_030::winit::window::ResizeDirection as D;
             let d = match dir.as_str() {
@@ -463,6 +468,7 @@ impl App {
 
         // Pointer moves and presses, before any element sees them: a panel
         // brought in by hovering goes when the pointer leaves it.
+        #[cfg(not(target_os = "android"))]
         {
             use slint::winit_030::winit::event::{ElementState, WindowEvent};
             use slint::winit_030::{EventResult, WinitWindowAccessor};
@@ -521,6 +527,7 @@ impl App {
     /// Once the window manager has taken over a move or a resize, the
     /// button's release goes to it, not to us: without one, the element
     /// pressed would keep the pointer and the window would ignore the mouse.
+    #[cfg(not(target_os = "android"))]
     fn release_pointer(&self) {
         let (x, y) = CURSOR.with(|c| c.get());
         let position = slint::LogicalPosition::new(x, y);
@@ -537,6 +544,7 @@ impl App {
         });
     }
 
+    #[cfg(not(target_os = "android"))]
     fn with_winit(&self, f: impl FnOnce(&slint::winit_030::winit::window::Window)) {
         use slint::winit_030::WinitWindowAccessor;
         self.ui().window().with_winit_window(f);
@@ -1347,10 +1355,25 @@ impl App {
                 None => SharedString::new(),
             })
             .collect();
+        let (title, detail) = match &item.meta {
+            Some(m) => {
+                let detail: Vec<String> = [m.column("artist"), m.column("length")]
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                let title = Some(m.column("title"))
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or_else(|| item.track.loc.name());
+                (ss(title), ss(detail.join(" · ")))
+            }
+            None => (ss(item.track.loc.name()), SharedString::new()),
+        };
         PlRow {
             cells: ModelRc::new(VecModel::from(cells)),
             playing: self.queue.current == Some(i),
             pending: item.meta.is_none(),
+            title,
+            detail,
         }
     }
 
@@ -1364,6 +1387,8 @@ impl App {
             p.set_selected(-1);
         }
         self.update_summary();
+        // What comes next may have changed.
+        self.update_now();
     }
 
     fn update_row(&self, i: usize) {
@@ -1689,6 +1714,22 @@ impl App {
             .map(format_ms)
             .unwrap_or_else(|| "–:––".into())));
         n.set_seekable(self.state != State::Stopped && self.duration_ms.is_some());
+        // The phone's "up next" line.
+        let up_next = self
+            .queue
+            .current
+            .and_then(|c| {
+                self.queue
+                    .next(self.settings.repeat, true)
+                    .filter(|&i| i != c)
+            })
+            .and_then(|i| self.queue.items.get(i))
+            .map(|item| match &item.meta {
+                Some(m) if !m.title.is_empty() => m.title.clone(),
+                _ => item.track.loc.name(),
+            })
+            .unwrap_or_default();
+        ui.set_up_next(ss(up_next));
         let (title, artist, album) = (n.get_title(), n.get_artist(), n.get_album());
         self.media.show(&title, &artist, &album, self.duration_ms);
         let pos = self.position_ms();
@@ -1734,6 +1775,16 @@ impl App {
                 self.remember_window();
                 let _ = slint::quit_event_loop();
             }
+            Request::Back => {
+                // Closes what is open (a panel, the playlist, a dialog);
+                // with nothing open the app goes to the background, still
+                // playing, as Android players do.
+                if !self.ui().invoke_back() {
+                    #[cfg(target_os = "android")]
+                    crate::android::move_to_back();
+                }
+            }
+            Request::Refresh => self.refresh(),
         }
     }
 
@@ -1826,7 +1877,9 @@ impl App {
                     item.meta = Some(m);
                     self.update_row(i);
                     meta_changed = true;
-                    if self.queue.current == Some(i) {
+                    // The track playing, or the one after it ("up next").
+                    let next = self.queue.next(self.settings.repeat, true);
+                    if self.queue.current == Some(i) || next == Some(i) {
                         self.update_now();
                     }
                 }

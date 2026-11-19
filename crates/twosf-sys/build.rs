@@ -27,6 +27,9 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     let mut c = cc::Build::new();
     c.include(&src)
+        // libopus (linked statically for exporting) has an isqrt32 too.
+        .define("isqrt32", "vio2sf_isqrt32")
+        .define("isqrt64", "vio2sf_isqrt64")
         .warnings(false)
         .opt_level(3)
         .flag_if_supported("-fno-strict-aliasing")
@@ -41,6 +44,8 @@ fn main() {
     cc::Build::new()
         .cpp(true)
         .include(&src)
+        .define("isqrt32", "vio2sf_isqrt32")
+        .define("isqrt64", "vio2sf_isqrt64")
         .warnings(false)
         .opt_level(3)
         .file(src.join("SPU.cpp"))

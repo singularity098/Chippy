@@ -1,9 +1,11 @@
 //! Builds libvgmstream statically from the vendored submodule, with
 //! mpg123 (MPEG audio), libvorbis (Vorbis) and FFmpeg (Opus, ATRAC3/3plus,
-//! XMA, WMA, AAC and more in game formats; also Ogg Opus files). These come
-//! from the system through pkg-config and are linked dynamically; for
-//! Android, from the static builds of `android/build-deps.sh` found through
-//! `CHIPPY_ANDROID_DEPS`.
+//! XMA, WMA, AAC and more in game formats; also Ogg Opus files).
+//!
+//! With `CHIPPY_CODECS` set (always for Android, and for the Linux release
+//! binary) they are the static libraries `packaging/build-codecs.sh` built
+//! into that prefix, linked into the binary. Otherwise they come from the
+//! system through pkg-config and are linked dynamically.
 use std::path::{Path, PathBuf};
 
 /// pkg-config modules vgmstream needs, and the CMake option each one enables.
@@ -22,16 +24,14 @@ fn main() {
         panic!("third_party/vgmstream is missing: run `git submodule update --init --recursive`");
     }
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-env-changed=CHIPPY_ANDROID_DEPS");
+    println!("cargo:rerun-if-env-changed=CHIPPY_CODECS");
 
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
-        let deps = std::env::var_os("CHIPPY_ANDROID_DEPS")
-            .map(PathBuf::from)
-            .expect(
-                "set CHIPPY_ANDROID_DEPS to the prefix android/build-deps.sh built the codecs into",
-            );
-        build_android(&root, &deps);
+    if let Some(deps) = std::env::var_os("CHIPPY_CODECS").map(PathBuf::from) {
+        build_static(&root, &deps);
         return;
+    }
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
+        panic!("set CHIPPY_CODECS to the prefix packaging/build-codecs.sh built the codecs into");
     }
 
     // Find every library first so a missing one fails with a clear message
@@ -90,9 +90,10 @@ fn build(mut cfg: cmake::Config) -> PathBuf {
         .build()
 }
 
-/// Android: the codecs are static libraries under `deps`; CMake (with the
-/// NDK's toolchain, which cmake-rs picks) and pkg-config look only there.
-fn build_android(root: &Path, deps: &Path) {
+/// The codecs are static libraries under `deps`; CMake (with the NDK's
+/// toolchain for Android, which cmake-rs picks) and pkg-config look only
+/// there.
+fn build_static(root: &Path, deps: &Path) {
     let pc = deps.join("lib/pkgconfig");
     std::env::set_var("PKG_CONFIG_LIBDIR", &pc);
     std::env::set_var("PKG_CONFIG_PATH", &pc);

@@ -10,4 +10,5 @@
     <string name="storage_message">Chippy plays music straight from your folders, archives and chiptune files, with a file browser instead of a library. For that it needs to see your files: allow \"All files access\" on the next screen.</string>
     <string name="storage_allow">Continue</string>
     <string name="storage_later">Not now</string>
+    <string name="folder_not_local">Pick a folder on this device or its SD card: Chippy cannot read folders in cloud storage.</string>
 </resources>

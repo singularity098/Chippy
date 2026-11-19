@@ -29,6 +29,10 @@ pub enum Request {
     /// Storage access was granted (Android): list the folder again.
     #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     Refresh,
+    /// The system's folder picker came back (Android): which setting it
+    /// was for, and the folder, if one was chosen.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    Folder(String, Option<std::path::PathBuf>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +56,9 @@ mod desktop {
         pub requests: Receiver<Request>,
         shown: Option<(String, String, String, Option<u64>)>,
         playback: Option<Playback>,
+        /// The cover, written to a file for the desktop's player widgets.
+        cover: Option<std::path::PathBuf>,
+        covers_written: u64,
     }
 
     fn translate(e: MediaControlEvent) -> Option<Request> {
@@ -88,6 +95,8 @@ mod desktop {
                 requests: rx,
                 shown: None,
                 playback: None,
+                cover: None,
+                covers_written: 0,
             }
         }
 
@@ -128,14 +137,55 @@ mod desktop {
             fn none_if_empty(s: &str) -> Option<&str> {
                 (!s.is_empty()).then_some(s)
             }
+            let cover_url = self
+                .cover
+                .as_ref()
+                .map(|p| format!("file://{}", p.display()));
             let _ = c.set_metadata(MediaMetadata {
                 title: none_if_empty(title),
                 artist: none_if_empty(artist),
                 album: none_if_empty(album),
                 duration: length_ms.map(Duration::from_millis),
-                cover_url: None,
+                cover_url: cover_url.as_deref(),
             });
             self.shown = Some(now);
+        }
+
+        /// The current track's cover (None: it has none). Saved as a PNG
+        /// under a new name each time, so the widgets notice the change.
+        pub fn set_art(&mut self, art: Option<&crate::art::Picture>) {
+            if self.controls.is_none() {
+                return;
+            }
+            if let Some(old) = self.cover.take() {
+                let _ = std::fs::remove_file(old);
+            }
+            if let Some(p) = art {
+                let dir = std::env::var_os("XDG_RUNTIME_DIR")
+                    .map(std::path::PathBuf::from)
+                    .filter(|d| d.is_dir())
+                    .unwrap_or_else(std::env::temp_dir);
+                self.covers_written += 1;
+                let path = dir.join(format!(
+                    "chippy-cover-{}-{}.png",
+                    std::process::id(),
+                    self.covers_written
+                ));
+                match image::save_buffer(
+                    &path,
+                    &p.rgba,
+                    p.width,
+                    p.height,
+                    image::ExtendedColorType::Rgba8,
+                ) {
+                    Ok(()) => self.cover = Some(path),
+                    Err(e) => log::debug!("cannot save the cover for MPRIS: {e}"),
+                }
+            }
+            // Tell the widgets again, with the new cover.
+            if let Some((t, ar, al, len)) = self.shown.take() {
+                self.show(&t, &ar, &al, len);
+            }
         }
 
         pub fn set_playback(&mut self, p: Playback, position_ms: u64) {
@@ -168,6 +218,14 @@ mod desktop {
 
         #[cfg(not(target_os = "linux"))]
         pub fn set_volume(&mut self, _v: f32) {}
+    }
+
+    impl Drop for Media {
+        fn drop(&mut self) {
+            if let Some(old) = self.cover.take() {
+                let _ = std::fs::remove_file(old);
+            }
+        }
     }
 
     #[cfg(target_os = "linux")]

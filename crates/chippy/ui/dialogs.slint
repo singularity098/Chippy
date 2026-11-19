@@ -114,6 +114,8 @@ export component InfoDialog inherits Modal {
     card-height: 620px;
     close => { Info.close(); }
     ScrollView {
+        // Touch screens scroll by dragging (the desktop style turns it off).
+        mouse-drag-pan-enabled: Theme.mobile;
         vertical-stretch: 1;
         VerticalLayout {
             spacing: 2px;

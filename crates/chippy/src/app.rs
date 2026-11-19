@@ -224,12 +224,14 @@ impl App {
                 a.open_external(&p);
             }
         }
-        // The clock.
+        // The clock: the position, the spectrum and the meter move on every
+        // tick. 8 ms keeps up with 120 Hz screens (at 16 ms they moved only
+        // on every other frame).
         let timer = slint::Timer::default();
         let weak = Rc::downgrade(&app);
         timer.start(
             slint::TimerMode::Repeated,
-            Duration::from_millis(16),
+            Duration::from_millis(8),
             move || {
                 if let Some(app) = weak.upgrade() {
                     if let Ok(mut a) = app.try_borrow_mut() {
@@ -1785,6 +1787,15 @@ impl App {
                 }
             }
             Request::Refresh => self.refresh(),
+            Request::Folder(which, dir) => {
+                let picked = match (which.as_str(), dir) {
+                    (_, None) => Picked::Nothing(None),
+                    ("music", Some(d)) => Picked::MusicDir(d),
+                    ("soundfont", Some(d)) => Picked::SoundfontDir(d),
+                    (_, Some(d)) => Picked::ExportDir(d),
+                };
+                self.picked(picked);
+            }
         }
     }
 
@@ -1792,6 +1803,7 @@ impl App {
         let Some(t) = self.current_track().cloned() else {
             self.art_for = None;
             self.ui().global::<Now>().set_has_art(false);
+            self.media.set_art(None);
             return;
         };
         // Tracks of one file share their art: no need to look again.
@@ -1901,8 +1913,12 @@ impl App {
                     n.set_art(Image::from_rgba8(buf));
                     n.set_art_aspect(p.width as f32 / p.height.max(1) as f32);
                     n.set_has_art(true);
+                    self.media.set_art(p.small.as_deref());
                 }
-                None => n.set_has_art(false),
+                None => {
+                    n.set_has_art(false);
+                    self.media.set_art(None);
+                }
             }
         }
 

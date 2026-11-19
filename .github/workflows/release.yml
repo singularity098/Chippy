@@ -1,7 +1,10 @@
-name: Build
+name: Linux
 
-# Builds the chippy binary for Linux on every push (kept as a
-# workflow artifact) and for every v* tag (attached to a GitHub release).
+# Builds one Linux package (x86_64 .tar.gz) on every push, kept as a
+# workflow artifact on the run's page; a v* tag also attaches it to the
+# GitHub release. The codec libraries (FFmpeg, mpg123, libvorbis, libogg)
+# are built from source and linked into the binary, so it does not depend
+# on the FFmpeg version the system has.
 
 on:
   push:
@@ -14,43 +17,60 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # The oldest supported runners, so the binaries run on older
-          # distributions too (glibc is linked dynamically).
-          - runner: ubuntu-22.04
-            arch: x86_64
-          - runner: ubuntu-22.04-arm
-            arch: aarch64
-    runs-on: ${{ matrix.runner }}
+    # The oldest supported runner, so the binary runs on older distributions
+    # too (glibc is linked dynamically: 2.35 or newer).
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - name: System dependencies
+        # No FFmpeg, mpg123, Vorbis or Opus development packages: those are
+        # built statically (Opus by the opus crate itself).
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake clang libasound2-dev libxkbcommon-dev \
-            libxkbcommon-x11-0 libfontconfig-dev zlib1g-dev \
-            libmpg123-dev libvorbis-dev libopus-dev \
-            libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
+          sudo apt-get install -y cmake clang pkg-config libasound2-dev \
+            libxkbcommon-dev libfontconfig-dev zlib1g-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: release-${{ matrix.arch }}
+          key: linux-static
+      - name: Cache the codec libraries
+        uses: actions/cache@v4
+        with:
+          path: build/codecs/linux
+          key: linux-codecs-ubuntu-22.04-${{ hashFiles('packaging/build-codecs.sh') }}
+      - name: Codec libraries
+        run: |
+          if [ ! -f build/codecs/linux/lib/libavcodec.a ]; then
+            packaging/build-codecs.sh linux build/codecs/linux
+          fi
+          echo "CHIPPY_CODECS=$PWD/build/codecs/linux" >> "$GITHUB_ENV"
+          # The opus crate: build libopus from its bundled source, statically.
+          echo "LIBOPUS_NO_PKG=1" >> "$GITHUB_ENV"
+          echo "LIBOPUS_STATIC=1" >> "$GITHUB_ENV"
       - name: Build
         run: cargo build --release --locked -p chippy
+      - name: Check the libraries it needs
+        # Only libraries every Linux desktop has. Anything else (FFmpeg,
+        # say) would fail to load on some systems.
+        run: |
+          readelf -d target/release/chippy | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | tee needed.txt
+          allowed='^(libc|libm|libdl|libpthread|librt|libgcc_s|libstdc\+\+|libasound|libfontconfig|libfreetype|libz|ld-linux-x86-64)\.so'
+          if grep -Ev "$allowed" needed.txt; then
+            echo "::error::the binary needs libraries that may be missing on users' systems (above)"
+            exit 1
+          fi
       - name: Package
         id: package
         run: |
           version="${GITHUB_REF_NAME#v}"
           if [ "$GITHUB_REF_TYPE" != tag ]; then version="$(git rev-parse --short HEAD)"; fi
-          name="chippy-${version}-linux-${{ matrix.arch }}"
+          name="chippy-${version}-linux-x86_64"
           mkdir -p "dist/$name"
           cp target/release/chippy "dist/$name/"
-          cp README.md LICENSE assets/chippy-icon.svg "dist/$name/"
+          strip "dist/$name/chippy"
+          cp README.md LICENSE assets/chippy-icon.svg packaging/linux/chippy.desktop "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           echo "name=$name" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4

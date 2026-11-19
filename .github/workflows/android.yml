@@ -51,8 +51,8 @@ jobs:
       - name: Cache the codec libraries
         uses: actions/cache@v4
         with:
-          path: android/deps/arm64-v8a
-          key: android-deps-${{ env.NDK_VERSION }}-${{ hashFiles('android/build-deps.sh') }}
+          path: build/codecs/arm64-v8a
+          key: android-deps-${{ env.NDK_VERSION }}-${{ hashFiles('packaging/build-codecs.sh') }}
 
       - uses: gradle/actions/setup-gradle@v4
         with:

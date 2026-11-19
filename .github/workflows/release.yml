@@ -33,7 +33,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake clang libasound2-dev libxkbcommon-dev \
-            libxkbcommon-x11-0 libfontconfig-dev zlib1g-dev
+            libxkbcommon-x11-0 libfontconfig-dev zlib1g-dev \
+            libmpg123-dev libvorbis-dev libopus-dev \
+            libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

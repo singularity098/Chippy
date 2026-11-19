@@ -13,6 +13,7 @@ members = [
     "crates/xmp-sys",
     "crates/chippy-core",
     "crates/chippy",
+    "crates/chippy-android",
 ]
 default-members = ["crates/chippy"]
 

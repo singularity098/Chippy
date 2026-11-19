@@ -29,6 +29,8 @@ fn main() {
     let target = std::env::var("TARGET").unwrap_or_default();
     if target.contains("apple") {
         println!("cargo:rustc-link-lib=c++");
+    } else if target.contains("android") {
+        println!("cargo:rustc-link-lib=c++_shared");
     } else if !target.contains("msvc") {
         println!("cargo:rustc-link-lib=stdc++");
     }

@@ -125,8 +125,12 @@ component Row inherits Rectangle {
         Rectangle { horizontal-stretch: 1; }
     }
     touch := TouchArea {
-        clicked => { Playlist.selected = root.index; }
-        double-clicked => { Playlist.play(root.index); }
+        clicked => {
+            Playlist.selected = root.index;
+            // Touch screens: a tap plays.
+            if Theme.mobile { Playlist.play(root.index); }
+        }
+        double-clicked => { if !Theme.mobile { Playlist.play(root.index); } }
         pointer-event(e) => {
             if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
                 Playlist.selected = root.index;

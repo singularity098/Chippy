@@ -137,7 +137,7 @@ export component SettingsPanel inherits Rectangle {
                     HorizontalLayout {
                         spacing: 8px;
                         alignment: start;
-                        BigButton {
+                        if !Theme.mobile: BigButton {
                             text: "Choose…";
                             icon-line: Icons.folder-line;
                             tip: "Pick the folder in a file dialog";
@@ -168,7 +168,7 @@ export component SettingsPanel inherits Rectangle {
                         detail: "For touch screens; otherwise double-click.";
                         Toggle { checked: Prefs.single-tap; toggled(v) => { root.interacted(); Prefs.set-flag("single-tap", v); } }
                     }
-                    SettingRow {
+                    if !Theme.mobile: SettingRow {
                         label: "Panels open on hover";
                         detail: "Resting the mouse on the left or right edge brings in its panel.";
                         Toggle { checked: Prefs.hover-opens; toggled(v) => { root.interacted(); Prefs.set-flag("hover-opens", v); } }
@@ -232,7 +232,7 @@ export component SettingsPanel inherits Rectangle {
                     HorizontalLayout {
                         spacing: 8px;
                         alignment: start;
-                        BigButton {
+                        if !Theme.mobile: BigButton {
                             text: "Choose…";
                             icon-line: Icons.folder-line;
                             tip: "Pick the folder in a file dialog";
@@ -296,10 +296,10 @@ export component SettingsPanel inherits Rectangle {
                     }
                     SettingRow {
                         label: "Fullscreen";
-                        detail: "F11 switches too.";
+                        detail: Theme.mobile ? "Hides the status and navigation bars." : "F11 switches too.";
                         Toggle { checked: Prefs.fullscreen; toggled(v) => { root.interacted(); Prefs.set-flag("fullscreen", v); } }
                     }
-                    SettingRow {
+                    if !Theme.mobile: SettingRow {
                         label: "Native Wayland window (Linux)";
                         detail: "Off, Chippy runs through XWayland on Wayland desktops, where dropping files on the window and its icon work. Takes effect at the next start.";
                         Toggle { checked: Prefs.native-wayland; toggled(v) => { root.interacted(); Prefs.set-flag("native-wayland", v); } }

@@ -104,18 +104,19 @@ export component IconButton inherits Rectangle {
 export component PlayButton inherits Rectangle {
     in property <bool> playing;
     in property <string> tip;
+    in property <length> size: 56px;
     callback clicked;
-    width: 56px;
-    height: 56px;
-    border-radius: 28px;
+    width: root.size;
+    height: root.size;
+    border-radius: root.size / 2;
     background: touch.pressed ? Theme.paint-pressed : Theme.paint;
     drop-shadow-blur: touch.has-hover ? 18px : 10px;
     drop-shadow-color: Theme.paint-b.transparentize(touch.has-hover ? 45% : 65%);
     Icon {
         x: (parent.width - self.width) / 2 + (root.playing ? 0 : 2px);
         y: (parent.height - self.height) / 2;
-        width: 26px;
-        height: 26px;
+        width: root.size * 0.46;
+        height: self.width;
         solid: root.playing ? Icons.pause-solid : Icons.play-solid;
         tint: Theme.on-paint;
     }

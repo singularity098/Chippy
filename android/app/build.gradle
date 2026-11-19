@@ -1,0 +1,57 @@
+// Chippy's Android app: a small Java layer (the activity, the media session
+// and the service that keeps playing in the background) around the Rust
+// library, which cargo-ndk builds into src/main/jniLibs (see build-apk.sh).
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "io.github.singularity098.chippy"
+    compileSdk 35
+    buildToolsVersion "35.0.0"
+
+    defaultConfig {
+        applicationId "io.github.singularity098.chippy"
+        minSdk 26
+        targetSdk 35
+        versionCode Integer.parseInt(System.getenv("CHIPPY_VERSION_CODE") ?: "1")
+        versionName System.getenv("CHIPPY_VERSION_NAME") ?: "0.1.0"
+        ndk {
+            abiFilters "arm64-v8a"
+        }
+    }
+
+    signingConfigs {
+        // A key kept in the repository on purpose: every build, local or
+        // from CI, is signed the same way, so each new APK installs over
+        // the last. It protects nothing; it is not a release key.
+        ci {
+            storeFile file("chippy-ci.keystore")
+            storePassword "chippy-ci"
+            keyAlias "chippy"
+            keyPassword "chippy-ci"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.ci
+        }
+        debug {
+            signingConfig signingConfigs.ci
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packagingOptions {
+        jniLibs {
+            // The library is loaded from the APK as it is.
+            useLegacyPackaging false
+        }
+    }
+}

@@ -14,6 +14,7 @@ use crate::export::{self, Format, Progress};
 use crate::{Export, Info, InfoField};
 
 /// What a file picker running on its own thread came back with.
+#[cfg_attr(target_os = "android", allow(dead_code))]
 pub enum Picked {
     MusicDir(PathBuf),
     SoundfontDir(PathBuf),
@@ -34,6 +35,7 @@ pub struct ExportState {
     pub name: String,
 }
 
+#[cfg(not(target_os = "android"))]
 fn spawn_picker(
     tx: crossbeam_channel::Sender<Picked>,
     f: impl FnOnce() -> Picked + Send + 'static,
@@ -57,6 +59,17 @@ impl App {
         if self.picker_open {
             return;
         }
+        // No file picker that gives paths on Android: the browser it is.
+        #[cfg(target_os = "android")]
+        {
+            self.ui().invoke_open_left();
+        }
+        #[cfg(not(target_os = "android"))]
+        self.pick_open_desktop();
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn pick_open_desktop(&mut self) {
         self.picker_open = true;
         let start = self.picker_start();
         spawn_picker(self.pick_tx.clone(), move || {
@@ -92,21 +105,43 @@ impl App {
             "soundfont" => "SoundFont folder",
             _ => "Export to folder",
         };
-        self.picker_open = true;
-        spawn_picker(self.pick_tx.clone(), move || {
-            let mut d = rfd::FileDialog::new().set_title(title);
-            if let Some(s) = start {
-                d = d.set_directory(s);
-            }
-            match d.pick_folder() {
-                Some(p) => match which.as_str() {
-                    "music" => Picked::MusicDir(p),
-                    "soundfont" => Picked::SoundfontDir(p),
-                    _ => Picked::ExportDir(p),
-                },
-                None => Picked::Nothing(None),
-            }
-        });
+        // On Android the folder is the one the file browser shows.
+        #[cfg(target_os = "android")]
+        {
+            let _ = (start, title);
+            let Some(dir) = self.picker_start() else {
+                return;
+            };
+            self.toast(
+                &format!("{title}: {} (the file browser's folder)", dir.display()),
+                false,
+            );
+            let picked = match which.as_str() {
+                "music" => Picked::MusicDir(dir),
+                "soundfont" => Picked::SoundfontDir(dir),
+                _ => Picked::ExportDir(dir),
+            };
+            self.picker_open = true;
+            self.picked(picked);
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            self.picker_open = true;
+            spawn_picker(self.pick_tx.clone(), move || {
+                let mut d = rfd::FileDialog::new().set_title(title);
+                if let Some(s) = start {
+                    d = d.set_directory(s);
+                }
+                match d.pick_folder() {
+                    Some(p) => match which.as_str() {
+                        "music" => Picked::MusicDir(p),
+                        "soundfont" => Picked::SoundfontDir(p),
+                        _ => Picked::ExportDir(p),
+                    },
+                    None => Picked::Nothing(None),
+                }
+            });
+        }
     }
 
     /// Where pickers open: the browser's folder on disk, else the music

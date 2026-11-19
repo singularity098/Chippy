@@ -25,6 +25,9 @@ export struct ThemeLook {
 export global Theme {
     // Index into `looks`; set from Rust (Settings.display.theme).
     in-out property <int> index: 0;
+    // A phone or tablet (Android): touch only, no window to manage, and in
+    // portrait a player laid out as phones' players are.
+    in property <bool> mobile;
 
     // Colours light enough to read over the dark background.
     out property <[ThemeLook]> looks: [

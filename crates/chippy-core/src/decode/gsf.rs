@@ -78,7 +78,7 @@ pub fn open(loc: &Location, opts: &DecodeOptions) -> Result<Timed<GsfEngine>> {
     let (length, fade) = psf::timing(&p, opts);
     let rate = opts.sample_rate;
     let g = GsfEngine::start(&rom, rate)?;
-    Ok(Timed::new(GsfEngine { g, rom, rate }, length, fade))
+    Ok(Timed::new(GsfEngine { g, rom, rate }, length, fade).with_gain(psf::volume(&p)))
 }
 
 pub fn meta(loc: &Location, opts: &DecodeOptions) -> Result<TrackMeta> {

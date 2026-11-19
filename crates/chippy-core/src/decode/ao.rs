@@ -63,6 +63,10 @@ pub struct AoEngine {
     handle: *mut c_void,
     loc: Location,
     data: Vec<u8>,
+    /// The copy of `data` the running engine was started on: PSF2's engine
+    /// keeps pointing into it for its file system (it reads the song's
+    /// files from it as the IOP opens them), so it must outlive the handle.
+    engine_data: Vec<u8>,
     /// Rendered samples not yet handed out (interleaved stereo).
     pending: Vec<i16>,
     pending_pos: usize,
@@ -93,6 +97,7 @@ impl AoEngine {
             handle: std::ptr::null_mut(),
             loc: loc.clone(),
             data,
+            engine_data: Vec::new(),
             pending: vec![0; FRAMES_PER_CALL * 2],
             pending_pos: FRAMES_PER_CALL * 2,
         };
@@ -106,7 +111,9 @@ impl AoEngine {
         // name, so the engine asks for them by their tag value.
         let path = CString::new("x").unwrap();
         let loc = self.loc.clone();
-        let mut data = self.data.clone();
+        self.engine_data = self.data.clone();
+        let data = &mut self.engine_data;
+        let kind = self.kind;
         let handle = ffi::with_lib_reader(
             move |name| {
                 let lib = loc.sibling(name)?;
@@ -114,7 +121,7 @@ impl AoEngine {
             },
             || unsafe {
                 ffi::ao_start(
-                    self.kind,
+                    kind,
                     path.as_ptr(),
                     data.as_mut_ptr(),
                     data.len() as u32,
@@ -174,12 +181,15 @@ impl Engine for AoEngine {
 
 pub fn open(loc: &Location, opts: &DecodeOptions) -> Result<Timed<AoEngine>> {
     let engine = AoEngine::open(loc)?;
-    let (length, fade) = match psf::parse(&engine.data) {
-        Ok(p) => psf::timing(&p, opts),
+    let (length, fade, gain) = match psf::parse(&engine.data) {
+        Ok(p) => {
+            let (l, f) = psf::timing(&p, opts);
+            (l, f, psf::volume(&p))
+        }
         // SPU files have no tags.
-        Err(_) => (opts.default_length_ms, opts.fade_ms),
+        Err(_) => (opts.default_length_ms, opts.fade_ms, 1.0),
     };
-    Ok(Timed::new(engine, length, fade))
+    Ok(Timed::new(engine, length, fade).with_gain(gain))
 }
 
 pub fn meta(loc: &Location, opts: &DecodeOptions) -> Result<TrackMeta> {

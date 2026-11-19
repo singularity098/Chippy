@@ -60,8 +60,8 @@
 
 extern int psxcpu_verbose;
 
-uint32 psf2_get_loadaddr(void);
-void psf2_set_loadaddr(uint32 new);
+uint32 psf2_get_loadaddr(mips_cpu_context *cpu);
+void psf2_set_loadaddr(mips_cpu_context *cpu, uint32 new);
 static void call_irq_routine(mips_cpu_context *cpu, uint32 routine, uint32 parameter);
 
 // thread states
@@ -187,7 +187,7 @@ static void ThawThread(mips_cpu_context *cpu, int32 iThread)
 	{
 		char buffer[256];
 
-		mips_get_info(CPUINFO_INT_PC, &mipsinfo);
+		mips_get_info(cpu, CPUINFO_INT_PC, &mipsinfo);
 		DasmMIPS(buffer, mipsinfo.i, &psx_ram[(mipsinfo.i & 0x7fffffff)/4]);
 
 		printf("IOP: ThawThread(%d) => %08x  [%s] (wake %d)\n", iThread, cpu->threads[iThread].save_regs[34], buffer, wakecount);
@@ -710,7 +710,7 @@ void psx_hw_write(mips_cpu_context *cpu, offs_t offset, uint32 data, uint32 mem_
 	{
 		union cpuinfo mipsinfo;
 
-		mips_get_info(CPUINFO_INT_PC, &mipsinfo);
+		mips_get_info(cpu, CPUINFO_INT_PC, &mipsinfo);
 		printf("Unknown write: %08x to %08x, mask %08x (PC=%x)\n", data, offset&~3, mem_mask, mipsinfo.i);
 	}
 	#endif
@@ -1215,7 +1215,7 @@ void psx_bios_hle(mips_cpu_context *cpu, uint32 pc)
 	mips_get_info(cpu, CPUINFO_INT_REGISTER + MIPS_R7, &mipsinfo);
 	a3 = mipsinfo.i;
 
-//	mips_get_info(CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
+//	mips_get_info(cpu, CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
 //	printf("HLEBIOS: return is %08x\n", mipsinfo.i);
 	
 	switch (pc)
@@ -2111,14 +2111,14 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 					cpu->psx_ram[a0], cpu->psx_ram[a0+1], cpu->psx_ram[a0+2], cpu->psx_ram[a0+3], cpu->psx_ram[a0+4]);
 				#endif
 
-				newAlloc = psf2_get_loadaddr();
+				newAlloc = psf2_get_loadaddr(cpu);
 				// force 16-byte alignment
 				if (newAlloc & 0xf)
 				{
 					newAlloc &= ~0xf;
 					newAlloc += 16;
 				}
-				psf2_set_loadaddr(newAlloc + LE32(cpu->psx_ram[a0+3]));
+				psf2_set_loadaddr(cpu, newAlloc + LE32(cpu->psx_ram[a0+3]));
 				
 				cpu->threads[cpu->iNumThreads].iState = TS_CREATED;
 				cpu->threads[cpu->iNumThreads].stackloc = newAlloc;
@@ -2153,7 +2153,7 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 
 			case 24:// SleepThread
 				#if DEBUG_THREADING
-				mips_get_info(CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
+				mips_get_info(cpu, CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
 				printf("IOP: SleepThread() [curThread %d, PC=%x]\n", cpu->iCurThread, mipsinfo.i);
 				#endif
 
@@ -2191,7 +2191,7 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 //					int i;
 
 					#if DEBUG_THREADING
-					mips_get_info(CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
+					mips_get_info(cpu, CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
 					printf("IOP: DelayThread(%d) (PC=%x) [curthread = %d]\n", a0, mipsinfo.i, cpu->iCurThread);
 					#endif
 
@@ -2373,7 +2373,7 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 			case 10:// WaitEventFlag
 				a0--;
 				#if DEBUG_HLE_IOP
-				mips_get_info(CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
+				mips_get_info(cpu, CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
 				printf("IOP: WaitEventFlag(%d %08x %d %08x PC=%x)\n", a0, a1, a2, a3, mipsinfo.i);
 				#endif
 
@@ -2515,7 +2515,7 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 
 			case 8: // WaitSema
 				#if DEBUG_HLE_IOP
-				mips_get_info(CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
+				mips_get_info(cpu, CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
 				printf("IOP: WaitSema(%d) (cnt %d) (th %d) (PC=%x)\n", a0, cpu->iCurThread, cpu->semaphores[a0].current, mipsinfo.i);
 				#endif
 		
@@ -2700,7 +2700,7 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 					uint8 *dst;
 
 					#if DEBUG_HLE_IOP
-					mips_get_info(CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
+					mips_get_info(cpu, CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
 					printf("IOP: memset(%08x, %02x, %d) [PC=%x]\n", a0, a1, a2, mipsinfo.i);
 					#endif
 
@@ -2732,7 +2732,7 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 				str1 += a1 & 0x1fffff;
 
 				#if DEBUG_HLE_IOP
-				mips_get_info(CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
+				mips_get_info(cpu, CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
 				printf("IOP: sprintf(%08x, %s, ...) [PC=%08x]\n", a0, str1, (uint32)mipsinfo.i);
 				printf("%x %x %x %x\n", a0, a1, a2, a3);
 				#endif
@@ -2777,7 +2777,7 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 					char *dst;
 
 					#if DEBUG_HLE_IOP
-					mips_get_info(CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
+					mips_get_info(cpu, CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
 					printf("IOP: strlen(%08x) [PC=%x]\n", a0, mipsinfo.i);
 					#endif
 
@@ -2928,7 +2928,7 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 
 			case 23:	// QueryIntrContext
 				#if DEBUG_HLE_IOP
-				mips_get_info(CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
+				mips_get_info(cpu, CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
 				printf("IOP: QueryIntrContext(PC=%x)\n", mipsinfo.i);
 				#endif
 				mipsinfo.i = 0;
@@ -2953,7 +2953,7 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 			case 6:	// RegisterLibraryEntries
 				a0 &= 0x1fffff;
 				#if DEBUG_HLE_IOP
-				mips_get_info(CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
+				mips_get_info(cpu, CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
 				printf("IOP: RegisterLibraryEntries(%08x) (PC=%x)\n", a0, mipsinfo.i);
 				#endif
 				
@@ -2991,7 +2991,7 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 		switch (callnum)
 		{
 			case 4:	// AllocMemory
-				newAlloc = psf2_get_loadaddr();
+				newAlloc = psf2_get_loadaddr(cpu);
 				// make sure we're 16-byte aligned
 				if (newAlloc & 15)
 				{
@@ -3011,7 +3011,7 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 					newAlloc = 0x60000;
 				}
 
-				psf2_set_loadaddr(newAlloc + a1);
+				psf2_set_loadaddr(cpu, newAlloc + a1);
 
 				#if DEBUG_HLE_IOP
 				printf("IOP: AllocMemory(%d, %d, %x) = %08x\n", a0, a1, a2, newAlloc|0x80000000);
@@ -3032,7 +3032,7 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 				printf("IOP: QueryMaxFreeMemSize\n");
 				#endif
 
-				mipsinfo.i = (2*1024*1024) - psf2_get_loadaddr();
+				mipsinfo.i = (2*1024*1024) - psf2_get_loadaddr(cpu);
 				mips_set_info(cpu,CPUINFO_INT_REGISTER + MIPS_R2, &mipsinfo);
 				break;
 
@@ -3041,7 +3041,7 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 				printf("IOP: QueryTotalFreeMemSize\n");
 				#endif
 
-				mipsinfo.i = (2*1024*1024) - psf2_get_loadaddr();
+				mipsinfo.i = (2*1024*1024) - psf2_get_loadaddr(cpu);
 				mips_set_info(cpu,CPUINFO_INT_REGISTER + MIPS_R2, &mipsinfo);
 				break;
 
@@ -3071,7 +3071,7 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 				}
 
 				#if DEBUG_HLE_IOP
-				mips_get_info(CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
+				mips_get_info(cpu, CPUINFO_INT_REGISTER + MIPS_R31, &mipsinfo);
 				printf("KTTY: %s [PC=%x]\n", out, mipsinfo.i);
 				#endif
 
@@ -3106,14 +3106,14 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 				#endif
 
 				// get 2k for our parameters
-				newAlloc = psf2_get_loadaddr();
+				newAlloc = psf2_get_loadaddr(cpu);
 				// force 16-byte alignment
 				if (newAlloc & 0xf)
 				{
 					newAlloc &= ~0xf;
 					newAlloc += 16;
 				}
-				psf2_set_loadaddr(newAlloc + 2048);
+				psf2_set_loadaddr(cpu, newAlloc + 2048);
 
 				tempmem = (uint8 *)malloc(2*1024*1024);
 				if (psf2_load_file(cpu, mname, tempmem, 2*1024*1024) != 0xffffffff)
@@ -3276,6 +3276,11 @@ void psx_iop_call(mips_cpu_context *cpu, uint32 pc, uint32 callnum)
 						a2 = cpu->filesize[a0] - cpu->filepos[a0];
 					}
 
+					// Chippy: never past the end of RAM
+					if ((a1 & 0x1fffff) + a2 > 2*1024*1024)
+					{
+						a2 = 2*1024*1024 - (a1 & 0x1fffff);
+					}
 					rp = (uint8 *)cpu->psx_ram;
 					rp += (a1 & 0x1fffff);
 					memcpy(rp, &cpu->filedata[a0][cpu->filepos[a0]], a2);

@@ -68,10 +68,12 @@
 #define ELF32_R_TYPE(val)               ((val) & 0xff)
 
 // main RAM
-static uint32 loadAddr, lengthMS, fadeMS;
-static uint8 *filesys[MAX_FS];
-static uint32 fssize[MAX_FS];
-static int num_fs;
+// (Chippy: the load address and file systems live in the CPU context, so
+// several songs can be open at once.)
+#define loadAddr (cpu->psf2_loadaddr)
+#define PSX_RAM_BYTES (2*1024*1024)
+// Does [addr, addr+size) fit in the IOP's RAM?
+#define IN_RAM(addr, size) ((uint64)(addr) + (uint64)(size) <= PSX_RAM_BYTES)
 
 typedef struct {
     corlett_t	*c;
@@ -183,6 +185,7 @@ uint32 psf2_load_elf(mips_cpu_context *cpu, uint8 *start, uint32 len)
 				break;
 
 			case 1:			// PROGBITS: copy data to destination
+				if (!IN_RAM(loadAddr + addr, size) || (uint64)offset + size > len) return 0xffffffff;
 				memcpy(&cpu->psx_ram[(loadAddr + addr)/4], &start[offset], size);
 				totallen += size;
 				break;
@@ -194,6 +197,7 @@ uint32 psf2_load_elf(mips_cpu_context *cpu, uint8 *start, uint32 len)
 				break;
 
 			case 8:			// NOBITS: BSS region, zero out destination
+				if (!IN_RAM(loadAddr + addr, size)) return 0xffffffff;
 				memset(&cpu->psx_ram[(loadAddr + addr)/4], 0, size);
 				totallen += size;
 				break;
@@ -360,9 +364,9 @@ static uint32 load_file_ex(uint8 *top, uint8 *start, uint32 len, char *file, uin
 	return 0xffffffff;
 }
 
-static uint32 load_file(int fs, char *file, uint8 *buf, uint32 buflen)
+static uint32 load_file(mips_cpu_context *cpu, int fs, char *file, uint8 *buf, uint32 buflen)
 {
-	return load_file_ex(filesys[fs], filesys[fs], fssize[fs], file, buf, buflen);
+	return load_file_ex(cpu->psf2_fs[fs], cpu->psf2_fs[fs], cpu->psf2_fssize[fs], file, buf, buflen);
 }
 
 #if 0
@@ -444,9 +448,9 @@ uint32 psf2_load_file(mips_cpu_context *cpu, char *file, uint8 *buf, uint32 bufl
 	int i;
 	uint32 flen;
 
-	for (i = 0; i < num_fs; i++)
+	for (i = 0; i < cpu->psf2_num_fs; i++)
 	{
-		flen = load_file(i, file, buf, buflen);
+		flen = load_file(cpu, i, file, buf, buflen);
 		if (flen != 0xffffffff)
 		{
 			return flen;
@@ -468,13 +472,17 @@ void *psf2_start(const char *path, uint8 *buffer, uint32 length)
 	union cpuinfo mipsinfo;
 	corlett_t *lib = NULL;
 
+	s->mips_cpu = mips_alloc ();
+	mips_cpu_context *cpu = s->mips_cpu;
 	loadAddr = 0x23f00;	// this value makes allocations work out similarly to how they would 
 				// in Highly Experimental (as per Shadow Hearts' hard-coded assumptions)
 
 	// Decode the current PSF2
 	if (corlett_decode(buffer, length, &file, &file_len, &s->c) != AO_SUCCESS)
 	{
-        free (s);
+        if (s->c) free (s->c);
+		mips_exit (s->mips_cpu);
+		free (s);
 		return NULL;
 	}
 	if (file) {
@@ -488,9 +496,9 @@ void *psf2_start(const char *path, uint8 *buffer, uint32 length)
 	printf("FS section: size %x\n", s->c->res_size);
 	#endif
 
-	num_fs = 1;
-	filesys[0] = (uint8 *)s->c->res_section;
-	fssize[0] = s->c->res_size;
+	cpu->psf2_num_fs = 1;
+	cpu->psf2_fs[0] = (uint8 *)s->c->res_section;
+	cpu->psf2_fssize[0] = s->c->res_size;
 
 	// Get the library file, if any
 	if (s->c->lib[0] != 0)
@@ -504,6 +512,8 @@ void *psf2_start(const char *path, uint8 *buffer, uint32 length)
 		#endif
 		if (ao_get_lib(libpath, &s->lib_raw_file, &tmp_length) != AO_SUCCESS)
 		{
+            if (s->c) free (s->c);
+            mips_exit (s->mips_cpu);
             free (s);
             return NULL;
 		}
@@ -512,6 +522,8 @@ void *psf2_start(const char *path, uint8 *buffer, uint32 length)
 		if (corlett_decode(s->lib_raw_file, lib_raw_length, &lib_decoded, &lib_len, &lib) != AO_SUCCESS)
 		{
 			free(s->lib_raw_file);
+            if (s->c) free (s->c);
+            mips_exit (s->mips_cpu);
             free (s);
             return NULL;
 		}
@@ -520,9 +532,10 @@ void *psf2_start(const char *path, uint8 *buffer, uint32 length)
 		printf("Lib FS section: size %x bytes\n", lib->res_size);
 		#endif
 
-		num_fs++;
-		filesys[1] = (uint8 *)lib->res_section;
- 		fssize[1] = lib->res_size;
+		cpu->psf2_num_fs++;
+		cpu->psf2_fs[1] = (uint8 *)lib->res_section;
+ 		cpu->psf2_fssize[1] = lib->res_size;
+ 		free (lib_decoded);
  		free (lib);
  		lib = NULL;
 	}
@@ -536,11 +549,11 @@ void *psf2_start(const char *path, uint8 *buffer, uint32 length)
 	free(buf);
 	#endif
 
-	s->mips_cpu = mips_alloc ();
 	mips_init(s->mips_cpu);
 	mips_reset(s->mips_cpu, NULL);
 
 	// load psf2.irx, which kicks everything off
+	s->initialPC = 0xffffffff;
 	buf = (uint8 *)malloc(512*1024);
 	irx_len = psf2_load_file(s->mips_cpu, "psf2.irx", buf, 512*1024);
 
@@ -553,15 +566,11 @@ void *psf2_start(const char *path, uint8 *buffer, uint32 length)
 
 	if (s->initialPC == 0xffffffff)
 	{
+		if (s->c->lib[0] != 0) free (s->lib_raw_file);
+        if (s->c) free (s->c);
+        mips_exit (s->mips_cpu);
         free (s);
         return NULL;
-	}
-
-	lengthMS = psfTimeToMS(s->c->inf_length);
-	fadeMS = psfTimeToMS(s->c->inf_fade);
-	if (lengthMS == 0) 
-	{
-		lengthMS = ~0;
 	}
 
 	mipsinfo.i = s->initialPC;
@@ -590,6 +599,7 @@ void *psf2_start(const char *path, uint8 *buffer, uint32 length)
 
 	// back up initial RAM image to quickly restart songs
 	memcpy(s->mips_cpu->initial_ram, s->mips_cpu->psx_ram, 2*1024*1024);
+	cpu->psf2_initial_loadaddr = loadAddr;
 
 	psx_hw_init(s->mips_cpu);
 	SPU2init(s->mips_cpu, ps2_update, s);
@@ -650,6 +660,9 @@ int32 psf2_command(void *handle, int32 command, int32 parameter)
 			SPU2close(s->mips_cpu);
 
 			memcpy(s->mips_cpu->psx_ram, s->mips_cpu->initial_ram, 2*1024*1024);
+			// Chippy: the heap starts over with the RAM, or each restart
+			// allocates further up until it runs off the end of RAM.
+			s->mips_cpu->psf2_loadaddr = s->mips_cpu->psf2_initial_loadaddr;
 
 			mips_init(s->mips_cpu);
 			mips_reset(s->mips_cpu, NULL);
@@ -724,12 +737,12 @@ int32 psf2_fill_info(void *handle, ao_display_info *info)
 	return AO_SUCCESS;
 }
 
-uint32 psf2_get_loadaddr(void)
+uint32 psf2_get_loadaddr(mips_cpu_context *cpu)
 {
 	return loadAddr;
 }
 
-void psf2_set_loadaddr(uint32 new)
+void psf2_set_loadaddr(mips_cpu_context *cpu, uint32 new)
 {
 	loadAddr = new;
 }

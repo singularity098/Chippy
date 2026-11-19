@@ -3,16 +3,19 @@ import { Fling } from "fling.slint";
 import { Theme } from "theme.slint";
 import { BigButton, Toggle, Chip, SectionTitle, SettingRow, Stepper, IconButton, TextField, MenuItem } from "widgets.slint";
 import { Icon, Icons } from "icons.slint";
+import { MusicDir } from "types.slint";
 import { ScrollView } from "std-widgets.slint";
 
 export global Prefs {
-    in property <string> music-dir;
+    // The music folders; one is home.
+    in property <[MusicDir]> music-dirs;
     // The folder the file browser shows now.
     in property <string> browser-dir;
     in property <bool> show-all;
     in property <bool> single-tap;
     in property <bool> hover-opens;
     in property <bool> folder-playlist;
+    in property <bool> restore-session;
     in property <bool> embedded-art;
     in property <bool> usf-hle;
     in property <bool> gme-accuracy;
@@ -26,10 +29,14 @@ export global Prefs {
     in property <string> device;
     in property <string> config-path;
     in property <string> version;
-    callback set-music-dir(string);
+    // Adds a music folder (typed, or the browser's).
+    callback add-music-dir(string);
     callback use-browser-dir;
+    callback remove-music-dir(int);
+    callback set-home-dir(int);
     // Toggles by id: show-all, single-tap, hover-opens, folder-playlist,
-    // embedded-art, usf-hle, gme-accuracy, fullscreen, native-wayland.
+    // restore-session, embedded-art, usf-hle, gme-accuracy, fullscreen,
+    // native-wayland.
     callback set-flag(string, bool);
     // Steppers by id: default-length, fade, loops, bars.
     callback step(string, int);
@@ -78,8 +85,19 @@ export component SettingsPanel inherits Rectangle {
         }
     }
 
-    property <string> dir: Prefs.music-dir;
-    changed dir => { dir-field.text = Prefs.music-dir; }
+    // Rows of the SoundFont list shown before it scrolls.
+    property <float> sf-rows: Prefs.soundfonts.length > 6 ? 5.5 : 6;
+    // Keeps the SoundFont in use in view (it also changes with [ and ]).
+    property <int> sf-picked: Prefs.soundfont;
+    changed sf-picked => { root.show-soundfont(); }
+    function show-soundfont() {
+        let top = Prefs.soundfont * 36px;
+        if top < -sf-scroll.viewport-y {
+            sf-scroll.viewport-y = -top;
+        } else if top + 36px > -sf-scroll.viewport-y + sf-scroll.visible-height {
+            sf-scroll.viewport-y = -(top + 36px - sf-scroll.visible-height);
+        }
+    }
     property <string> sf-dir: Prefs.soundfont-dir;
     changed sf-dir => { sf-field.text = Prefs.soundfont-dir; }
 
@@ -114,6 +132,11 @@ export component SettingsPanel inherits Rectangle {
             vertical-stretch: 1;
             offset <=> scroll.viewport-y;
             range: scroll.viewport-height - scroll.visible-height;
+            // The SoundFont list scrolls on its own.
+            inner-offset <=> sf-scroll.viewport-y;
+            inner-range: sf-scroll.viewport-height - sf-scroll.visible-height;
+            inner-top: sf-box.absolute-position.y - self.absolute-position.y;
+            inner-height: sf-box.visible ? sf-box.height : 0;
             scroll := ScrollView {
                 viewport-height: col.preferred-height;
                 viewport-width: self.visible-width;
@@ -123,42 +146,89 @@ export component SettingsPanel inherits Rectangle {
                     padding-bottom: 20px;
                     padding-right: 4px;
 
-                    SectionTitle { text: "MUSIC FOLDER"; }
+                    SectionTitle { text: "MUSIC FOLDERS"; }
                     Card {
                         Text {
-                            text: "Where the file browser starts (its home button).";
+                            text: "Folders the file browser switches between, above its path. The one with the house is where it starts (its home button).";
                             color: Theme.text-dim;
                             font-size: Theme.font-small;
                             wrap: word-wrap;
                         }
+                        Rectangle { height: 4px; }
+                        for d[i] in Prefs.music-dirs: HorizontalLayout {
+                            spacing: 6px;
+                            min-height: 44px;
+                            IconButton {
+                                y: (parent.height - self.height) / 2;
+                                icon: Icons.home-line;
+                                active: d.home;
+                                tip: d.home ? "The browser starts here" : "Start the browser here";
+                                clicked => { root.interacted(); Prefs.set-home-dir(i); }
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                Text {
+                                    text: d.label;
+                                    color: Theme.text;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: d.path;
+                                    color: Theme.text-faint;
+                                    font-size: Theme.font-small;
+                                    overflow: elide;
+                                }
+                            }
+                            IconButton {
+                                y: (parent.height - self.height) / 2;
+                                icon: Icons.close;
+                                tip: "Remove from the list (the folder stays on disk)";
+                                clicked => { root.interacted(); Prefs.remove-music-dir(i); }
+                            }
+                        }
+                        if Prefs.music-dirs.length == 0: Text {
+                            text: "None yet: the browser starts in your home folder.";
+                            color: Theme.text-faint;
+                            font-size: Theme.font-small;
+                        }
                         Rectangle { height: 6px; }
                         dir-field := TextField {
-                            placeholder: "/path/to/music";
+                            placeholder: "Add a folder: /path/to/music";
                             clearable: false;
-                            accepted(t) => { root.interacted(); Prefs.set-music-dir(t); }
+                            accepted(t) => { root.interacted(); Prefs.add-music-dir(t); self.text = ""; }
                         }
                         Rectangle { height: 6px; }
                         HorizontalLayout {
                             spacing: 8px;
                             alignment: start;
                             BigButton {
-                                text: "Choose…";
+                                text: "Add…";
                                 icon-line: Icons.folder-line;
-                                tip: "Pick the folder in the system's folder picker";
+                                tip: "Pick a folder in the system's folder picker";
                                 clicked => { root.interacted(); Prefs.choose-dir("music"); }
                             }
                             BigButton {
-                                text: Theme.mobile ? "Browser's folder" : "Use the browser's folder";
+                                text: Theme.mobile ? "Browser's folder" : "Add the browser's folder";
                                 tip: Prefs.browser-dir;
                                 clicked => { root.interacted(); Prefs.use-browser-dir(); }
                             }
-                            // A phone saves the typed path with its keyboard's Enter.
+                            // A phone adds the typed path with its keyboard's Enter.
                             if !Theme.mobile: BigButton {
-                                text: "Save";
-                                clicked => { root.interacted(); Prefs.set-music-dir(dir-field.text); }
+                                text: "Add";
+                                clicked => { root.interacted(); Prefs.add-music-dir(dir-field.text); dir-field.text = ""; }
                             }
                         }
                         Rectangle { height: 6px; }
+                    }
+
+                    SectionTitle { text: "PLAYBACK"; }
+                    Card {
+                        SettingRow {
+                            label: "Resume where you left off";
+                            detail: "At start-up, bring back the last playlist and track, paused where it stopped.";
+                            Toggle { checked: Prefs.restore-session; toggled(v) => { root.interacted(); Prefs.set-flag("restore-session", v); } }
+                        }
                     }
 
                     SectionTitle { text: "FILE BROWSER"; }
@@ -255,11 +325,23 @@ export component SettingsPanel inherits Rectangle {
                             }
                         }
                         Rectangle { height: 6px; }
-                        for name[i] in Prefs.soundfonts: MenuItem {
-                            text: name;
-                            checkable: true;
-                            checked: i == Prefs.soundfont;
-                            clicked => { root.interacted(); Prefs.pick-soundfont(i); }
+                        // At most five and a half rows; more scroll inside.
+                        sf-box := Rectangle {
+                            height: min(Prefs.soundfonts.length, root.sf-rows) * 36px;
+                            visible: Prefs.soundfonts.length > 0;
+                            sf-scroll := ScrollView {
+                                viewport-height: sf-col.preferred-height;
+                                viewport-width: self.visible-width;
+                                sf-col := VerticalLayout {
+                                    width: parent.visible-width;
+                                    for name[i] in Prefs.soundfonts: MenuItem {
+                                        text: name;
+                                        checkable: true;
+                                        checked: i == Prefs.soundfont;
+                                        clicked => { root.interacted(); Prefs.pick-soundfont(i); }
+                                    }
+                                }
+                            }
                         }
                         if Prefs.soundfont-dir != "" && Prefs.soundfonts.length == 0: Text {
                             text: "No .sf2 files in this folder.";

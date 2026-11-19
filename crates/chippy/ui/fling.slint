@@ -1,10 +1,11 @@
 // Touch scrolling with momentum. Slint's own drag panning works out the
 // speed at release as the whole drag's distance over its whole time and
 // coasts for only 250 ms, so a list stops nearly dead when the finger
-// lifts. Fling follows the finger, measures its speed over the last few
-// frames and, on release, keeps going at that speed while friction slows
-// it down, as Android's and iOS's own lists do. Touching the list again
-// stops it (or catches it to drag on).
+// lifts. Fling follows the finger, measures its speed over the last
+// moments of the drag and, on release, keeps going at that speed while
+// friction slows it down, as Android's and iOS's own lists do. Flicking
+// again while it coasts adds to the speed; touching it stops it (or
+// catches it to drag on).
 //
 // Wrap a ListView or ScrollView (with drag panning left off) in it and
 // bind its scroll position:
@@ -14,6 +15,11 @@
 //         range: list.viewport-height - list.visible-height;
 //         list := ListView { ... }
 //     }
+//
+// A short scrolling box inside a long page (two swipe handlers cannot
+// share a drag: the outer one always takes it) is scrolled by the outer
+// Fling: give it the box's place and scroll position as `inner-*`, and a
+// drag that starts on the box scrolls the box.
 import { Theme } from "theme.slint";
 
 export component Fling inherits SwipeGestureHandler {
@@ -21,21 +27,47 @@ export component Fling inherits SwipeGestureHandler {
     in-out property <length> offset;
     // How far the child scrolls (viewport height less visible height).
     in property <length> range;
+    // The scrolling box inside, if any: its viewport-y and range, and where
+    // it is (its top and height, in the Fling's coordinates).
+    in-out property <length> inner-offset;
+    in property <length> inner-range;
+    in property <length> inner-top;
+    in property <length> inner-height;
     out property <bool> flinging;
 
-    // Friction: the speed left after each millisecond (a time constant of
-    // 400 ms: a flick at 3000 px/s travels about 1200 px).
-    property <float> decay: 0.9975;
+    // Friction: the speed falls by e every `tau` milliseconds, so a flick
+    // at 3000 px/s travels about 3000 px/s × tau.
+    property <float> tau: 700;
+    // Releases are a little faster than measured: the finger slows as it
+    // lifts, and a coast that feels as fast as the flick needs more.
+    property <float> boost: 1.35;
     // Speeds in px per ms.
-    property <float> max-speed: 10;
-    property <float> min-speed: 0.05;
+    property <float> max-speed: 24;
+    property <float> min-speed: 0.02;
+    // Slower releases do not coast.
+    property <float> start-speed: 0.06;
+    // The speed is measured over the last 50 to 100 ms of the drag.
+    property <duration> window: 50ms;
+    // A finger held still this long before it lifts does not coast.
+    property <duration> hold: 80ms;
 
     property <bool> dragging;
+    // The drag (and its coast) moves the inner box.
+    property <bool> inner;
     property <length> anchor-offset;
     property <length> anchor-y;
     property <length> last-y;
-    property <duration> last-t;
+    property <duration> moved-t;
+    // Two samples of the finger: `a` 50 to 100 ms old, `b` up to 50 ms.
+    property <length> ya;
+    property <duration> ta;
+    property <length> yb;
+    property <duration> tb;
     property <float> velocity;
+    // The speed of the coast a new touch stopped, added to the next flick
+    // if it goes the same way.
+    property <float> carry;
+    property <duration> carry-t;
     property <duration> fling-t;
     // Changes on every frame while the list coasts: reading the animation
     // clock keeps frames coming (at the display's rate on Android too)
@@ -48,25 +80,50 @@ export component Fling inherits SwipeGestureHandler {
     preferred-width: 100%;
     preferred-height: 100%;
 
+    function limit() -> length {
+        return max(0px, root.inner ? root.inner-range : root.range);
+    }
+    function current() -> length {
+        return root.inner ? root.inner-offset : root.offset;
+    }
     function bound(y: length) -> length {
-        return max(-max(0px, root.range), min(0px, y));
+        return max(-root.limit(), min(0px, y));
+    }
+    function put(y: length) {
+        if root.inner {
+            root.inner-offset = root.bound(y);
+        } else {
+            root.offset = root.bound(y);
+        }
     }
 
-    // Folds the finger's latest position into the speed, weighting each
-    // sample by how much time it covers (events arrive per frame, so
-    // several can share a timestamp). A finger held still before it lifts
-    // brings the speed to nothing.
+    // Notes where the finger is (mouse events carry the time they came in
+    // as the animation clock).
     function sample(y: length) {
         let now = animation-tick();
-        let dt = (now - root.last-t) / 1ms;
-        if dt < 4 {
-            return;
+        if y != root.last-y {
+            root.moved-t = now;
+            root.last-y = y;
         }
-        let speed = (y - root.last-y) / 1px / dt;
-        let weight = min(1, dt / 40);
-        root.velocity = root.velocity * (1 - weight) + speed * weight;
-        root.last-y = y;
-        root.last-t = now;
+        if now - root.tb >= root.window {
+            root.ya = root.yb;
+            root.ta = root.tb;
+            root.yb = y;
+            root.tb = now;
+        }
+    }
+
+    // The finger's speed as it lifts: its average over the last 50 to 100
+    // ms (or the whole drag, if shorter), nothing if it had stopped.
+    function release-speed(y: length) -> float {
+        let now = animation-tick();
+        if now - root.moved-t > root.hold {
+            return 0;
+        }
+        // (A flick that lifts within a frame of starting counts as one
+        // frame long.)
+        let dt = max(8, (now - root.ta) / 1ms);
+        return (y - root.ya) / 1px / dt;
     }
 
     moved => {
@@ -78,14 +135,20 @@ export component Fling inherits SwipeGestureHandler {
             // so the list does not jump by the swipe threshold.
             root.dragging = true;
             root.flinging = false;
-            root.anchor-offset = root.offset;
+            let p = self.pressed-position.y;
+            root.inner = root.inner-range > 0.5px && p >= root.inner-top && p < root.inner-top + root.inner-height;
+            root.anchor-offset = root.current();
             root.anchor-y = self.current-position.y;
+            let now = animation-tick();
             root.last-y = self.current-position.y;
-            root.last-t = animation-tick();
-            root.velocity = 0;
+            root.moved-t = now;
+            root.ya = self.current-position.y;
+            root.ta = now;
+            root.yb = self.current-position.y;
+            root.tb = now;
             return;
         }
-        root.offset = root.bound(root.anchor-offset + self.current-position.y - root.anchor-y);
+        root.put(root.anchor-offset + self.current-position.y - root.anchor-y);
         root.sample(self.current-position.y);
     }
 
@@ -95,8 +158,13 @@ export component Fling inherits SwipeGestureHandler {
         }
         root.dragging = false;
         root.sample(self.current-position.y);
-        root.velocity = max(-root.max-speed, min(root.max-speed, root.velocity));
-        if abs(root.velocity) > root.min-speed * 4 {
+        let v = root.release-speed(self.current-position.y) * root.boost;
+        // Flicked again the same way while it coasted: faster still.
+        let chained = animation-tick() - root.carry-t < 1500ms && root.carry * v > 0;
+        let total = chained ? v + root.carry : v;
+        root.carry = 0;
+        root.velocity = max(-root.max-speed, min(root.max-speed, total));
+        if abs(root.velocity) > root.start-speed {
             root.fling-t = animation-tick();
             root.flinging = true;
         }
@@ -104,11 +172,11 @@ export component Fling inherits SwipeGestureHandler {
 
     cancelled => {
         root.dragging = false;
+        root.carry = 0;
     }
 
-    // Coasts: the speed falls by `decay` every millisecond, and the list
-    // moves by the integral of it, so the path does not depend on the
-    // frame rate.
+    // Coasts: the speed falls by e every `tau` ms, and the list moves by
+    // the integral of it, so the path does not depend on the frame rate.
     changed frame => {
         if !root.flinging {
             return;
@@ -116,15 +184,14 @@ export component Fling inherits SwipeGestureHandler {
         let now = animation-tick();
         let dt = (now - root.fling-t) / 1ms;
         root.fling-t = now;
-        let left = pow(root.decay, dt);
-        let tau = -1 / ln(root.decay);
-        let next = root.bound(root.offset + root.velocity * tau * (1 - left) * 1px);
-        root.offset = next;
+        let left = pow(2.718281828, -dt / root.tau);
+        let next = root.bound(root.current() + root.velocity * root.tau * (1 - left) * 1px);
+        root.put(next);
         root.velocity = root.velocity * left;
         // Stops at either end (compared with some slack: lengths are not
         // exact) or once barely moving.
         let at-top = root.velocity > 0 && next > -0.5px;
-        let at-bottom = root.velocity < 0 && next < 0.5px - max(0px, root.range);
+        let at-bottom = root.velocity < 0 && next < 0.5px - root.limit();
         if at-top || at-bottom || abs(root.velocity) < root.min-speed {
             root.flinging = false;
         }
@@ -136,6 +203,8 @@ export component Fling inherits SwipeGestureHandler {
     if root.flinging: TouchArea {
         pointer-event(e) => {
             if e.kind == PointerEventKind.down {
+                root.carry = root.velocity;
+                root.carry-t = animation-tick();
                 root.flinging = false;
             }
         }

@@ -31,8 +31,7 @@ pub fn run(opts: StartOptions) -> anyhow::Result<()> {
         use slint::ComponentHandle;
         ui.global::<Theme>().set_mobile(true);
     }
-    // On a phone, drawing only when something changes saves the battery.
-    if !cfg!(target_os = "android") && std::env::var_os("CHIPPY_LAZY_REDRAW").is_none() {
+    if std::env::var_os("CHIPPY_LAZY_REDRAW").is_none() {
         redraw_every_frame(&ui);
     }
     let app = app::App::new(&ui, opts)?;
@@ -47,6 +46,12 @@ pub fn run(opts: StartOptions) -> anyhow::Result<()> {
 /// stuttered, and on some X servers input showed up only with the next
 /// event. The buffer swap waits for the display, so this draws at its
 /// rate; frames are still kept at least 4 ms apart should a driver not wait.
+///
+/// On Android this is what reaches 90 or 120 Hz: drawn on demand, Slint's
+/// event loop sleeps 10 ms between animation frames and then waits for the
+/// display, which halves the frame rate. To save the battery it draws
+/// continuously only while something moves (an animation, a scroll, the
+/// spectrum of the music playing).
 /// `CHIPPY_LAZY_REDRAW=1` goes back to drawing on demand.
 fn redraw_every_frame(ui: &MainWindow) {
     use slint::ComponentHandle;
@@ -59,6 +64,13 @@ fn redraw_every_frame(ui: &MainWindow) {
         if !matches!(state, slint::RenderingState::AfterRendering) {
             return;
         }
+        if cfg!(target_os = "android") {
+            let Some(ui) = weak.upgrade() else { return };
+            let moving = ui.window().has_active_animations() || ui.global::<Now>().get_state() == 1;
+            if !moving {
+                return;
+            }
+        }
         let since = last.replace(Instant::now()).elapsed();
         let weak = weak.clone();
         let redraw = move || {
@@ -66,10 +78,12 @@ fn redraw_every_frame(ui: &MainWindow) {
                 ui.window().request_redraw();
             }
         };
-        if since >= MIN_FRAME {
+        if since >= MIN_FRAME && !cfg!(target_os = "android") {
             redraw();
         } else {
-            slint::Timer::single_shot(MIN_FRAME - since, redraw);
+            // On Android the timer (even one due now) is also what wakes
+            // the event loop at once.
+            slint::Timer::single_shot(MIN_FRAME.saturating_sub(since), redraw);
         }
     });
     if let Err(e) = result {

@@ -105,24 +105,15 @@ impl App {
             "soundfont" => "SoundFont folder",
             _ => "Export to folder",
         };
-        // On Android the folder is the one the file browser shows.
+        // Android: the system's folder picker, in the activity.
         #[cfg(target_os = "android")]
         {
-            let _ = (start, title);
-            let Some(dir) = self.picker_start() else {
-                return;
-            };
-            self.toast(
-                &format!("{title}: {} (the file browser's folder)", dir.display()),
-                false,
-            );
-            let picked = match which.as_str() {
-                "music" => Picked::MusicDir(dir),
-                "soundfont" => Picked::SoundfontDir(dir),
-                _ => Picked::ExportDir(dir),
-            };
-            self.picker_open = true;
-            self.picked(picked);
+            let _ = title;
+            if crate::android::pick_folder(&which, start.as_deref()) {
+                self.picker_open = true;
+            } else {
+                self.toast("The folder picker could not be shown", true);
+            }
         }
         #[cfg(not(target_os = "android"))]
         {

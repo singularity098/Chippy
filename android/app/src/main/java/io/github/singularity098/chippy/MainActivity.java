@@ -10,8 +10,11 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.provider.DocumentsContract;
 import android.provider.Settings;
+import android.view.Display;
 import android.view.View;
+import android.view.WindowManager;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -38,6 +41,11 @@ public class MainActivity extends NativeActivity {
 
     private static final int REQUEST_STORAGE = 1;
     private static final int REQUEST_NOTIFICATIONS = 2;
+    private static final int REQUEST_FOLDER = 3;
+    private static final String STORAGE_DOCUMENTS = "com.android.externalstorage.documents";
+
+    /** The setting the folder picker showing is for ("music"...). */
+    private String folderFor;
 
     private boolean hadStorage;
     private boolean askedForStorage;
@@ -53,6 +61,7 @@ public class MainActivity extends NativeActivity {
             askForNotifications();
         }
         keepEdgesForSidebars();
+        preferFastestRefreshRate();
     }
 
     @Override
@@ -100,10 +109,124 @@ public class MainActivity extends NativeActivity {
         MediaBridge.updatePlayback(getApplicationContext(), state, positionMs);
     }
 
+    /** The cover for the media notification; null when there is none. */
+    public void updateArt(byte[] rgba, int width, int height) {
+        MediaBridge.updateArt(getApplicationContext(), rgba, width, height);
+    }
+
+    /**
+     * The system's folder picker, for a setting ("music", "soundfont",
+     * "export"), opening at {@code start} where it can. The folder comes
+     * back as "folder:which:/its/path" ("folder:which:" if none).
+     */
+    public void pickFolder(String which, String start) {
+        runOnUiThread(() -> {
+            if (folderFor != null) {
+                nativeCommand("folder:" + folderFor + ":");
+            }
+            folderFor = which;
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            Uri initial = documentUriFor(start);
+            if (initial != null) {
+                i.putExtra(DocumentsContract.EXTRA_INITIAL_URI, initial);
+            }
+            try {
+                startActivityForResult(i, REQUEST_FOLDER);
+            } catch (Exception e) {
+                android.util.Log.w("chippy", "no folder picker", e);
+                folderFor = null;
+                nativeCommand("folder:" + which + ":");
+            }
+        });
+    }
+
     /** The Rust app has ended (its window closed for good). */
     public void onNativeExit() {
         MediaBridge.release(getApplicationContext());
         runOnUiThread(this::finish);
+    }
+
+    @Override
+    protected void onActivityResult(int code, int result, Intent data) {
+        super.onActivityResult(code, result, data);
+        if (code != REQUEST_FOLDER || folderFor == null) {
+            return;
+        }
+        String which = folderFor;
+        folderFor = null;
+        String path = "";
+        if (result == RESULT_OK && data != null && data.getData() != null) {
+            path = pathFor(data.getData());
+            if (path == null) {
+                path = "";
+                android.widget.Toast.makeText(this, R.string.folder_not_local,
+                        android.widget.Toast.LENGTH_LONG).show();
+            }
+        }
+        nativeCommand("folder:" + which + ":" + path);
+    }
+
+    /**
+     * The file system path of a folder the picker returned. The app reads
+     * folders by path (it has "All files access"), so only folders on the
+     * device's own storage or an SD card will do; null for others (cloud
+     * drives...).
+     */
+    private static String pathFor(Uri tree) {
+        String id;
+        try {
+            id = DocumentsContract.getTreeDocumentId(tree);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        String authority = tree.getAuthority();
+        if ("com.android.providers.downloads.documents".equals(authority)) {
+            if (id.startsWith("raw:")) {
+                return id.substring(4);
+            }
+            if (id.equals("downloads")) {
+                return Environment.getExternalStoragePublicDirectory(
+                        Environment.DIRECTORY_DOWNLOADS).getAbsolutePath();
+            }
+            return null;
+        }
+        if (!STORAGE_DOCUMENTS.equals(authority)) {
+            return null;
+        }
+        int colon = id.indexOf(':');
+        String volume = colon < 0 ? id : id.substring(0, colon);
+        String rest = colon < 0 ? "" : id.substring(colon + 1);
+        String root;
+        if (volume.equals("primary")) {
+            root = Environment.getExternalStorageDirectory().getAbsolutePath();
+        } else if (volume.equals("home")) {
+            root = Environment.getExternalStoragePublicDirectory(
+                    Environment.DIRECTORY_DOCUMENTS).getAbsolutePath();
+        } else {
+            root = "/storage/" + volume;
+        }
+        return rest.isEmpty() ? root : root + "/" + rest;
+    }
+
+    /** The picker's document for a path on the device's storage, if any. */
+    private static Uri documentUriFor(String path) {
+        if (path == null || path.isEmpty()) {
+            return null;
+        }
+        String primary = Environment.getExternalStorageDirectory().getAbsolutePath();
+        String id;
+        if (path.equals(primary)) {
+            id = "primary:";
+        } else if (path.startsWith(primary + "/")) {
+            id = "primary:" + path.substring(primary.length() + 1);
+        } else if (path.startsWith("/storage/")) {
+            String rest = path.substring("/storage/".length());
+            int slash = rest.indexOf('/');
+            id = slash < 0 ? rest + ":" : rest.substring(0, slash) + ":" + rest.substring(slash + 1);
+        } else {
+            return null;
+        }
+        return DocumentsContract.buildDocumentUri(STORAGE_DOCUMENTS, id);
     }
 
     // ---------------------------------------------------------- permissions
@@ -164,6 +287,33 @@ public class MainActivity extends NativeActivity {
             }
             askForNotifications();
         }
+    }
+
+    // ---------------------------------------------------------- frame rate
+
+    /**
+     * Phones with 90 or 120 Hz screens often give apps 60 Hz unless they
+     * ask: ask for the fastest mode the display has at its current size.
+     */
+    private void preferFastestRefreshRate() {
+        Display display = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                ? getDisplay() : getWindowManager().getDefaultDisplay();
+        if (display == null) {
+            return;
+        }
+        Display.Mode current = display.getMode();
+        Display.Mode best = current;
+        for (Display.Mode m : display.getSupportedModes()) {
+            if (m.getPhysicalWidth() == current.getPhysicalWidth()
+                    && m.getPhysicalHeight() == current.getPhysicalHeight()
+                    && m.getRefreshRate() > best.getRefreshRate()) {
+                best = m;
+            }
+        }
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        lp.preferredDisplayModeId = best.getModeId();
+        lp.preferredRefreshRate = best.getRefreshRate();
+        getWindow().setAttributes(lp);
     }
 
     // ---------------------------------------------------------------- edges

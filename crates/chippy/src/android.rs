@@ -89,6 +89,14 @@ pub fn command(cmd: &str) {
         },
         "back" => Request::Back,
         "refresh" => Request::Refresh,
+        // "folder:<which>:<path>", the path empty when nothing was chosen.
+        "folder" => {
+            let (which, path) = arg.split_once(':').unwrap_or((arg, ""));
+            Request::Folder(
+                which.to_string(),
+                (!path.is_empty()).then(|| std::path::PathBuf::from(path)),
+            )
+        }
         _ => {
             log::warn!("unknown command from Java: {cmd}");
             return;
@@ -104,6 +112,27 @@ pub fn command(cmd: &str) {
 /// Sends the app to the background (Back with nothing left to close).
 pub fn move_to_back() {
     call_activity("moveToBack", "()V", &[]);
+}
+
+/// Shows the system's folder picker; the folder chosen comes back as a
+/// `folder:<which>:<path>` command. False if it could not be shown.
+pub fn pick_folder(which: &str, start: Option<&std::path::Path>) -> bool {
+    let Some(java) = JAVA.get() else { return false };
+    let Ok(env) = java.vm.attach_current_thread_permanently() else {
+        return false;
+    };
+    let start = start
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (Ok(w), Ok(s)) = (env.new_string(which), env.new_string(start)) else {
+        return false;
+    };
+    call_activity(
+        "pickFolder",
+        "(Ljava/lang/String;Ljava/lang/String;)V",
+        &[JValue::Object(&w), JValue::Object(&s)],
+    );
+    true
 }
 
 fn call_activity(name: &str, sig: &str, args: &[JValue]) {
@@ -187,6 +216,38 @@ impl Media {
             "updatePlayback",
             "(IJ)V",
             &[JValue::Int(state), JValue::Long(position_ms as i64)],
+        );
+    }
+
+    /// The cover for the notification and the lock screen (None: none).
+    pub fn set_art(&mut self, art: Option<&crate::art::Picture>) {
+        let Some(java) = JAVA.get() else { return };
+        let Ok(env) = java.vm.attach_current_thread_permanently() else {
+            return;
+        };
+        let (array, w, h) = match art {
+            Some(p) => {
+                // Android's bitmaps hold premultiplied alpha.
+                let mut px = p.rgba.clone();
+                for c in px.chunks_exact_mut(4) {
+                    let a = c[3] as u16;
+                    if a < 255 {
+                        for v in &mut c[..3] {
+                            *v = ((*v as u16 * a + 127) / 255) as u8;
+                        }
+                    }
+                }
+                match env.byte_array_from_slice(&px) {
+                    Ok(a) => (JObject::from(a), p.width as i32, p.height as i32),
+                    Err(_) => return,
+                }
+            }
+            None => (JObject::null(), 0, 0),
+        };
+        call_activity(
+            "updateArt",
+            "([BII)V",
+            &[JValue::Object(&array), JValue::Int(w), JValue::Int(h)],
         );
     }
 

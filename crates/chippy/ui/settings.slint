@@ -110,6 +110,8 @@ export component SettingsPanel inherits Rectangle {
             }
         }
         ScrollView {
+            // Touch screens scroll by dragging (the desktop style turns it off).
+            mouse-drag-pan-enabled: Theme.mobile;
             vertical-stretch: 1;
             viewport-height: col.preferred-height;
             viewport-width: self.visible-width;
@@ -137,18 +139,19 @@ export component SettingsPanel inherits Rectangle {
                     HorizontalLayout {
                         spacing: 8px;
                         alignment: start;
-                        if !Theme.mobile: BigButton {
+                        BigButton {
                             text: "Choose…";
                             icon-line: Icons.folder-line;
-                            tip: "Pick the folder in a file dialog";
+                            tip: "Pick the folder in the system's folder picker";
                             clicked => { root.interacted(); Prefs.choose-dir("music"); }
                         }
                         BigButton {
-                            text: "Use the browser's folder";
+                            text: Theme.mobile ? "Browser's folder" : "Use the browser's folder";
                             tip: Prefs.browser-dir;
                             clicked => { root.interacted(); Prefs.use-browser-dir(); }
                         }
-                        BigButton {
+                        // A phone saves the typed path with its keyboard's Enter.
+                        if !Theme.mobile: BigButton {
                             text: "Save";
                             clicked => { root.interacted(); Prefs.set-music-dir(dir-field.text); }
                         }
@@ -232,18 +235,19 @@ export component SettingsPanel inherits Rectangle {
                     HorizontalLayout {
                         spacing: 8px;
                         alignment: start;
-                        if !Theme.mobile: BigButton {
+                        BigButton {
                             text: "Choose…";
                             icon-line: Icons.folder-line;
-                            tip: "Pick the folder in a file dialog";
+                            tip: "Pick the folder in the system's folder picker";
                             clicked => { root.interacted(); Prefs.choose-dir("soundfont"); }
                         }
                         BigButton {
-                            text: "Use the browser's folder";
+                            text: Theme.mobile ? "Browser's folder" : "Use the browser's folder";
                             tip: Prefs.browser-dir;
                             clicked => { root.interacted(); Prefs.soundfont-use-browser-dir(); }
                         }
-                        BigButton {
+                        // A phone saves the typed path with its keyboard's Enter.
+                        if !Theme.mobile: BigButton {
                             text: "Save";
                             clicked => { root.interacted(); Prefs.set-soundfont-dir(sf-field.text); }
                         }

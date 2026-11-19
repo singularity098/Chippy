@@ -480,6 +480,8 @@ export component QueuePage inherits Rectangle {
         Rectangle {
             vertical-stretch: 1;
             list := ListView {
+                // Touch screens scroll by dragging (the desktop style turns it off).
+                mouse-drag-pan-enabled: Theme.mobile;
                 for row[i] in Playlist.rows: QueueRow {
                     index: i;
                     title: row.title;

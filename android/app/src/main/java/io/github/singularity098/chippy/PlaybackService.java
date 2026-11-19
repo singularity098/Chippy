@@ -148,6 +148,9 @@ public class PlaybackService extends Service {
                         ? action(android.R.drawable.ic_media_pause, R.string.pause, "pause", 2)
                         : action(android.R.drawable.ic_media_play, R.string.play, "play", 2))
                 .addAction(action(android.R.drawable.ic_media_next, R.string.next, "next", 3));
+        if (MediaBridge.art != null) {
+            b.setLargeIcon(MediaBridge.art);
+        }
         Notification.MediaStyle style = new Notification.MediaStyle()
                 .setShowActionsInCompactView(0, 1, 2);
         if (MediaBridge.session != null) {

@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.graphics.Bitmap;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
@@ -31,6 +32,9 @@ final class MediaBridge {
     static String title = "";
     static String artist = "";
     static String album = "";
+    static long duration = -1;
+    /** The cover, for the notification and the lock screen; may be null. */
+    static Bitmap art;
     static int state; // 0 stopped, 1 playing, 2 paused
 
     private static AudioManager audio;
@@ -86,16 +90,42 @@ final class MediaBridge {
             title = t;
             artist = ar;
             album = al;
-            MediaMetadata.Builder b = new MediaMetadata.Builder()
-                    .putString(MediaMetadata.METADATA_KEY_TITLE, t)
-                    .putString(MediaMetadata.METADATA_KEY_ARTIST, ar)
-                    .putString(MediaMetadata.METADATA_KEY_ALBUM, al);
-            if (durationMs >= 0) {
-                b.putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs);
-            }
-            session.setMetadata(b.build());
+            duration = durationMs;
+            publishMetadata();
             PlaybackService.refresh(ctx);
         });
+    }
+
+    /** rgba: premultiplied pixels, width * height * 4 bytes; null for none. */
+    static void updateArt(Context ctx, byte[] rgba, int width, int height) {
+        Bitmap bitmap = null;
+        if (rgba != null && width > 0 && height > 0 && rgba.length >= width * height * 4) {
+            bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            bitmap.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(rgba, 0, width * height * 4));
+        }
+        Bitmap b = bitmap;
+        MAIN.post(() -> {
+            if (session == null) {
+                return;
+            }
+            art = b;
+            publishMetadata();
+            PlaybackService.refresh(ctx);
+        });
+    }
+
+    private static void publishMetadata() {
+        MediaMetadata.Builder b = new MediaMetadata.Builder()
+                .putString(MediaMetadata.METADATA_KEY_TITLE, title)
+                .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
+                .putString(MediaMetadata.METADATA_KEY_ALBUM, album);
+        if (duration >= 0) {
+            b.putLong(MediaMetadata.METADATA_KEY_DURATION, duration);
+        }
+        if (art != null) {
+            b.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art);
+        }
+        session.setMetadata(b.build());
     }
 
     static void updatePlayback(Context ctx, int newState, long positionMs) {

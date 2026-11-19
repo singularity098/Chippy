@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds Chippy's APK: the codec libraries (once, see build-deps.sh), the
+# Builds Chippy's APK: the codec libraries (once, see
+# packaging/build-codecs.sh), the
 # Rust library with cargo-ndk, then the app with Gradle.
 #
 #   android/build-apk.sh [debug|release]
@@ -20,11 +21,11 @@ export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
 # look for platform 26, which need not be installed).
 export ANDROID_JAR="${ANDROID_JAR:-$ANDROID_HOME/platforms/android-35/android.jar}"
 
-DEPS="${CHIPPY_ANDROID_DEPS:-$HERE/deps/$ABI}"
+DEPS="${CHIPPY_CODECS:-$ROOT/build/codecs/$ABI}"
 if [ ! -f "$DEPS/lib/libavcodec.a" ]; then
-  "$HERE/build-deps.sh" "$ABI" "$DEPS"
+  "$ROOT/packaging/build-codecs.sh" "$ABI" "$DEPS"
 fi
-export CHIPPY_ANDROID_DEPS="$DEPS"
+export CHIPPY_CODECS="$DEPS"
 
 PROFILE=(--release)
 [ "$TYPE" = debug ] && PROFILE=()

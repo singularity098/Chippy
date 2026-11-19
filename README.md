@@ -181,16 +181,20 @@ android/build-apk.sh          # or: android/build-apk.sh debug
 ```
 
 The first run builds FFmpeg, mpg123, libvorbis and libogg for vgmstream
-into `android/deps` (`android/build-deps.sh`, a minute or two). The APK is
+into `build/codecs` (`packaging/build-codecs.sh`, a minute or two). The APK is
 in `android/app/build/outputs/apk/`. `CHIPPY_MOBILE=1 cargo run` shows the
 phone's layout on the desktop (make the window taller than wide).
 
-### AppImage
+### Downloads
 
-Every push builds a Linux AppImage (`.github/workflows/appimage.yml`).
-Download it from the run's *Artifacts* on the Actions tab, unzip it, make
-it executable and run it. It needs glibc 2.35 or newer (Ubuntu 22.04,
-Debian 12, Fedora 36 and later).
+Every push builds one Linux package (`.github/workflows/release.yml`) and
+one Android APK (`.github/workflows/android.yml`); download them from the
+run's *Artifacts* on the Actions tab. The Linux binary has FFmpeg, mpg123
+and libvorbis built in (`packaging/build-codecs.sh linux`, then
+`CHIPPY_CODECS=$PWD/build/codecs/linux cargo build --release`), so it does
+not depend on the FFmpeg version your system has. It needs glibc 2.35 or
+newer (Ubuntu 22.04, Debian 12, Fedora 36 and later) and, as any desktop
+has, ALSA and fontconfig.
 
 The Skia renderer is used by default (it antialiases best); its prebuilt
 binaries are downloaded during the build. Where that is not possible, build
@@ -206,8 +210,9 @@ crates/
   chippy-core/     no UI: virtual file system (folders, archives, multi-track
                    files), decoders, tags, album art, playlist, settings
   gme-sys/         builds third_party/game-music-emu
-  vgmstream-sys/   builds third_party/vgmstream, with the system's mpg123,
-                   libvorbis and FFmpeg
+  vgmstream-sys/   builds third_party/vgmstream, with mpg123, libvorbis and
+                   FFmpeg (the system's, or static ones from
+                   packaging/build-codecs.sh)
   lazyusf-sys/     builds third_party/lazyusf2
   aosdk-sys/       third_party/aosdk (PSF, PSF2, SSF, DSF, QSF)
   gsf-sys/         third_party/mgba-gsf (GSF)
@@ -231,10 +236,9 @@ follows [Carlita](https://github.com/singularity098/Carlita).
 ## Licence
 
 GPL-3.0-or-later. The vendored libraries keep their own licences: Game Music
-Emu is LGPL-2.1, lazyusf2 is GPL-2.0, vgmstream is ISC-style; the
-AppImage also carries the system's mpg123 and libvorbis, and FFmpeg
-(LGPL-2.1 or GPL, depending on how the distribution built it). The Jost font
 Emu is LGPL-2.1, lazyusf2, vio2sf, Mednafen and libsidplayfp are GPL-2.0+,
 the Audio Overload SDK is BSD with MAME-licensed parts, mGBA is MPL-2.0,
-libxmp is MIT, libarchive is BSD, vgmstream is ISC-style. The Jost font
+libxmp is MIT, libarchive is BSD, vgmstream is ISC-style. The Linux
+package and the APK also carry mpg123 (LGPL-2.1), libvorbis and libogg
+(BSD) and FFmpeg (built under the GPL). The Jost font
 is under the SIL Open Font Licence (`assets/fonts/OFL.txt`).

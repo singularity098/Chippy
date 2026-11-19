@@ -376,41 +376,77 @@ export component MainWindow inherits Window {
     }
 
     // ----------------------------------------------------------- sidebars
-    if root.left-pos > 0 || root.right-pos > 0: Rectangle {
+    // On a touch screen an open sidebar follows a swipe back towards its
+    // edge and closes, from anywhere on it or beside it (a vertical swipe
+    // still scrolls its lists).
+    side-swipe := SwipeGestureHandler {
+        x: 0;
         y: root.side-top;
+        width: root.width;
         height: root.side-height;
-        background: Colors.rgba(0, 0, 0, 0.55 * max(root.left-pos, root.right-pos));
-        TouchArea {
-            pointer-event(e) => {
-                if e.kind == PointerEventKind.up {
-                    root.close-left();
-                    root.close-right();
+        enabled: Theme.mobile && (root.left-pos > 0 || root.right-pos > 0 || root.left-dragging || root.right-dragging);
+        handle-swipe-left: root.left-pos > 0 || root.left-dragging;
+        handle-swipe-right: (root.right-pos > 0 || root.right-dragging) && !root.left-dragging;
+        moved => {
+            if !self.swiping { return; }
+            if root.left-pos > 0 || root.left-dragging {
+                root.left-dragging = true;
+                root.left-pos = max(0, min(1, 1 - (self.pressed-position.x - self.current-position.x) / root.left-width));
+            } else if root.right-pos > 0 || root.right-dragging {
+                root.right-dragging = true;
+                root.right-pos = max(0, min(1, 1 - (self.current-position.x - self.pressed-position.x) / root.right-width));
+            }
+        }
+        // Closes once moved a fifth of the way.
+        swiped => {
+            if root.left-dragging {
+                root.left-dragging = false;
+                if root.left-pos < 0.8 { root.close-left(); } else { root.left-pos = 1; }
+            }
+            if root.right-dragging {
+                root.right-dragging = false;
+                if root.right-pos < 0.8 { root.close-right(); } else { root.right-pos = 1; }
+            }
+        }
+        cancelled => {
+            if root.left-dragging { root.left-dragging = false; root.left-pos = 1; }
+            if root.right-dragging { root.right-dragging = false; root.right-pos = 1; }
+        }
+
+        if root.left-pos > 0 || root.right-pos > 0: Rectangle {
+            background: Colors.rgba(0, 0, 0, 0.55 * max(root.left-pos, root.right-pos));
+            TouchArea {
+                pointer-event(e) => {
+                    if e.kind == PointerEventKind.up {
+                        root.close-left();
+                        root.close-right();
+                    }
                 }
             }
         }
-    }
 
-    browser-panel := BrowserPanel {
-        y: root.side-top;
-        width: root.left-width;
-        height: root.side-height;
-        x: (root.left-pos - 1) * root.left-width;
-        visible: root.left-pos > 0;
-        animate x { duration: root.left-dragging ? 0ms : Theme.slide; easing: ease-out; }
-        close => { root.close-left(); }
-        interacted => { root.left-by-hover = false; }
-    }
+        browser-panel := BrowserPanel {
+            y: 0;
+            width: root.left-width;
+            height: root.side-height;
+            x: (root.left-pos - 1) * root.left-width;
+            visible: root.left-pos > 0;
+            animate x { duration: root.left-dragging ? 0ms : Theme.slide; easing: ease-out; }
+            close => { root.close-left(); }
+            interacted => { root.left-by-hover = false; }
+        }
 
-    SettingsPanel {
-        y: root.side-top;
-        width: root.right-width;
-        height: root.side-height;
-        x: root.width - root.right-pos * root.right-width;
-        visible: root.right-pos > 0;
-        animate x { duration: root.right-dragging ? 0ms : Theme.slide; easing: ease-out; }
-        theme-names: root.theme-names;
-        close => { root.close-right(); }
-        interacted => { root.right-by-hover = false; }
+        SettingsPanel {
+            y: 0;
+            width: root.right-width;
+            height: root.side-height;
+            x: root.width - root.right-pos * root.right-width;
+            visible: root.right-pos > 0;
+            animate x { duration: root.right-dragging ? 0ms : Theme.slide; easing: ease-out; }
+            theme-names: root.theme-names;
+            close => { root.close-right(); }
+            interacted => { root.right-by-hover = false; }
+        }
     }
 
     left-strip := EdgeStrip {

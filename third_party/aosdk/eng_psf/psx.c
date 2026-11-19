@@ -252,6 +252,18 @@ static INLINE void mips_commit_delayed_load(mips_cpu_context *cpu)
 
 static INLINE void mips_delayed_branch(mips_cpu_context *cpu, UINT32 n_adr )
 {
+	// Chippy: a jump in a branch's delay slot is ignored and the branch
+	// goes where it was going. Final Fantasy X's patched driver loops with
+	// "b loop; jr ra", which otherwise returned and leaked the stack until
+	// it ran past the end of RAM.
+	if( cpu->delayr == REGPC )
+	{
+		cpu->pc = cpu->delayv;
+		change_pc( cpu->pc );
+		cpu->delayr = 0;
+		cpu->delayv = 0;
+		return;
+	}
 	if( ( n_adr & ( ( ( cpu->cp0r[ CP0_SR ] & SR_KUC ) << 30 ) | 3 ) ) != 0 )
 	{
 		mips_exception( cpu, EXC_ADEL );

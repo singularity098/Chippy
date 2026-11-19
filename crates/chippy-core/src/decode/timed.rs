@@ -31,6 +31,7 @@ pub struct Timed<E: Engine> {
     fade_start: u64,
     end: u64,
     duration_ms: u64,
+    gain: f32,
     buf: Vec<i16>,
 }
 
@@ -45,8 +46,15 @@ impl<E: Engine> Timed<E> {
             fade_start: f(length_ms),
             end: f(length_ms + fade_ms),
             duration_ms: length_ms + fade_ms,
+            gain: 1.0,
             buf: Vec::new(),
         }
+    }
+
+    /// Scales the output (a rip's `volume` tag).
+    pub fn with_gain(mut self, gain: f32) -> Self {
+        self.gain = gain;
+        self
     }
 }
 
@@ -64,8 +72,9 @@ impl<E: Engine> Decoder for Timed<E> {
         let frames = ((out.len() / 2) as u64).min(self.end - self.pos) as usize;
         self.buf.resize(frames * 2, 0);
         self.engine.render(&mut self.buf)?;
+        let k = self.gain / 32768.0;
         for (o, &s) in out.iter_mut().zip(&self.buf) {
-            *o = s as f32 / 32768.0;
+            *o = s as f32 * k;
         }
         apply_fade(&mut out[..frames * 2], self.pos, self.fade_start, self.end);
         self.pos += frames as u64;

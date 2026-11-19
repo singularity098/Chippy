@@ -8,3 +8,10 @@ eng_psf.c: PS-X EXEs are loaded whole (to the end of the decoded program, within
   only the header's text size: rips put SEQ/VAB data past it (Mega Man X6's PSFs played silence).
 psx.c: misaligned LH/LHU/LW/SH/SW use the aligned address instead of raising an address error,
   as Highly Experimental does; some rips' drivers make such accesses and hung in the exception.
+eng_psf2.c, psx.h, psx_hw.c: PSF2's file systems and IOP heap pointer live in the CPU context
+  instead of globals (two open songs shared them), the heap starts over on restart (each seek back
+  allocated further up until it ran off the end of RAM), ELF sections and file reads that would
+  land past the end of RAM are refused or cut short, and a failed start frees what it allocated.
+psx.c: a jump in a branch's delay slot is ignored (the branch wins), as Final Fantasy X's patched
+  driver needs: it loops with "b loop; jr ra", which returned and leaked the stack.
+psx_hw.c: the IOP debug printing compiles again.

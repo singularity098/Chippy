@@ -1,13 +1,13 @@
 //! Common formats through Symphonia (MP3, FLAC, WAV, OGG Vorbis, AAC/M4A,
-//! ALAC, AIFF, CAF, MKV/WebM audio); their tags and embedded pictures
-//! through lofty.
+//! ALAC, AIFF, CAF, MKV/WebM audio; Opus in them through libopus); their
+//! tags and embedded pictures through lofty.
 
 use anyhow::{anyhow, Result};
 use std::io::Cursor;
 use std::sync::Arc;
 
 use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL, CODEC_TYPE_OPUS};
 use symphonia::core::errors::Error as SymError;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
 use symphonia::core::io::{MediaSource, MediaSourceStream};
@@ -34,9 +34,69 @@ fn source(loc: &Location) -> Result<Box<dyn MediaSource>> {
     })
 }
 
+/// Opus, which Symphonia demuxes but cannot decode.
+struct OpusCodec {
+    dec: opus::Decoder,
+    channels: usize,
+    /// Samples (per channel) still to drop at the start: the encoder's
+    /// look-ahead (OpusHead's pre-skip).
+    skip: usize,
+    pre_skip: usize,
+    buf: Vec<f32>,
+}
+
+impl OpusCodec {
+    fn new(params: &symphonia::core::codecs::CodecParameters) -> Result<Self> {
+        // OpusHead: "OpusHead", version, channels, pre-skip (LE16), ...
+        let head = params.extra_data.as_deref().unwrap_or(&[]);
+        let (channels, pre_skip) = if head.len() >= 12 && &head[..8] == b"OpusHead" {
+            (
+                head[9] as usize,
+                u16::from_le_bytes([head[10], head[11]]) as usize,
+            )
+        } else {
+            (params.channels.map_or(2, |c| c.count()), 0)
+        };
+        let ch = match channels {
+            1 => opus::Channels::Mono,
+            2 => opus::Channels::Stereo,
+            n => anyhow::bail!("Opus with {n} channels is not supported"),
+        };
+        Ok(OpusCodec {
+            dec: opus::Decoder::new(48_000, ch)?,
+            channels,
+            skip: pre_skip,
+            pre_skip,
+            buf: vec![0.0; 5760 * 2],
+        })
+    }
+
+    fn decode(&mut self, data: &[u8], out: &mut Vec<f32>) -> Result<()> {
+        let n = self.dec.decode_float(data, &mut self.buf, false)?;
+        let drop = self.skip.min(n);
+        self.skip -= drop;
+        to_stereo(
+            &self.buf[drop * self.channels..n * self.channels],
+            self.channels,
+            out,
+        );
+        Ok(())
+    }
+
+    fn reset(&mut self, at_start: bool) {
+        let _ = self.dec.reset_state();
+        self.skip = if at_start { self.pre_skip } else { 0 };
+    }
+}
+
+enum Codec {
+    Sym(Box<dyn symphonia::core::codecs::Decoder>),
+    Opus(OpusCodec),
+}
+
 pub struct SymDecoder {
     format: Box<dyn FormatReader>,
-    decoder: Box<dyn symphonia::core::codecs::Decoder>,
+    decoder: Codec,
     track_id: u32,
     rate: u32,
     duration: Option<u64>,
@@ -67,11 +127,24 @@ impl SymDecoder {
             .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
             .ok_or_else(|| anyhow!("no audio track"))?;
         let params = track.codec_params.clone();
-        let decoder = symphonia::default::get_codecs().make(&params, &DecoderOptions::default())?;
-        let rate = params
-            .sample_rate
-            .ok_or_else(|| anyhow!("unknown sample rate"))?;
-        let duration = params.n_frames.map(|n| n * 1000 / rate as u64);
+        let (decoder, rate) = if params.codec == CODEC_TYPE_OPUS {
+            (Codec::Opus(OpusCodec::new(&params)?), 48_000)
+        } else {
+            let d = symphonia::default::get_codecs().make(&params, &DecoderOptions::default())?;
+            let rate = params
+                .sample_rate
+                .ok_or_else(|| anyhow!("unknown sample rate"))?;
+            (Codec::Sym(d), rate)
+        };
+        // The length is counted in the track's time base: samples for most
+        // formats, but Matroska's timestamp units for WebM.
+        let duration = params.n_frames.map(|n| match params.time_base {
+            Some(tb) => {
+                let t = tb.calc_time(n);
+                t.seconds * 1000 + (t.frac * 1000.0) as u64
+            }
+            None => n * 1000 / rate as u64,
+        });
         Ok(SymDecoder {
             track_id: track.id,
             format,
@@ -93,7 +166,10 @@ impl SymDecoder {
                     return Ok(false)
                 }
                 Err(SymError::ResetRequired) => {
-                    self.decoder.reset();
+                    match &mut self.decoder {
+                        Codec::Sym(d) => d.reset(),
+                        Codec::Opus(o) => o.reset(false),
+                    }
                     continue;
                 }
                 Err(e) => return Err(e.into()),
@@ -101,7 +177,17 @@ impl SymDecoder {
             if packet.track_id() != self.track_id {
                 continue;
             }
-            match self.decoder.decode(&packet) {
+            let decoder = match &mut self.decoder {
+                Codec::Sym(d) => d,
+                Codec::Opus(o) => match o.decode(&packet.data, &mut self.pending) {
+                    Ok(()) => return Ok(true),
+                    Err(e) => {
+                        log::debug!("skipping a bad packet: {e}");
+                        continue;
+                    }
+                },
+            };
+            match decoder.decode(&packet) {
                 Ok(buf) => {
                     let spec = *buf.spec();
                     let frames = buf.capacity() as u64;
@@ -155,7 +241,10 @@ impl Decoder for SymDecoder {
                 track_id: Some(self.track_id),
             },
         )?;
-        self.decoder.reset();
+        match &mut self.decoder {
+            Codec::Sym(d) => d.reset(),
+            Codec::Opus(o) => o.reset(ms == 0),
+        }
         self.pending.clear();
         self.done = false;
         Ok(())
@@ -178,6 +267,68 @@ fn tagged(loc: &Location) -> Result<lofty::file::TaggedFile> {
 }
 
 pub fn meta(loc: &Location) -> Result<TrackMeta> {
+    lofty_meta(loc).or_else(|e| symphonia_meta(loc).map_err(|_| e))
+}
+
+/// What Symphonia reads of a file lofty does not know (WebM, Matroska).
+fn symphonia_meta(loc: &Location) -> Result<TrackMeta> {
+    use symphonia::core::meta::StandardTagKey as K;
+    let d = SymDecoder::open(loc)?;
+    let track = d
+        .format
+        .tracks()
+        .iter()
+        .find(|t| t.id == d.track_id)
+        .ok_or_else(|| anyhow!("no audio track"))?;
+    let codec = symphonia::default::get_codecs()
+        .get_codec(track.codec_params.codec)
+        .map(|c| c.short_name.to_uppercase())
+        .unwrap_or_else(|| "OPUS".into());
+    let container = loc.extension().to_uppercase();
+    let mut m = TrackMeta {
+        length_ms: d.duration,
+        sample_rate: Some(d.rate),
+        channels: track.codec_params.channels.map(|c| c.count() as u32),
+        format: format!("{container} ({codec})"),
+        ..Default::default()
+    };
+    let mut format = d.format;
+    if let Some(rev) = format.metadata().current() {
+        for tag in rev.tags() {
+            let v = tag.value.to_string().trim().to_string();
+            // Matroska's tags come by name only.
+            let key = tag.std_key.or(match tag.key.to_ascii_uppercase().as_str() {
+                "TITLE" => Some(K::TrackTitle),
+                "ARTIST" => Some(K::Artist),
+                "ALBUM_ARTIST" => Some(K::AlbumArtist),
+                "ALBUM" => Some(K::Album),
+                "GENRE" => Some(K::Genre),
+                "COMMENT" | "DESCRIPTION" => Some(K::Comment),
+                "COPYRIGHT" => Some(K::Copyright),
+                "DATE" | "DATE_RELEASED" | "DATE_RECORDED" | "YEAR" => Some(K::Date),
+                "PART_NUMBER" | "TRACK" | "TRACKNUMBER" => Some(K::TrackNumber),
+                _ => None,
+            });
+            match key {
+                Some(K::TrackTitle) => m.title = v,
+                Some(K::Artist) => m.artist = v,
+                Some(K::AlbumArtist) if m.artist.is_empty() => m.artist = v,
+                Some(K::Album) => m.album = v,
+                Some(K::Genre) => m.genre = v,
+                Some(K::Comment) => m.comment = v,
+                Some(K::Copyright) => m.copyright = v,
+                Some(K::Date) | Some(K::ReleaseDate) => m.year = v.chars().take(4).collect(),
+                Some(K::TrackNumber) => {
+                    m.track_no = v.split('/').next().and_then(|n| n.trim().parse().ok())
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(m)
+}
+
+fn lofty_meta(loc: &Location) -> Result<TrackMeta> {
     use lofty::prelude::*;
     use lofty::tag::ItemKey;
     let f = tagged(loc)?;

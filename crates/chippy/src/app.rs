@@ -73,6 +73,17 @@ pub struct App {
     /// Where the browser last was inside each music folder, so switching
     /// back to one returns there.
     dir_places: HashMap<PathBuf, PathBuf>,
+    /// The search below the folder: its words, when it is due to start
+    /// (shortly after typing stops), and whether the listing shows its
+    /// results. Each search has a number; results of older ones are dropped
+    /// and their threads stop.
+    search: String,
+    search_due: Option<Instant>,
+    in_results: bool,
+    searching: bool,
+    search_gen: Arc<AtomicU64>,
+    search_tx: Sender<(u64, Option<Vec<Entry>>)>,
+    search_rx: Receiver<(u64, Option<Vec<Entry>>)>,
 
     // ---- playlist
     queue: Queue,
@@ -172,6 +183,7 @@ impl App {
         let (font_tx, font_rx) = crossbeam_channel::unbounded();
         let (pick_tx, pick_rx) = crossbeam_channel::unbounded();
         let (export_tx, export_rx) = crossbeam_channel::unbounded();
+        let (search_tx, search_rx) = crossbeam_channel::unbounded();
 
         let app = App {
             ui: ui.as_weak(),
@@ -188,6 +200,13 @@ impl App {
             hist_pos: 0,
             files: Rc::new(VecModel::default()),
             dir_places: HashMap::new(),
+            search: String::new(),
+            search_due: None,
+            in_results: false,
+            searching: false,
+            search_gen: Arc::new(AtomicU64::new(0)),
+            search_tx,
+            search_rx,
             queue: Queue::default(),
             queue_gen: 0,
             meta_cache: HashMap::new(),
@@ -243,21 +262,25 @@ impl App {
             }
         }
         // The clock: the position, the spectrum and the meter move on every
-        // tick. 8 ms keeps up with 120 Hz screens (at 16 ms they moved only
-        // on every other frame).
-        let timer = slint::Timer::default();
+        // tick.
+        // With nothing moving it ticks only 20 times a second, for what
+        // finishes in the background, so an idle window costs no CPU.
+        let timer = Rc::new(slint::Timer::default());
         let weak = Rc::downgrade(&app);
-        timer.start(
-            slint::TimerMode::Repeated,
-            Duration::from_millis(8),
-            move || {
-                if let Some(app) = weak.upgrade() {
-                    if let Ok(mut a) = app.try_borrow_mut() {
-                        a.tick();
-                    }
+        let weak_timer = Rc::downgrade(&timer);
+        let busy = std::cell::Cell::new(true);
+        timer.start(slint::TimerMode::Repeated, TICK_BUSY, move || {
+            let Some(app) = weak.upgrade() else { return };
+            let Ok(mut a) = app.try_borrow_mut() else {
+                return;
+            };
+            let now_busy = a.tick();
+            if now_busy != busy.replace(now_busy) {
+                if let Some(t) = weak_timer.upgrade() {
+                    t.set_interval(if now_busy { TICK_BUSY } else { TICK_IDLE });
                 }
-            },
-        );
+            }
+        });
         // Keep the timer alive as long as the window.
         std::mem::forget(timer);
         Ok(app)
@@ -290,6 +313,12 @@ impl App {
             a.apply_filter();
         });
         on!(app, b, on_go_music_dir, |a, i: i32| a.go_music_dir(i));
+        on!(app, b, on_set_search, |a, t: SharedString| a.set_search(&t));
+        on!(app, b, on_run_search, |a| {
+            if a.search_due.is_some() {
+                a.start_search();
+            }
+        });
         on!(app, b, on_toggle_show_all, |a| {
             let v = !a.settings.show_all_files;
             a.set_flag("show-all", v);
@@ -360,7 +389,8 @@ impl App {
                 a.add_music_dir(expand(&t));
             }
         });
-        on!(app, s, on_remove_music_dir, |a, i: i32| a.remove_music_dir(i));
+        on!(app, s, on_remove_music_dir, |a, i: i32| a
+            .remove_music_dir(i));
         on!(app, s, on_set_home_dir, |a, i: i32| {
             if let Some(d) = a.settings.music_dirs.get(i.max(0) as usize) {
                 a.settings.music_dir = Some(d.clone());
@@ -466,8 +496,14 @@ impl App {
         on!(app, ui, on_toggle_maximize, |a| {
             let ui = a.ui();
             let m = !ui.window().is_maximized();
+            if m {
+                // The size and place to come back to.
+                a.remember_window();
+            }
             ui.window().set_maximized(m);
             ui.set_window_maximized(m);
+            a.settings.maximized = m;
+            a.mark_dirty();
         });
         on!(app, ui, on_close_window, |a| {
             a.remember_window();
@@ -495,6 +531,18 @@ impl App {
             let weak = ui.as_weak();
             let mut cursor = (0.0f32, 0.0f32);
             ui.window().on_winit_window_event(move |w, e| {
+                if matches!(
+                    e,
+                    WindowEvent::CursorMoved { .. }
+                        | WindowEvent::MouseInput { .. }
+                        | WindowEvent::MouseWheel { .. }
+                        | WindowEvent::KeyboardInput { .. }
+                        | WindowEvent::Touch(_)
+                        | WindowEvent::Resized(_)
+                        | WindowEvent::Focused(_)
+                ) {
+                    crate::note_input();
+                }
                 match e {
                     WindowEvent::CursorMoved { position, .. } => {
                         let s = w.scale_factor();
@@ -592,28 +640,58 @@ impl App {
             .position(|n| n == self.settings.theme.as_str())
             .unwrap_or(0);
         theme.set_index(idx as i32);
-        let w = ui.window();
-        if self.settings.fullscreen {
-            w.set_fullscreen(true);
-        } else {
-            // Once the window exists (before, its preferred size wins).
-            let (width, height, max) = (
-                self.settings.window_width,
-                self.settings.window_height,
-                self.settings.maximized,
-            );
-            let weak = self.ui.clone();
-            slint::Timer::single_shot(Duration::from_millis(1), move || {
-                if let Some(ui) = weak.upgrade() {
-                    ui.window()
-                        .set_size(slint::LogicalSize::new(width as f32, height as f32));
-                    if max {
-                        ui.window().set_maximized(true);
-                        ui.set_window_maximized(true);
+        // The window comes back as it was: its size and place, maximised,
+        // or fullscreen (over its normal size and place, for leaving it).
+        // Once the window exists (before, its preferred size wins).
+        let (width, height, max, fs) = (
+            self.settings.window_width,
+            self.settings.window_height,
+            self.settings.maximized,
+            self.settings.fullscreen,
+        );
+        let place = self.settings.window_x.zip(self.settings.window_y);
+        // Set before the window shows, too: otherwise Slint first sizes it
+        // to its preferred size, and that resize could land after ours.
+        ui.window()
+            .set_size(slint::LogicalSize::new(width as f32, height as f32));
+        let weak = self.ui.clone();
+        slint::Timer::single_shot(Duration::from_millis(1), move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let w = ui.window();
+            w.set_size(slint::LogicalSize::new(width as f32, height as f32));
+            if let Some((x, y)) = place {
+                w.set_position(slint::PhysicalPosition::new(x, y));
+            }
+            if max {
+                w.set_maximized(true);
+                ui.set_window_maximized(true);
+            }
+            if fs {
+                w.set_fullscreen(true);
+            }
+            if max || fs {
+                return;
+            }
+            // On X11 a resize to the preferred size made while the window
+            // was being shown can land after ours: ask again once it has
+            // settled.
+            let weak = ui.as_weak();
+            slint::Timer::single_shot(Duration::from_millis(250), move || {
+                let Some(ui) = weak.upgrade() else { return };
+                let w = ui.window();
+                let now = w.size().to_logical(w.scale_factor());
+                let off = |a: f32, b: u32| (a - b as f32).abs() > 2.0;
+                if !w.is_maximized()
+                    && !w.is_fullscreen()
+                    && (off(now.width, width) || off(now.height, height))
+                {
+                    w.set_size(slint::LogicalSize::new(width as f32, height as f32));
+                    if let Some((x, y)) = place {
+                        w.set_position(slint::PhysicalPosition::new(x, y));
                     }
                 }
             });
-        }
+        });
         ui.set_fullscreen(self.settings.fullscreen);
         ui.set_hover_opens(self.settings.hover_opens_browser);
         ui.global::<Prefs>()
@@ -724,7 +802,9 @@ impl App {
     /// Brings back the playlist and track of the last session, paused
     /// where it was. Tracks whose files are gone are left out.
     fn restore_session(&mut self) {
-        let Some(session) = Session::load() else { return };
+        let Some(session) = Session::load() else {
+            return;
+        };
         let mut tracks = Vec::new();
         let mut current = None;
         for (i, t) in session.tracks.into_iter().enumerate() {
@@ -825,12 +905,19 @@ impl App {
             self.remember_window();
             ui.window().set_fullscreen(true);
         } else {
-            ui.window().set_fullscreen(false);
-            if !self.settings.maximized {
-                ui.window().set_size(slint::LogicalSize::new(
+            let w = ui.window();
+            w.set_fullscreen(false);
+            if self.settings.maximized {
+                w.set_maximized(true);
+                ui.set_window_maximized(true);
+            } else {
+                w.set_size(slint::LogicalSize::new(
                     self.settings.window_width as f32,
                     self.settings.window_height as f32,
                 ));
+                if let Some((x, y)) = self.settings.window_x.zip(self.settings.window_y) {
+                    w.set_position(slint::PhysicalPosition::new(x, y));
+                }
             }
         }
         self.settings.fullscreen = fs;
@@ -848,6 +935,12 @@ impl App {
                 let size = w.size().to_logical(w.scale_factor());
                 self.settings.window_width = size.width.round() as u32;
                 self.settings.window_height = size.height.round() as u32;
+                // Wayland does not tell where windows are (it reads 0, 0).
+                let p = w.position();
+                if !cfg!(target_os = "android") && (p.x != 0 || p.y != 0) {
+                    self.settings.window_x = Some(p.x);
+                    self.settings.window_y = Some(p.y);
+                }
             }
         }
     }
@@ -1061,7 +1154,10 @@ impl App {
         let target = if inside {
             d.clone()
         } else {
-            self.dir_places.get(&d).cloned().unwrap_or_else(|| d.clone())
+            self.dir_places
+                .get(&d)
+                .cloned()
+                .unwrap_or_else(|| d.clone())
         };
         if !self.navigate(&target, true) && target != d {
             self.navigate(&d, true);
@@ -1103,9 +1199,11 @@ impl App {
         self.node = Some(node);
         self.entries = entries;
         self.filter.clear();
+        self.end_search();
         let ui = self.ui();
         let b = ui.global::<Browser>();
         b.set_filter(SharedString::new());
+        b.set_search(SharedString::new());
         b.set_folder_serial(b.get_folder_serial() + 1);
         self.apply_filter();
         // Coming up out of a folder: select the folder we left.
@@ -1123,6 +1221,10 @@ impl App {
     }
 
     fn refresh(&mut self) {
+        if self.in_results {
+            self.start_search();
+            return;
+        }
         if let Some(n) = self.node.clone() {
             let sel = self.ui().global::<Browser>().get_selected();
             let filter = self.filter.clone();
@@ -1173,17 +1275,27 @@ impl App {
     }
 
     fn apply_filter(&mut self) {
+        self.relist(false);
+    }
+
+    /// Lists the entries that pass the filter; `keep_selection` while
+    /// search results come in.
+    fn relist(&mut self, keep_selection: bool) {
         self.shown = (0..self.entries.len())
             .filter(|&i| vfs::matches_filter(&self.entries[i].name, &self.filter))
             .collect();
         self.rebuild_files();
         let ui = self.ui();
         let b = ui.global::<Browser>();
-        b.set_selected(if self.filter.is_empty() || self.shown.is_empty() {
-            -1
+        if keep_selection {
+            b.set_selected(b.get_selected().min(self.shown.len() as i32 - 1));
         } else {
-            0
-        });
+            b.set_selected(if self.filter.is_empty() || self.shown.is_empty() {
+                -1
+            } else {
+                0
+            });
+        }
         if let Some(n) = &self.node {
             let vp = n.vpath();
             b.set_path(ss(tilde(&vp)));
@@ -1220,7 +1332,24 @@ impl App {
             parts.push(plural(tracks, "track", "tracks"));
         }
         let mut status = parts.join(" · ");
-        if !self.filter.is_empty() {
+        if self.in_results {
+            let shown = self.shown.len();
+            status = if self.searching {
+                format!("Searching… {status}")
+            } else if self.entries.is_empty() {
+                format!(
+                    "Nothing below this folder matches \"{}\"",
+                    self.search.trim()
+                )
+            } else if !self.filter.is_empty() {
+                format!("{status} found, {shown} matching the filter")
+            } else {
+                format!("{status} found below this folder")
+            };
+            if self.entries.len() >= SEARCH_LIMIT {
+                status = format!("{status} (the first {SEARCH_LIMIT})");
+            }
+        } else if !self.filter.is_empty() {
             status = format!(
                 "{status} matching \"{}\" (of {})",
                 self.filter,
@@ -1228,6 +1357,104 @@ impl App {
             );
         }
         self.set_status(&status, false);
+    }
+
+    // ------------------------------------------------------------ search
+
+    fn set_search(&mut self, text: &str) {
+        self.search = text.to_string();
+        if text.trim().is_empty() {
+            let was = self.in_results;
+            self.end_search();
+            if was {
+                // Back to the folder, keeping the filter.
+                if let Some(n) = &self.node {
+                    if let Ok(e) =
+                        vfs::list(n, self.settings.show_all_files, &self.decode_options())
+                    {
+                        self.entries = e;
+                    }
+                }
+                self.apply_filter();
+            }
+        } else {
+            self.search_due = Some(Instant::now() + Duration::from_millis(300));
+        }
+    }
+
+    /// Stops any search; the listing is left as it is.
+    fn end_search(&mut self) {
+        self.search_gen.fetch_add(1, Ordering::SeqCst);
+        self.search_due = None;
+        self.searching = false;
+        self.in_results = false;
+        let ui = self.ui();
+        let b = ui.global::<Browser>();
+        b.set_searching(false);
+        b.set_in_results(false);
+    }
+
+    fn start_search(&mut self) {
+        self.search_due = None;
+        let Some(node) = self.node.clone() else {
+            return;
+        };
+        let query = self.search.trim().to_string();
+        if query.is_empty() {
+            return;
+        }
+        let gen = self.search_gen.fetch_add(1, Ordering::SeqCst) + 1;
+        self.in_results = true;
+        self.searching = true;
+        self.entries.clear();
+        let ui = self.ui();
+        let b = ui.global::<Browser>();
+        b.set_in_results(true);
+        b.set_searching(true);
+        b.set_folder_serial(b.get_folder_serial() + 1);
+        self.apply_filter();
+        let (tx, current, show_all) = (
+            self.search_tx.clone(),
+            self.search_gen.clone(),
+            self.settings.show_all_files,
+        );
+        std::thread::spawn(move || {
+            let mut count = 0;
+            vfs::search(&node, &query, show_all, &mut |hits| {
+                if current.load(Ordering::SeqCst) != gen {
+                    return false;
+                }
+                count += hits.len();
+                let _ = tx.send((gen, Some(hits)));
+                count < SEARCH_LIMIT
+            });
+            let _ = tx.send((gen, None));
+        });
+    }
+
+    /// Takes in what the search found since the last tick.
+    fn take_search_results(&mut self) {
+        let gen = self.search_gen.load(Ordering::SeqCst);
+        let mut changed = false;
+        while let Ok((g, hits)) = self.search_rx.try_recv() {
+            if g != gen || !self.in_results {
+                continue;
+            }
+            changed = true;
+            match hits {
+                Some(h) => {
+                    let room = SEARCH_LIMIT.saturating_sub(self.entries.len());
+                    self.entries.extend(h.into_iter().take(room));
+                }
+                None => {
+                    self.searching = false;
+                    self.ui().global::<Browser>().set_searching(false);
+                }
+            }
+        }
+        if changed {
+            self.relist(true);
+        }
     }
 
     fn current_track(&self) -> Option<&TrackRef> {
@@ -1239,6 +1466,7 @@ impl App {
 
     fn rebuild_files(&mut self) {
         let playing = self.current_track().cloned();
+        let here = self.node.as_ref().map(Node::vpath);
         let items: Vec<FileItem> = self
             .shown
             .iter()
@@ -1258,6 +1486,8 @@ impl App {
                     EntryKind::Other => 6,
                 };
                 let detail = match e.kind {
+                    // Search results: the folder each was found in.
+                    _ if self.in_results => found_in(here.as_deref(), &e.vpath),
                     EntryKind::Track => e.length_ms.map(format_ms).unwrap_or_default(),
                     EntryKind::Image | EntryKind::Other => human_size(e.size),
                     _ => String::new(),
@@ -1316,8 +1546,29 @@ impl App {
     }
 
     /// Plays entry `i` of the listing, with every other playable entry of
-    /// the listing (filter or not) as the playlist, in listed order.
+    /// the listing (filter or not) as the playlist, in listed order. A
+    /// search result plays with the rest of its own folder.
     fn play_from_listing(&mut self, i: usize) {
+        if self.in_results {
+            let e = &self.entries[i];
+            let folder = e
+                .vpath
+                .parent()
+                .and_then(|p| vfs::resolve(p).ok())
+                .and_then(|n| vfs::list(&n, false, &self.decode_options()).ok());
+            if let Some(list) = folder {
+                let tracks: Vec<TrackRef> = list
+                    .iter()
+                    .filter(|x| x.kind.is_playable())
+                    .filter_map(|x| x.track.clone())
+                    .collect();
+                if let Some(current) = tracks.iter().position(|t| Some(t) == e.track.as_ref()) {
+                    self.set_queue(tracks, Some(current));
+                    self.play_index(current);
+                    return;
+                }
+            }
+        }
         let mut tracks = Vec::new();
         let mut current = 0;
         for (j, e) in self.entries.iter().enumerate() {
@@ -1692,7 +1943,11 @@ impl App {
             generation: self.generation,
             start_ms,
         });
-        self.state = if paused { State::Paused } else { State::Playing };
+        self.state = if paused {
+            State::Paused
+        } else {
+            State::Playing
+        };
         self.output.shared.lock().unwrap().paused = paused;
         if let Some(o) = old {
             if o < self.queue.len() {
@@ -1986,7 +2241,9 @@ impl App {
 
     // --------------------------------------------------------------- clock
 
-    fn tick(&mut self) {
+    /// Moves everything along; true while something on screen moves (the
+    /// clock wants to tick quickly).
+    fn tick(&mut self) -> bool {
         let now = Instant::now();
         let dt = now.duration_since(self.last_tick).as_secs_f32().min(0.1);
         self.last_tick = now;
@@ -2008,6 +2265,11 @@ impl App {
         while let Ok(f) = self.font_rx.try_recv() {
             self.font_loaded(f);
         }
+
+        if self.search_due.is_some_and(|t| now >= t) {
+            self.start_search();
+        }
+        self.take_search_results();
 
         while let Ok(r) = self.media.requests.try_recv() {
             self.media_request(r);
@@ -2114,7 +2376,7 @@ impl App {
         };
         if ended {
             self.next(true);
-            return;
+            return true;
         }
         let ui = self.ui();
         let n = ui.global::<Now>();
@@ -2149,6 +2411,9 @@ impl App {
                 0.0
             };
             *level = v.max(*level * decay);
+            if *level < 0.001 {
+                *level = 0.0;
+            }
         }
         n.set_level_l(self.levels[0]);
         n.set_level_r(self.levels[1]);
@@ -2174,8 +2439,33 @@ impl App {
         if session_due {
             self.save_session();
         }
+        self.state == State::Playing
+            || self.searching
+            || self.search_due.is_some()
+            || !self.spectrum.is_still()
+            || self.levels.iter().any(|&l| l > 0.0)
     }
 }
+
+/// At most this many search results are listed.
+const SEARCH_LIMIT: usize = 5000;
+
+/// Where a search result is, below the folder searched ("." for right
+/// there).
+fn found_in(here: Option<&Path>, vpath: &Path) -> String {
+    let parent = vpath.parent().unwrap_or(vpath);
+    match here.and_then(|h| parent.strip_prefix(h).ok()) {
+        Some(p) if p.as_os_str().is_empty() => String::new(),
+        Some(p) => p.to_string_lossy().into_owned(),
+        None => tilde(parent),
+    }
+}
+
+/// How often the clock ticks while something moves (8 ms keeps up with
+/// 120 Hz screens; at 16 ms the clock and spectrum moved only on every
+/// other frame), and while nothing does.
+const TICK_BUSY: Duration = Duration::from_millis(8);
+const TICK_IDLE: Duration = Duration::from_millis(50);
 
 thread_local! {
     /// Where the pointer is, in logical pixels.

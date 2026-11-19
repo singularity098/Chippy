@@ -184,6 +184,13 @@ typedef struct mips_cpu_context_s
     uint32 filesize[MAX_FILE_SLOTS], filepos[MAX_FILE_SLOTS];
     int intr_susp;
 
+    // PSF2: the IOP heap's next free address, its value once psf2.irx is
+    // loaded (for restarts), and the file systems (the file's, its library's)
+    uint32 psf2_loadaddr, psf2_initial_loadaddr;
+    uint8 *psf2_fs[2];
+    uint32 psf2_fssize[2];
+    int psf2_num_fs;
+
     uint64 sys_time;
     int timerexp;
 

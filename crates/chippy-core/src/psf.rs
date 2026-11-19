@@ -158,6 +158,14 @@ pub fn timing(p: &Psf, opts: &DecodeOptions) -> (u64, u64) {
     }
 }
 
+/// The gain a rip's `volume` tag asks for (1 when it has none).
+pub fn volume(p: &Psf) -> f32 {
+    p.tag("volume")
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .map_or(1.0, |v| v.min(16.0))
+}
+
 /// The tags of a PSF-family file as track metadata.
 pub fn meta(p: &Psf, opts: &DecodeOptions, system: &str, format: &str) -> TrackMeta {
     let (length, fade) = timing(p, opts);

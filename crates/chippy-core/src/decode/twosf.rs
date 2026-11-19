@@ -125,7 +125,8 @@ pub fn open(loc: &Location, opts: &DecodeOptions) -> Result<Timed<TwosfEngine>> 
     let img = image(loc)?;
     let (length, fade) = psf::timing(&img.tags, opts);
     let s = TwosfEngine::start(&img)?;
-    Ok(Timed::new(TwosfEngine { s, img }, length, fade))
+    let gain = psf::volume(&img.tags);
+    Ok(Timed::new(TwosfEngine { s, img }, length, fade).with_gain(gain))
 }
 
 pub fn meta(loc: &Location, opts: &DecodeOptions) -> Result<TrackMeta> {

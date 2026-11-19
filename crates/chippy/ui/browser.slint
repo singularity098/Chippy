@@ -25,6 +25,11 @@ export global Browser {
     in property <bool> single-tap;
     in-out property <int> selected: -1;
     in-out property <string> filter;
+    // The search below the folder: its words, whether it is still looking,
+    // and whether the list shows its results (not the folder).
+    in-out property <string> search;
+    in property <bool> searching;
+    in property <bool> in-results;
     // Bumped by Rust when the folder changes, to scroll back to the top.
     in property <int> folder-serial;
     callback activate(int);
@@ -36,6 +41,8 @@ export global Browser {
     callback home;
     callback go(string);
     callback set-filter(string);
+    callback set-search(string);
+    callback run-search;
     callback toggle-show-all;
     // The music folders (set in Settings): a tap goes back to where the
     // browser was in that folder, or to its top when already in it.
@@ -113,6 +120,8 @@ component FileRow inherits Rectangle {
             }
             Rectangle { horizontal-stretch: 1; min-width: 0; }
         }
+        // (Search results show the folder they are in here, which can be
+        // long: it gives way to the name.)
         if root.item.detail != "": Text {
             text: root.item.detail;
             color: Theme.text-faint;
@@ -120,6 +129,8 @@ component FileRow inherits Rectangle {
             font-weight: Theme.regular;
             vertical-alignment: center;
             horizontal-stretch: 0;
+            overflow: elide;
+            max-width: min(self.preferred-width, root.width * 0.45);
         }
     }
     touch := TouchArea {
@@ -170,6 +181,7 @@ export component BrowserPanel inherits Rectangle {
 
     public function focus-list() { keys.focus(); }
     public function focus-filter() { filter-field.focus-input(); }
+    public function focus-search() { search-field.focus-input(); search-field.select-all(); }
 
     function move(d: int) {
         if Browser.items.length == 0 { return; }
@@ -194,6 +206,7 @@ export component BrowserPanel inherits Rectangle {
             if e.modifiers.alt && e.text == Key.LeftArrow { Browser.back(); return accept; }
             if e.modifiers.alt && e.text == Key.RightArrow { Browser.forward(); return accept; }
             if e.text == Key.F5 { Browser.refresh(); return accept; }
+            if e.modifiers.control && (e.text == "f" || e.text == "F") { root.focus-search(); return accept; }
             reject
         }
 
@@ -329,7 +342,7 @@ export component BrowserPanel inherits Rectangle {
                 }
             }
             filter-field := TextField {
-                icon: Icons.search-line;
+                icon: Icons.filter-line;
                 placeholder: "Filter";
                 text <=> Browser.filter;
                 edited(t) => { root.interacted(); Browser.set-filter(t); }
@@ -337,6 +350,25 @@ export component BrowserPanel inherits Rectangle {
                     if self.text != "" { self.text = ""; Browser.set-filter(""); } else { keys.focus(); }
                 }
                 accepted => {
+                    if Browser.items.length > 0 {
+                        if Browser.selected < 0 { Browser.selected = 0; }
+                        keys.focus();
+                    }
+                }
+                down => { if Browser.selected < 0 { Browser.selected = 0; } keys.focus(); }
+            }
+            // Looks through every folder below this one (and the archives
+            // there) as you type; the filter then narrows what it found.
+            search-field := TextField {
+                icon: Icons.search-line;
+                placeholder: "Search below this folder (Ctrl+F)";
+                text <=> Browser.search;
+                edited(t) => { root.interacted(); Browser.set-search(t); }
+                escape => {
+                    if self.text != "" { self.text = ""; Browser.set-search(""); } else { keys.focus(); }
+                }
+                accepted => {
+                    Browser.run-search();
                     if Browser.items.length > 0 {
                         if Browser.selected < 0 { Browser.selected = 0; }
                         keys.focus();
@@ -366,7 +398,8 @@ export component BrowserPanel inherits Rectangle {
                     }
                 }
                 if Browser.items.length == 0: Text {
-                    text: Browser.filter != "" ? "Nothing matches \"" + Browser.filter + "\"" : Browser.status-error ? "" : "Nothing to play here";
+                    text: Browser.in-results ? (Browser.searching ? "Searching…" : "Nothing found below this folder")
+                        : Browser.filter != "" ? "Nothing matches \"" + Browser.filter + "\"" : Browser.status-error ? "" : "Nothing to play here";
                     color: Theme.text-faint;
                     horizontal-alignment: center;
                     vertical-alignment: center;

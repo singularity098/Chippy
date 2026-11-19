@@ -101,6 +101,8 @@ component ResizeHandle inherits TouchArea {
 
 component TopBar inherits Rectangle {
     in property <bool> maximized;
+    // Shown over a fullscreen window: no moving, minimising or maximising.
+    in property <bool> fullscreen;
     in property <string> subtitle;
     callback start-drag;
     callback toggle-maximize;
@@ -177,9 +179,9 @@ component TopBar inherits Rectangle {
             overflow: elide;
         }
         IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: Icons.gear-line; weight: 1.6; tip: "Settings"; clicked => { root.open-settings(); } }
-        if !Theme.mobile: IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: Icons.fullscreen-line; tip: "Fullscreen (F11)"; clicked => { root.toggle-fullscreen(); } }
-        if !Theme.mobile: IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: Icons.minimize-line; tip: "Minimise"; clicked => { root.minimize(); } }
-        if !Theme.mobile: IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: root.maximized ? Icons.restore-line : Icons.maximize-line; weight: 1.6; tip: root.maximized ? "Restore" : "Maximise"; clicked => { root.toggle-maximize(); } }
+        if !Theme.mobile: IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: root.fullscreen ? Icons.fullscreen-exit-line : Icons.fullscreen-line; tip: root.fullscreen ? "Leave fullscreen (F11)" : "Fullscreen (F11)"; clicked => { root.toggle-fullscreen(); } }
+        if !Theme.mobile && !root.fullscreen: IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: Icons.minimize-line; tip: "Minimise"; clicked => { root.minimize(); } }
+        if !Theme.mobile && !root.fullscreen: IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: root.maximized ? Icons.restore-line : Icons.maximize-line; weight: 1.6; tip: root.maximized ? "Restore" : "Maximise"; clicked => { root.toggle-maximize(); } }
         if !Theme.mobile: IconButton { y: (parent.height - self.height) / 2; size: 34px; icon-size: 18px; icon: Icons.close; tip: "Quit"; clicked => { root.close-window(); } }
     }
 }
@@ -240,6 +242,13 @@ export component MainWindow inherits Window {
     property <bool> right-dragging;
     property <bool> left-by-hover;
     property <bool> right-by-hover;
+    // The title bar over a fullscreen window: 0 hidden, 1 shown. Brought in
+    // by resting the mouse on the top edge; goes again when the mouse
+    // leaves it, unless it was clicked (then a click elsewhere hides it).
+    property <float> top-pos: 0;
+    property <bool> top-by-hover;
+    property <length> top-bar-height: 44px;
+    property <bool> top-pops: root.fullscreen && !Theme.mobile;
     property <length> left-width: min(520px, root.width * 0.9);
     property <length> right-width: min(580px, root.width * 0.92);
 
@@ -251,6 +260,8 @@ export component MainWindow inherits Window {
     public function open-right() { root.right-pos = 1; root.left-pos = 0; root.left-by-hover = false; root.right-by-hover = false; }
     public function close-right() { root.right-pos = 0; root.right-by-hover = false; keys.focus(); }
     public function focus-main() { keys.focus(); }
+    public function show-top() { root.top-pos = 1; root.top-by-hover = false; }
+    public function hide-top() { root.top-pos = 0; root.top-by-hover = false; }
     public function open-queue() { root.queue-open = true; root.close-left(); root.close-right(); }
 
     // Android's back button: closes what is on top, and says whether there
@@ -269,15 +280,20 @@ export component MainWindow inherits Window {
 
     // Every pointer move and press, seen before any element (from Rust).
     public function pointer-moved(x: length, y: length) {
+        if root.top-by-hover && root.top-pos > 0 && y > root.top-bar-height + 6px { root.hide-top(); }
         if root.left-by-hover && root.left-pos > 0 && !root.left-dragging && !root.over-left(x, y) { root.close-left(); }
         if root.right-by-hover && root.right-pos > 0 && !root.right-dragging && !root.over-right(x, y) { root.close-right(); }
     }
     public function pointer-pressed(x: length, y: length) {
+        if root.top-pos > 0 {
+            if y < root.top-bar-height { root.top-by-hover = false; } else if !root.top-by-hover { root.hide-top(); }
+        }
         if root.left-by-hover && root.over-left(x, y) { root.left-by-hover = false; }
         if root.right-by-hover && root.over-right(x, y) { root.right-by-hover = false; }
     }
 
     changed left-pos => { Tips.hide(); }
+    changed top-pops => { root.hide-top(); }
     changed right-pos => { Tips.hide(); }
 
     forward-focus: keys;
@@ -305,6 +321,7 @@ export component MainWindow inherits Window {
             if e.text == "b" || e.text == Key.Tab { root.open-left(); return accept; }
             if e.text == "," { root.open-right(); return accept; }
             if e.modifiers.control && (e.text == "o" || e.text == "O") { Playlist.open-file(); return accept; }
+            if e.modifiers.control && (e.text == "f" || e.text == "F") { root.open-left(); browser-panel.focus-search(); return accept; }
             reject
         }
     }
@@ -491,6 +508,37 @@ export component MainWindow inherits Window {
                 root.right-by-hover = true;
             }
         }
+    }
+
+    // ------------------------------------- the title bar over fullscreen
+    if root.top-pops && root.top-pos == 0: TouchArea {
+        x: root.strip-width;
+        y: 0;
+        width: root.width - 2 * root.strip-width;
+        height: 6px;
+        // A moment's rest, so the pointer passing the edge does not open it.
+        Timer {
+            interval: 60ms;
+            running: parent.has-hover && !parent.pressed;
+            triggered => {
+                root.show-top();
+                root.top-by-hover = true;
+            }
+        }
+        clicked => { root.show-top(); }
+    }
+    if root.top-pops: TopBar {
+        y: (root.top-pos - 1) * root.top-bar-height;
+        height: root.top-bar-height;
+        visible: root.top-pos > 0 || self.y > -root.top-bar-height;
+        animate y { duration: Theme.slide; easing: ease-out; }
+        background: Theme.bg.with-alpha(0.92);
+        fullscreen: true;
+        subtitle: root.subtitle;
+        toggle-fullscreen => { root.toggle-fullscreen(); }
+        close-window => { root.close-window(); }
+        open-settings => { root.hide-top(); root.open-right(); }
+        open-browser => { root.hide-top(); root.open-left(); }
     }
 
     // ---------------------------------------------------------- the toast

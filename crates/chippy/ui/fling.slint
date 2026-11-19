@@ -69,6 +69,8 @@ export component Fling inherits SwipeGestureHandler {
     property <float> carry;
     property <duration> carry-t;
     property <duration> fling-t;
+    // When the finger went down (pressed-position changes with each press).
+    property <duration> press-t;
     // Changes on every frame while the list coasts: reading the animation
     // clock keeps frames coming (at the display's rate on Android too)
     // until it stops.
@@ -142,8 +144,15 @@ export component Fling inherits SwipeGestureHandler {
             let now = animation-tick();
             root.last-y = self.current-position.y;
             root.moved-t = now;
-            root.ya = self.current-position.y;
-            root.ta = now;
+            // The speed is measured from where the finger went down: a fast
+            // flick is often recognised as a swipe only by its last move,
+            // and measured from there it hardly moved at all.
+            // (When the press is not known to be recent, the swipe threshold
+            // is taken as crossed in a frame; a slower drag replaces this
+            // sample within 50 ms.)
+            let pressed-recently = now - root.press-t < root.window * 2 && now >= root.press-t;
+            root.ya = p;
+            root.ta = pressed-recently ? root.press-t : now - 16ms;
             root.yb = self.current-position.y;
             root.tb = now;
             return;
@@ -168,6 +177,10 @@ export component Fling inherits SwipeGestureHandler {
             root.fling-t = animation-tick();
             root.flinging = true;
         }
+    }
+
+    changed pressed-position => {
+        root.press-t = animation-tick();
     }
 
     cancelled => {

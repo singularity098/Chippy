@@ -29,7 +29,7 @@ files as if they were folders.
 | [libxmp](https://github.com/libxmp/libxmp) | Tracker modules: MOD, XM, S3M, IT, MED, MTM, 669, OKT, STM, FAR, ULT, PTM, DBM, AMF, MDL, PSM, GDM, IMF, UMX... |
 | [RustySynth](https://github.com/sinshu/rustysynth) | MIDI (MID, MIDI, KAR, RMI, SMF) through SF2 SoundFonts |
 | [vgmstream](https://github.com/vgmstream/vgmstream) | Hundreds of game formats: ADX, HCA, BRSTM, BCSTM, XWB, FSB, AT3, DSP, GENH/TXTH... including multi-subsong files |
-| [Symphonia](https://github.com/pdeljanov/Symphonia) | MP3, FLAC, WAV, OGG Vorbis, M4A/AAC, ALAC, AIFF, CAF, MKV/WebM audio |
+| [Symphonia](https://github.com/pdeljanov/Symphonia) | MP3, FLAC, WAV, OGG Vorbis, M4A/AAC, ALAC, AIFF, CAF, MKV/WebM audio (Opus in them through libopus) |
 | vgmstream's FFmpeg | Opus, WMA, AC-3 |
 
 All the PSF-family formats follow `_lib` chains to their libraries, beside
@@ -45,8 +45,12 @@ info, PSF tags, vgmstream stream names).
   tap the edge, press `B`, or click the ☰ button. It has back, forward, up,
   refresh and home (your music folder), a path bar whose levels you click to
   jump to (the home folder shows as `~`; click beside them to type a path),
-  and a filter box
-  that shows only the entries containing what you type. Extensions are
+  a filter box
+  that shows only the entries containing what you type, and a search box
+  (`Ctrl+F`) that looks through every folder below this one, and the
+  archives there, listing what it finds with the folder each is in (the
+  filter then narrows the results; a track found plays with its folder).
+  Extensions are
   drawn dimmer than names. By default only folders, archives and music are
   listed; the eye button shows every file.
 * **Double-click a track** and the whole folder's music becomes the
@@ -98,11 +102,15 @@ info, PSF tags, vgmstream stream names).
   `CHIPPY_WAYLAND=1`, runs it natively; it then installs a desktop entry
   and icon in `~/.local/share` if none is installed, so the taskbar shows
   Chippy's icon. Double-click the title bar to maximise or restore.
+* **The window** opens as it was left: its size and place (where the window
+  system says; Wayland does not), maximised, or fullscreen. In fullscreen
+  the title bar comes in when the mouse rests on the top edge, as the
+  sidebars do.
 
 Keys: `Space` play/pause, `←`/`→` seek 5 s (`Shift` 30 s), `↑`/`↓` volume,
 `N`/`P` next/previous, `S` shuffle, `R` repeat, `M` mute, `[`/`]` SoundFont,
 `B` browser, `,`
-settings, `Ctrl+O` open a file, `F11` fullscreen, `Esc` closes panels. In the browser: arrows,
+settings, `Ctrl+O` open a file, `Ctrl+F` search, `F11` fullscreen, `Esc` closes panels. In the browser: arrows,
 `Enter`, `Backspace` (up), `Alt+←/→`, `F5`.
 
 Command line:
@@ -156,7 +164,7 @@ git clone --recursive https://github.com/singularity098/Chippy
 
 You need Rust (1.88+), CMake, pkg-config, a C/C++ compiler, and on Linux
 the ALSA, xkbcommon and fontconfig headers, plus mpg123, libvorbis and
-FFmpeg for vgmstream and libopus for exporting Opus (without it, the
+FFmpeg for vgmstream and libopus for Opus in WebM and exporting Opus (without it, the
 bundled Opus source is built):
 
 ```bash

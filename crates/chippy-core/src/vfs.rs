@@ -302,16 +302,10 @@ pub fn resolve(vpath: &Path) -> Result<Node> {
 /// archives and music are listed (and no hidden files).
 pub fn list(node: &Node, show_all: bool, opts: &DecodeOptions) -> Result<Vec<Entry>> {
     let mut out = match node {
-        Node::Dir(dir) => list_dir(dir, show_all)?,
-        Node::ArchiveDir { archive, dir } => list_archive(archive, dir, show_all)?,
         Node::Tracks(loc) => return list_tracks(loc, opts),
+        _ => list_unsorted(node, show_all)?,
     };
-    out.sort_by(|a, b| {
-        b.kind
-            .is_container()
-            .cmp(&a.kind.is_container())
-            .then_with(|| natural_cmp(&a.name, &b.name))
-    });
+    sort_entries(&mut out);
     Ok(out)
 }
 
@@ -507,6 +501,78 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
 
 /// Whether `name` passes the browser's filter: every word of the filter
 /// appears in it, ignoring case.
+/// Looks for folders and files matching `query` (as the filter matches)
+/// anywhere below `root`: in its folders, and in the archives there. Hands
+/// each folder's matches to `found` as it goes, nearest folders first;
+/// stops when `found` returns false. Multi-track files are not opened.
+pub fn search(root: &Node, query: &str, show_all: bool, found: &mut dyn FnMut(Vec<Entry>) -> bool) {
+    use std::collections::{HashSet, VecDeque};
+    if query.trim().is_empty() {
+        return;
+    }
+    let mut queue = VecDeque::from([root.clone()]);
+    // Symlinked folders can loop.
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    while let Some(node) = queue.pop_front() {
+        if let Node::Dir(d) = &node {
+            if !seen.insert(std::fs::canonicalize(d).unwrap_or_else(|_| d.clone())) {
+                continue;
+            }
+        }
+        let Ok(entries) = list_unsorted(&node, show_all) else {
+            continue;
+        };
+        let mut hits = Vec::new();
+        for e in entries {
+            let below = match (&node, e.kind) {
+                (Node::Dir(_), EntryKind::Dir) => Some(Node::Dir(e.vpath.clone())),
+                (Node::Dir(_), EntryKind::Archive) => Some(Node::ArchiveDir {
+                    archive: e.vpath.clone(),
+                    dir: String::new(),
+                }),
+                (Node::ArchiveDir { archive, .. }, EntryKind::Dir) => Some(Node::ArchiveDir {
+                    archive: archive.clone(),
+                    dir: e
+                        .vpath
+                        .strip_prefix(archive)
+                        .map(|p| p.to_string_lossy().replace('\\', "/"))
+                        .unwrap_or_default(),
+                }),
+                _ => None,
+            };
+            if let Some(n) = below {
+                queue.push_back(n);
+            }
+            if matches_filter(&e.name, query) {
+                hits.push(e);
+            }
+        }
+        if !hits.is_empty() {
+            sort_entries(&mut hits);
+            if !found(hits) {
+                return;
+            }
+        }
+    }
+}
+
+fn list_unsorted(node: &Node, show_all: bool) -> Result<Vec<Entry>> {
+    match node {
+        Node::Dir(dir) => list_dir(dir, show_all),
+        Node::ArchiveDir { archive, dir } => list_archive(archive, dir, show_all),
+        Node::Tracks(_) => Ok(Vec::new()),
+    }
+}
+
+fn sort_entries(out: &mut [Entry]) {
+    out.sort_by(|a, b| {
+        b.kind
+            .is_container()
+            .cmp(&a.kind.is_container())
+            .then_with(|| natural_cmp(&a.name, &b.name))
+    });
+}
+
 pub fn matches_filter(name: &str, filter: &str) -> bool {
     let name = name.to_lowercase();
     filter
@@ -518,6 +584,38 @@ pub fn matches_filter(name: &str, filter: &str) -> bool {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn searches_below() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::create_dir_all(d.join("a/Mega Man/deep")).unwrap();
+        std::fs::write(d.join("a/Mega Man/deep/Wily Stage.spc"), b"x").unwrap();
+        std::fs::write(d.join("a/other.spc"), b"x").unwrap();
+        std::fs::write(d.join("mega.txt"), b"x").unwrap();
+        let mut z = zip::ZipWriter::new(std::fs::File::create(d.join("pack.zip")).unwrap());
+        z.start_file(
+            "sub/mega drive.vgm",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        z.write_all(b"x").unwrap();
+        z.finish().unwrap();
+        let mut names = Vec::new();
+        search(&Node::Dir(d.to_path_buf()), "MEGA", false, &mut |hits| {
+            names.extend(hits.into_iter().map(|e| e.name));
+            true
+        });
+        // The text file is hidden unless every file is shown.
+        assert_eq!(names, ["Mega Man", "mega drive.vgm"]);
+        let mut n = 0;
+        search(&Node::Dir(d.to_path_buf()), "stage", false, &mut |hits| {
+            n += hits.len();
+            assert!(hits[0].vpath.ends_with("a/Mega Man/deep/Wily Stage.spc"));
+            true
+        });
+        assert_eq!(n, 1);
+    }
 
     #[test]
     fn natural_order() {

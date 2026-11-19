@@ -9,11 +9,7 @@
   <rect x="8" y="8" width="240" height="240" rx="56" fill="#15151a"/>
   <g stroke="url(#p)" stroke-width="10" stroke-linecap="round" fill="none">
     <rect x="66" y="66" width="124" height="124" rx="20"/>
-    <path d="M96 40v26M128 40v26M160 40v26M96 190v26M128 190v26M160 190v26M40 96h26M40 128h26M40 160h26M190 96h26M190 128h26M190 160h26"/>
+    <path d="M97 40v26M128 40v26M159 40v26M97 190v26M128 190v26M159 190v26M40 97h26M40 128h26M40 159h26M190 97h26M190 128h26M190 159h26"/>
   </g>
-  <g fill="url(#p)">
-    <path d="M114 150V100l40-8v46" stroke="url(#p)" stroke-width="8" stroke-linejoin="round" fill="none"/>
-    <ellipse cx="105" cy="151" rx="12" ry="10"/>
-    <ellipse cx="145" cy="139" rx="12" ry="10"/>
-  </g>
+  <path d="M84 144H100V112H124V144H148V112H172" stroke="url(#p)" stroke-width="9" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

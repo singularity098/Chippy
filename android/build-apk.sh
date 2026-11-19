@@ -50,5 +50,6 @@ ls -l "$LIBS"
 
 cd "$HERE"
 TASK="assemble$(tr '[:lower:]' '[:upper:]' <<< "${TYPE:0:1}")${TYPE:1}"
-"${GRADLE:-gradle}" --no-daemon "$TASK"
+# Once more if the first try fails: Maven repositories have bad moments.
+"${GRADLE:-gradle}" --no-daemon "$TASK" || "${GRADLE:-gradle}" --no-daemon "$TASK"
 ls -l "app/build/outputs/apk/$TYPE"

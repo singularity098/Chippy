@@ -1,5 +1,6 @@
 // The playlist: a table whose columns can be resized (drag a header's
 // edge) and shown or hidden (right-click the header).
+import { Fling } from "fling.slint";
 import { Theme } from "theme.slint";
 import { IconButton, BigButton, Tip, MenuItem } from "widgets.slint";
 import { Icon, Icons } from "icons.slint";
@@ -247,17 +248,19 @@ export component PlaylistPanel inherits Rectangle {
             }
             Rectangle {
                 vertical-stretch: 1;
-                list := ListView {
-                    // Touch screens scroll by dragging (the desktop style turns it off).
-                    mouse-drag-pan-enabled: Theme.mobile;
-                    for row[i] in Playlist.rows: Row {
-                        data: row;
-                        index: i;
-                        menu(x, y) => {
-                            keys.focus();
-                            root.menu-x = self.absolute-position.x - root.absolute-position.x + x;
-                            root.menu-y = self.absolute-position.y - root.absolute-position.y + y;
-                            row-menu.show();
+                Fling {
+                    offset <=> list.viewport-y;
+                    range: list.viewport-height - list.visible-height;
+                    list := ListView {
+                        for row[i] in Playlist.rows: Row {
+                            data: row;
+                            index: i;
+                            menu(x, y) => {
+                                keys.focus();
+                                root.menu-x = self.absolute-position.x - root.absolute-position.x + x;
+                                root.menu-y = self.absolute-position.y - root.absolute-position.y + y;
+                                row-menu.show();
+                            }
                         }
                     }
                 }

@@ -1,4 +1,5 @@
 // The right sidebar: every setting. Changes apply at once and are saved.
+import { Fling } from "fling.slint";
 import { Theme } from "theme.slint";
 import { BigButton, Toggle, Chip, SectionTitle, SettingRow, Stepper, IconButton, TextField, MenuItem } from "widgets.slint";
 import { Icon, Icons } from "icons.slint";
@@ -109,244 +110,246 @@ export component SettingsPanel inherits Rectangle {
                 horizontal-stretch: 1;
             }
         }
-        ScrollView {
-            // Touch screens scroll by dragging (the desktop style turns it off).
-            mouse-drag-pan-enabled: Theme.mobile;
+        Fling {
             vertical-stretch: 1;
-            viewport-height: col.preferred-height;
-            viewport-width: self.visible-width;
-            col := VerticalLayout {
-                width: parent.visible-width;
-                spacing: 10px;
-                padding-bottom: 20px;
-                padding-right: 4px;
+            offset <=> scroll.viewport-y;
+            range: scroll.viewport-height - scroll.visible-height;
+            scroll := ScrollView {
+                viewport-height: col.preferred-height;
+                viewport-width: self.visible-width;
+                col := VerticalLayout {
+                    width: parent.visible-width;
+                    spacing: 10px;
+                    padding-bottom: 20px;
+                    padding-right: 4px;
 
-                SectionTitle { text: "MUSIC FOLDER"; }
-                Card {
-                    Text {
-                        text: "Where the file browser starts (its home button).";
-                        color: Theme.text-dim;
-                        font-size: Theme.font-small;
-                        wrap: word-wrap;
-                    }
-                    Rectangle { height: 6px; }
-                    dir-field := TextField {
-                        placeholder: "/path/to/music";
-                        clearable: false;
-                        accepted(t) => { root.interacted(); Prefs.set-music-dir(t); }
-                    }
-                    Rectangle { height: 6px; }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        alignment: start;
-                        BigButton {
-                            text: "Choose…";
-                            icon-line: Icons.folder-line;
-                            tip: "Pick the folder in the system's folder picker";
-                            clicked => { root.interacted(); Prefs.choose-dir("music"); }
+                    SectionTitle { text: "MUSIC FOLDER"; }
+                    Card {
+                        Text {
+                            text: "Where the file browser starts (its home button).";
+                            color: Theme.text-dim;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
                         }
-                        BigButton {
-                            text: Theme.mobile ? "Browser's folder" : "Use the browser's folder";
-                            tip: Prefs.browser-dir;
-                            clicked => { root.interacted(); Prefs.use-browser-dir(); }
+                        Rectangle { height: 6px; }
+                        dir-field := TextField {
+                            placeholder: "/path/to/music";
+                            clearable: false;
+                            accepted(t) => { root.interacted(); Prefs.set-music-dir(t); }
                         }
-                        // A phone saves the typed path with its keyboard's Enter.
-                        if !Theme.mobile: BigButton {
-                            text: "Save";
-                            clicked => { root.interacted(); Prefs.set-music-dir(dir-field.text); }
-                        }
-                    }
-                    Rectangle { height: 6px; }
-                }
-
-                SectionTitle { text: "FILE BROWSER"; }
-                Card {
-                    SettingRow {
-                        label: "Show every file";
-                        detail: "Not only folders, archives and music.";
-                        Toggle { checked: Prefs.show-all; toggled(v) => { root.interacted(); Prefs.set-flag("show-all", v); } }
-                    }
-                    SettingRow {
-                        label: "Open with a single tap";
-                        detail: "For touch screens; otherwise double-click.";
-                        Toggle { checked: Prefs.single-tap; toggled(v) => { root.interacted(); Prefs.set-flag("single-tap", v); } }
-                    }
-                    if !Theme.mobile: SettingRow {
-                        label: "Panels open on hover";
-                        detail: "Resting the mouse on the left or right edge brings in its panel.";
-                        Toggle { checked: Prefs.hover-opens; toggled(v) => { root.interacted(); Prefs.set-flag("hover-opens", v); } }
-                    }
-                    SettingRow {
-                        label: "Files opened from outside bring their folder";
-                        detail: "A file given on the command line or by a file manager plays with the rest of its folder.";
-                        Toggle { checked: Prefs.folder-playlist; toggled(v) => { root.interacted(); Prefs.set-flag("folder-playlist", v); } }
-                    }
-                }
-
-                SectionTitle { text: "CHIPTUNES"; }
-                Card {
-                    SettingRow {
-                        label: "Length of untimed tracks";
-                        detail: "Tracks that loop forever without saying how long they are.";
-                        Stepper { text: Prefs.default-length; step(d) => { root.interacted(); Prefs.step("default-length", d); } }
-                    }
-                    SettingRow {
-                        label: "Fade-out";
-                        Stepper { text: Prefs.fade; step(d) => { root.interacted(); Prefs.step("fade", d); } }
-                    }
-                    SettingRow {
-                        label: "Loops (vgmstream)";
-                        detail: "Times a looping game track plays its loop.";
-                        Stepper { text: Prefs.loops; step(d) => { root.interacted(); Prefs.step("loops", d); } }
-                    }
-                    SettingRow {
-                        label: "Accurate sound (GME)";
-                        detail: "Closer to the hardware, a little more CPU.";
-                        Toggle { checked: Prefs.gme-accuracy; toggled(v) => { root.interacted(); Prefs.set-flag("gme-accuracy", v); } }
-                    }
-                    SettingRow {
-                        label: "Fast N64 audio (USF)";
-                        detail: "High-level audio emulation; turn off for the rare set that needs the low-level path.";
-                        Toggle { checked: Prefs.usf-hle; toggled(v) => { root.interacted(); Prefs.set-flag("usf-hle", v); } }
-                    }
-                    Text {
-                        text: "Changes apply from the next track.";
-                        color: Theme.text-faint;
-                        font-size: Theme.font-small;
-                    }
-                    Rectangle { height: 6px; }
-                }
-
-                SectionTitle { text: "MIDI"; }
-                Card {
-                    Text {
-                        text: "MIDI files play through a SoundFont (SF2). Pick a folder of them; the one chosen can change while a song plays (also with [ and ], or beside the title below).";
-                        color: Theme.text-dim;
-                        font-size: Theme.font-small;
-                        wrap: word-wrap;
-                    }
-                    Rectangle { height: 6px; }
-                    sf-field := TextField {
-                        placeholder: "/path/to/soundfonts";
-                        clearable: false;
-                        accepted(t) => { root.interacted(); Prefs.set-soundfont-dir(t); }
-                    }
-                    Rectangle { height: 6px; }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        alignment: start;
-                        BigButton {
-                            text: "Choose…";
-                            icon-line: Icons.folder-line;
-                            tip: "Pick the folder in the system's folder picker";
-                            clicked => { root.interacted(); Prefs.choose-dir("soundfont"); }
-                        }
-                        BigButton {
-                            text: Theme.mobile ? "Browser's folder" : "Use the browser's folder";
-                            tip: Prefs.browser-dir;
-                            clicked => { root.interacted(); Prefs.soundfont-use-browser-dir(); }
-                        }
-                        // A phone saves the typed path with its keyboard's Enter.
-                        if !Theme.mobile: BigButton {
-                            text: "Save";
-                            clicked => { root.interacted(); Prefs.set-soundfont-dir(sf-field.text); }
-                        }
-                    }
-                    Rectangle { height: 6px; }
-                    for name[i] in Prefs.soundfonts: MenuItem {
-                        text: name;
-                        checkable: true;
-                        checked: i == Prefs.soundfont;
-                        clicked => { root.interacted(); Prefs.pick-soundfont(i); }
-                    }
-                    if Prefs.soundfont-dir != "" && Prefs.soundfonts.length == 0: Text {
-                        text: "No .sf2 files in this folder.";
-                        color: Theme.text-faint;
-                        font-size: Theme.font-small;
-                    }
-                    if Prefs.soundfont-status != "": Text {
-                        text: Prefs.soundfont-status;
-                        color: Theme.text-faint;
-                        font-size: Theme.font-small;
-                        wrap: word-wrap;
-                    }
-                    Rectangle { height: 6px; }
-                }
-
-                SectionTitle { text: "DISPLAY"; }
-                Card {
-                    Rectangle { height: 6px; }
-                    Text {
-                        text: "Theme";
-                        color: Theme.text;
-                    }
-                    Rectangle { height: 4px; }
-                    // Chips wrap onto rows of four.
-                    for row in [0, 1, 2]: HorizontalLayout {
-                        spacing: 8px;
-                        padding-bottom: 8px;
-                        alignment: start;
-                        for i in [0, 1, 2, 3]: Rectangle {
-                            visible: row * 4 + i < root.theme-names.length;
-                            width: (col.width - Theme.pad * 2 - 4px - 24px) / 4;
-                            height: self.visible ? 38px : 0;
-                            if row * 4 + i < root.theme-names.length: Chip {
-                                width: parent.width;
-                                text: root.theme-names[row * 4 + i];
-                                selected: Prefs.theme == row * 4 + i;
-                                clicked => { root.interacted(); Prefs.set-theme(row * 4 + i); }
+                        Rectangle { height: 6px; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            BigButton {
+                                text: "Choose…";
+                                icon-line: Icons.folder-line;
+                                tip: "Pick the folder in the system's folder picker";
+                                clicked => { root.interacted(); Prefs.choose-dir("music"); }
+                            }
+                            BigButton {
+                                text: Theme.mobile ? "Browser's folder" : "Use the browser's folder";
+                                tip: Prefs.browser-dir;
+                                clicked => { root.interacted(); Prefs.use-browser-dir(); }
+                            }
+                            // A phone saves the typed path with its keyboard's Enter.
+                            if !Theme.mobile: BigButton {
+                                text: "Save";
+                                clicked => { root.interacted(); Prefs.set-music-dir(dir-field.text); }
                             }
                         }
+                        Rectangle { height: 6px; }
                     }
-                    SettingRow {
-                        label: "Fullscreen";
-                        detail: Theme.mobile ? "Hides the status and navigation bars." : "F11 switches too.";
-                        Toggle { checked: Prefs.fullscreen; toggled(v) => { root.interacted(); Prefs.set-flag("fullscreen", v); } }
-                    }
-                    if !Theme.mobile: SettingRow {
-                        label: "Native Wayland window (Linux)";
-                        detail: "Off, Chippy runs through XWayland on Wayland desktops, where dropping files on the window and its icon work. Takes effect at the next start.";
-                        Toggle { checked: Prefs.native-wayland; toggled(v) => { root.interacted(); Prefs.set-flag("native-wayland", v); } }
-                    }
-                    SettingRow {
-                        label: "Prefer embedded artwork";
-                        detail: "Over cover.jpg, folder.jpg and other images beside the music.";
-                        Toggle { checked: Prefs.embedded-art; toggled(v) => { root.interacted(); Prefs.set-flag("embedded-art", v); } }
-                    }
-                    SettingRow {
-                        label: "Spectrum bars";
-                        Stepper { text: Prefs.bars; step(d) => { root.interacted(); Prefs.step("bars", d); } }
-                    }
-                }
 
-                SectionTitle { text: "ABOUT"; }
-                Card {
-                    Rectangle { height: 6px; }
-                    Text {
-                        text: "Chippy " + Prefs.version;
-                        color: Theme.text;
-                        font-size: Theme.font-large;
+                    SectionTitle { text: "FILE BROWSER"; }
+                    Card {
+                        SettingRow {
+                            label: "Show every file";
+                            detail: "Not only folders, archives and music.";
+                            Toggle { checked: Prefs.show-all; toggled(v) => { root.interacted(); Prefs.set-flag("show-all", v); } }
+                        }
+                        SettingRow {
+                            label: "Open with a single tap";
+                            detail: "For touch screens; otherwise double-click.";
+                            Toggle { checked: Prefs.single-tap; toggled(v) => { root.interacted(); Prefs.set-flag("single-tap", v); } }
+                        }
+                        if !Theme.mobile: SettingRow {
+                            label: "Panels open on hover";
+                            detail: "Resting the mouse on the left or right edge brings in its panel.";
+                            Toggle { checked: Prefs.hover-opens; toggled(v) => { root.interacted(); Prefs.set-flag("hover-opens", v); } }
+                        }
+                        SettingRow {
+                            label: "Files opened from outside bring their folder";
+                            detail: "A file given on the command line or by a file manager plays with the rest of its folder.";
+                            Toggle { checked: Prefs.folder-playlist; toggled(v) => { root.interacted(); Prefs.set-flag("folder-playlist", v); } }
+                        }
                     }
-                    Text {
-                        text: "Game Music Emu (NSF, NSFE, SPC, VGM, GBS, HES, KSS, AY, SAP, GYM), Audio Overload SDK (PSF, PSF2, SSF, DSF, QSF), lazyusf2 (USF), mGBA (GSF), vio2sf (2SF), Mednafen (WSR), libsidplayfp (SID), Chippy (SGC), libxmp (MOD, XM, S3M, IT...), RustySynth (MIDI), vgmstream (hundreds of game formats), Symphonia (MP3, FLAC, WAV, OGG, M4A, AIFF...). Archives: ZIP, 7z, TAR, TAR.GZ, RAR, RSN.";
-                        color: Theme.text-dim;
-                        font-size: Theme.font-small;
-                        wrap: word-wrap;
+
+                    SectionTitle { text: "CHIPTUNES"; }
+                    Card {
+                        SettingRow {
+                            label: "Length of untimed tracks";
+                            detail: "Tracks that loop forever without saying how long they are.";
+                            Stepper { text: Prefs.default-length; step(d) => { root.interacted(); Prefs.step("default-length", d); } }
+                        }
+                        SettingRow {
+                            label: "Fade-out";
+                            Stepper { text: Prefs.fade; step(d) => { root.interacted(); Prefs.step("fade", d); } }
+                        }
+                        SettingRow {
+                            label: "Loops (vgmstream)";
+                            detail: "Times a looping game track plays its loop.";
+                            Stepper { text: Prefs.loops; step(d) => { root.interacted(); Prefs.step("loops", d); } }
+                        }
+                        SettingRow {
+                            label: "Accurate sound (GME)";
+                            detail: "Closer to the hardware, a little more CPU.";
+                            Toggle { checked: Prefs.gme-accuracy; toggled(v) => { root.interacted(); Prefs.set-flag("gme-accuracy", v); } }
+                        }
+                        SettingRow {
+                            label: "Fast N64 audio (USF)";
+                            detail: "High-level audio emulation; turn off for the rare set that needs the low-level path.";
+                            Toggle { checked: Prefs.usf-hle; toggled(v) => { root.interacted(); Prefs.set-flag("usf-hle", v); } }
+                        }
+                        Text {
+                            text: "Changes apply from the next track.";
+                            color: Theme.text-faint;
+                            font-size: Theme.font-small;
+                        }
+                        Rectangle { height: 6px; }
                     }
-                    Rectangle { height: 4px; }
-                    Text {
-                        text: "Sound output: " + Prefs.device;
-                        color: Theme.text-faint;
-                        font-size: Theme.font-small;
-                        wrap: word-wrap;
+
+                    SectionTitle { text: "MIDI"; }
+                    Card {
+                        Text {
+                            text: "MIDI files play through a SoundFont (SF2). Pick a folder of them; the one chosen can change while a song plays (also with [ and ], or beside the title below).";
+                            color: Theme.text-dim;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                        }
+                        Rectangle { height: 6px; }
+                        sf-field := TextField {
+                            placeholder: "/path/to/soundfonts";
+                            clearable: false;
+                            accepted(t) => { root.interacted(); Prefs.set-soundfont-dir(t); }
+                        }
+                        Rectangle { height: 6px; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            BigButton {
+                                text: "Choose…";
+                                icon-line: Icons.folder-line;
+                                tip: "Pick the folder in the system's folder picker";
+                                clicked => { root.interacted(); Prefs.choose-dir("soundfont"); }
+                            }
+                            BigButton {
+                                text: Theme.mobile ? "Browser's folder" : "Use the browser's folder";
+                                tip: Prefs.browser-dir;
+                                clicked => { root.interacted(); Prefs.soundfont-use-browser-dir(); }
+                            }
+                            // A phone saves the typed path with its keyboard's Enter.
+                            if !Theme.mobile: BigButton {
+                                text: "Save";
+                                clicked => { root.interacted(); Prefs.set-soundfont-dir(sf-field.text); }
+                            }
+                        }
+                        Rectangle { height: 6px; }
+                        for name[i] in Prefs.soundfonts: MenuItem {
+                            text: name;
+                            checkable: true;
+                            checked: i == Prefs.soundfont;
+                            clicked => { root.interacted(); Prefs.pick-soundfont(i); }
+                        }
+                        if Prefs.soundfont-dir != "" && Prefs.soundfonts.length == 0: Text {
+                            text: "No .sf2 files in this folder.";
+                            color: Theme.text-faint;
+                            font-size: Theme.font-small;
+                        }
+                        if Prefs.soundfont-status != "": Text {
+                            text: Prefs.soundfont-status;
+                            color: Theme.text-faint;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                        }
+                        Rectangle { height: 6px; }
                     }
-                    Text {
-                        text: "Settings: " + Prefs.config-path;
-                        color: Theme.text-faint;
-                        font-size: Theme.font-small;
-                        wrap: word-wrap;
+
+                    SectionTitle { text: "DISPLAY"; }
+                    Card {
+                        Rectangle { height: 6px; }
+                        Text {
+                            text: "Theme";
+                            color: Theme.text;
+                        }
+                        Rectangle { height: 4px; }
+                        // Chips wrap onto rows of four.
+                        for row in [0, 1, 2]: HorizontalLayout {
+                            spacing: 8px;
+                            padding-bottom: 8px;
+                            alignment: start;
+                            for i in [0, 1, 2, 3]: Rectangle {
+                                visible: row * 4 + i < root.theme-names.length;
+                                width: (col.width - Theme.pad * 2 - 4px - 24px) / 4;
+                                height: self.visible ? 38px : 0;
+                                if row * 4 + i < root.theme-names.length: Chip {
+                                    width: parent.width;
+                                    text: root.theme-names[row * 4 + i];
+                                    selected: Prefs.theme == row * 4 + i;
+                                    clicked => { root.interacted(); Prefs.set-theme(row * 4 + i); }
+                                }
+                            }
+                        }
+                        SettingRow {
+                            label: "Fullscreen";
+                            detail: Theme.mobile ? "Hides the status and navigation bars." : "F11 switches too.";
+                            Toggle { checked: Prefs.fullscreen; toggled(v) => { root.interacted(); Prefs.set-flag("fullscreen", v); } }
+                        }
+                        if !Theme.mobile: SettingRow {
+                            label: "Native Wayland window (Linux)";
+                            detail: "Off, Chippy runs through XWayland on Wayland desktops, where dropping files on the window and its icon work. Takes effect at the next start.";
+                            Toggle { checked: Prefs.native-wayland; toggled(v) => { root.interacted(); Prefs.set-flag("native-wayland", v); } }
+                        }
+                        SettingRow {
+                            label: "Prefer embedded artwork";
+                            detail: "Over cover.jpg, folder.jpg and other images beside the music.";
+                            Toggle { checked: Prefs.embedded-art; toggled(v) => { root.interacted(); Prefs.set-flag("embedded-art", v); } }
+                        }
+                        SettingRow {
+                            label: "Spectrum bars";
+                            Stepper { text: Prefs.bars; step(d) => { root.interacted(); Prefs.step("bars", d); } }
+                        }
                     }
-                    Rectangle { height: 6px; }
+
+                    SectionTitle { text: "ABOUT"; }
+                    Card {
+                        Rectangle { height: 6px; }
+                        Text {
+                            text: "Chippy " + Prefs.version;
+                            color: Theme.text;
+                            font-size: Theme.font-large;
+                        }
+                        Text {
+                            text: "Game Music Emu (NSF, NSFE, SPC, VGM, GBS, HES, KSS, AY, SAP, GYM), Audio Overload SDK (PSF, PSF2, SSF, DSF, QSF), lazyusf2 (USF), mGBA (GSF), vio2sf (2SF), Mednafen (WSR), libsidplayfp (SID), Chippy (SGC), libxmp (MOD, XM, S3M, IT...), RustySynth (MIDI), vgmstream (hundreds of game formats), Symphonia (MP3, FLAC, WAV, OGG, M4A, AIFF...). Archives: ZIP, 7z, TAR, TAR.GZ, RAR, RSN.";
+                            color: Theme.text-dim;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                        }
+                        Rectangle { height: 4px; }
+                        Text {
+                            text: "Sound output: " + Prefs.device;
+                            color: Theme.text-faint;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: "Settings: " + Prefs.config-path;
+                            color: Theme.text-faint;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                        }
+                        Rectangle { height: 6px; }
+                    }
                 }
             }
         }

@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 
-use super::{apply_fade, Decoder};
+use super::{apply_fade, Decoder, SEEK_STEP_MS};
 
 /// An emulator rendering 16-bit stereo.
 pub trait Engine: Send {
@@ -72,14 +72,19 @@ impl<E: Engine> Decoder for Timed<E> {
         Ok(frames)
     }
     fn seek(&mut self, ms: u64) -> Result<()> {
-        let target = (ms * self.engine.rate() as u64 / 1000).min(self.end);
+        while !self.seek_step(ms)? {}
+        Ok(())
+    }
+    fn seek_step(&mut self, ms: u64) -> Result<bool> {
+        let rate = self.engine.rate() as u64;
+        let target = (ms * rate / 1000).min(self.end);
         if target < self.pos {
             self.engine.restart()?;
             self.pos = 0;
         }
-        self.engine
-            .skip((target - self.pos) as usize, &mut self.buf)?;
-        self.pos = target;
-        Ok(())
+        let n = (target - self.pos).min(rate * SEEK_STEP_MS / 1000);
+        self.engine.skip(n as usize, &mut self.buf)?;
+        self.pos += n;
+        Ok(self.pos == target)
     }
 }

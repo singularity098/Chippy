@@ -144,7 +144,11 @@ fn timing(i: Option<&Info>, opts: &DecodeOptions) -> (u64, u64) {
 
 pub struct GmeDecoder {
     emu: Emu,
+    track: i32,
     rate: u32,
+    /// Where the fade starts, and how long it is.
+    start: u64,
+    fade: u64,
     duration: u64,
     buf: Vec<i16>,
 }
@@ -158,16 +162,27 @@ impl GmeDecoder {
             ffi::gme_enable_accuracy(emu.0, opts.gme_accuracy as i32);
             ffi::gme_set_autoload_playback_limit(emu.0, 0);
         }
-        check(unsafe { ffi::gme_start_track(emu.0, track) })?;
         let i = info(&emu, track);
         let (start, fade) = timing(i.as_ref(), opts);
-        unsafe { ffi::gme_set_fade_msecs(emu.0, start as i32, fade as i32) };
-        Ok(GmeDecoder {
+        let mut d = GmeDecoder {
             emu,
+            track,
             rate: opts.sample_rate,
+            start,
+            fade,
             duration: start + fade,
             buf: Vec::new(),
-        })
+        };
+        d.restart()?;
+        Ok(d)
+    }
+
+    /// Back to the start of the track. Starting a track forgets its fade,
+    /// so it is set again every time (GME's own backward seek does not).
+    fn restart(&mut self) -> Result<()> {
+        check(unsafe { ffi::gme_start_track(self.emu.0, self.track) })?;
+        unsafe { ffi::gme_set_fade_msecs(self.emu.0, self.start as i32, self.fade as i32) };
+        Ok(())
     }
 }
 
@@ -191,7 +206,19 @@ impl Decoder for GmeDecoder {
         Ok(n / 2)
     }
     fn seek(&mut self, ms: u64) -> Result<()> {
-        check(unsafe { ffi::gme_seek(self.emu.0, ms as i32) })
+        while !self.seek_step(ms)? {}
+        Ok(())
+    }
+    fn seek_step(&mut self, ms: u64) -> Result<bool> {
+        let ms = ms.min(self.duration);
+        // GME counts whole milliseconds, rounding down: never past `ms`.
+        if ms < unsafe { ffi::gme_tell(self.emu.0) }.max(0) as u64 {
+            self.restart()?;
+        }
+        let now = unsafe { ffi::gme_tell(self.emu.0) }.max(0) as u64;
+        let next = ms.min(now + super::SEEK_STEP_MS);
+        check(unsafe { ffi::gme_seek(self.emu.0, next as i32) })?;
+        Ok(next == ms)
     }
 }
 

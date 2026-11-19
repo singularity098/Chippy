@@ -60,7 +60,19 @@ pub trait Decoder: Send {
     /// were written (0 at the end of the track).
     fn read(&mut self, out: &mut [f32]) -> Result<usize>;
     fn seek(&mut self, ms: u64) -> Result<()>;
+    /// Moves part of the way to `ms` and says whether it got there.
+    /// Emulators can only seek by playing up to the place (from the start,
+    /// to go back), which takes seconds on a phone: they go at most
+    /// [`SEEK_STEP_MS`] of the song per call, so the player can stop in
+    /// between for a newer request. The others seek all at once.
+    fn seek_step(&mut self, ms: u64) -> Result<bool> {
+        self.seek(ms)?;
+        Ok(true)
+    }
 }
+
+/// How much of the song a [`Decoder::seek_step`] plays through at most.
+pub const SEEK_STEP_MS: u64 = 250;
 
 /// A track inside a multi-track file.
 #[derive(Debug, Clone)]

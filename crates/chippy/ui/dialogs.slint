@@ -1,5 +1,6 @@
 // Modal dialogs over the whole window: a track's properties, and exporting
 // the playlist to audio files.
+import { Fling } from "fling.slint";
 import { Theme } from "theme.slint";
 import { IconButton, BigButton, Chip, SettingRow, Stepper } from "widgets.slint";
 import { Icon, Icons } from "icons.slint";
@@ -113,34 +114,36 @@ export component InfoDialog inherits Modal {
     card-width: 640px;
     card-height: 620px;
     close => { Info.close(); }
-    ScrollView {
-        // Touch screens scroll by dragging (the desktop style turns it off).
-        mouse-drag-pan-enabled: Theme.mobile;
+    Fling {
         vertical-stretch: 1;
-        VerticalLayout {
-            spacing: 2px;
-            for f in Info.fields: HorizontalLayout {
-                spacing: 14px;
-                padding-top: 5px;
-                padding-bottom: 5px;
-                Text {
-                    width: 150px;
-                    text: f.label;
-                    color: Theme.text-dim;
-                    font-size: Theme.font-small;
-                    font-weight: Theme.regular;
-                    horizontal-alignment: right;
-                    wrap: word-wrap;
-                }
-                // Selectable, to copy a value.
-                TextInput {
-                    horizontal-stretch: 1;
-                    text: f.value;
-                    read-only: true;
-                    color: Theme.text;
-                    selection-background-color: Theme.paint;
-                    wrap: word-wrap;
-                    single-line: false;
+        offset <=> scroll.viewport-y;
+        range: scroll.viewport-height - scroll.visible-height;
+        scroll := ScrollView {
+            VerticalLayout {
+                spacing: 2px;
+                for f in Info.fields: HorizontalLayout {
+                    spacing: 14px;
+                    padding-top: 5px;
+                    padding-bottom: 5px;
+                    Text {
+                        width: 150px;
+                        text: f.label;
+                        color: Theme.text-dim;
+                        font-size: Theme.font-small;
+                        font-weight: Theme.regular;
+                        horizontal-alignment: right;
+                        wrap: word-wrap;
+                    }
+                    // Selectable, to copy a value.
+                    TextInput {
+                        horizontal-stretch: 1;
+                        text: f.value;
+                        read-only: true;
+                        color: Theme.text;
+                        selection-background-color: Theme.paint;
+                        wrap: word-wrap;
+                        single-line: false;
+                    }
                 }
             }
         }

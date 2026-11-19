@@ -1,6 +1,7 @@
 // The file browser: the left sidebar. A folder, archive or multi-track
 // file is listed like a folder; opening a music file plays it with the
 // rest of the music beside it.
+import { Fling } from "fling.slint";
 import { Theme } from "theme.slint";
 import { IconButton, TextField, Tip, MenuItem } from "widgets.slint";
 import { Icon, Icons } from "icons.slint";
@@ -323,19 +324,21 @@ export component BrowserPanel inherits Rectangle {
 
             Rectangle {
                 vertical-stretch: 1;
-                list := ListView {
-                    // Touch screens scroll by dragging (the desktop style turns it off).
-                    mouse-drag-pan-enabled: Theme.mobile;
-                    for item[i] in Browser.items: FileRow {
-                        item: item;
-                        selected: i == Browser.selected;
-                        select => { root.interacted(); Browser.selected = i; keys.focus(); }
-                        activate => { Browser.activate(i); }
-                        menu(x, y) => {
-                            root.menu-index = i;
-                            root.menu-x = self.absolute-position.x - root.absolute-position.x + x;
-                            root.menu-y = self.absolute-position.y - root.absolute-position.y + y;
-                            file-menu.show();
+                Fling {
+                    offset <=> list.viewport-y;
+                    range: list.viewport-height - list.visible-height;
+                    list := ListView {
+                        for item[i] in Browser.items: FileRow {
+                            item: item;
+                            selected: i == Browser.selected;
+                            select => { root.interacted(); Browser.selected = i; keys.focus(); }
+                            activate => { Browser.activate(i); }
+                            menu(x, y) => {
+                                root.menu-index = i;
+                                root.menu-x = self.absolute-position.x - root.absolute-position.x + x;
+                                root.menu-y = self.absolute-position.y - root.absolute-position.y + y;
+                                file-menu.show();
+                            }
                         }
                     }
                 }

@@ -7,7 +7,7 @@ use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::audio::Shared;
 use chippy_core::{open_decoder, DecodeOptions, Decoder, TrackRef};
@@ -60,11 +60,18 @@ impl Player {
 /// Decode this far ahead of the output.
 const AHEAD_MS: u64 = 400;
 const CHUNK: usize = 1024;
+/// How long a seek runs before the thread looks for newer commands.
+const SEEK_SLICE: Duration = Duration::from_millis(20);
 
 struct Playing {
     dec: Box<dyn Decoder>,
     resampler: Option<Resample>,
     done: bool,
+    /// Where a seek is still heading. Emulators seek by playing up to the
+    /// place, a few steps at a time between commands: a newer seek takes
+    /// over at once instead of waiting behind this one, and so do Stop and
+    /// another track.
+    seek_to: Option<u64>,
 }
 
 fn run(
@@ -122,9 +129,7 @@ fn run(
             }
             Some(Cmd::Seek { ms }) => {
                 if let Some(p) = &mut playing {
-                    if let Err(e) = p.dec.seek(ms) {
-                        log::warn!("seek failed: {e:#}");
-                    }
+                    p.seek_to = Some(ms);
                     if let Some(r) = &mut p.resampler {
                         r.reset();
                     }
@@ -141,8 +146,27 @@ fn run(
             Some(Cmd::Options(o)) => opts = o,
             None => {}
         }
-        // Decode one chunk.
         let Some(p) = &mut playing else { continue };
+        if let Some(ms) = p.seek_to {
+            let started = Instant::now();
+            loop {
+                match p.dec.seek_step(ms) {
+                    Ok(false) if started.elapsed() < SEEK_SLICE => {}
+                    Ok(false) => break,
+                    Ok(true) => {
+                        p.seek_to = None;
+                        break;
+                    }
+                    Err(e) => {
+                        log::warn!("seek failed: {e:#}");
+                        p.seek_to = None;
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        // Decode one chunk.
         if p.done || shared.lock().unwrap().buffered_frames() >= ahead {
             continue;
         }
@@ -169,10 +193,7 @@ fn run(
 }
 
 fn open(track: &TrackRef, opts: &DecodeOptions, rate: u32, start_ms: u64) -> Result<Playing> {
-    let mut dec = open_decoder(track, opts)?;
-    if start_ms > 0 {
-        dec.seek(start_ms)?;
-    }
+    let dec = open_decoder(track, opts)?;
     let resampler = (dec.sample_rate() != rate)
         .then(|| Resample::new(dec.sample_rate(), rate))
         .transpose()?;
@@ -180,6 +201,7 @@ fn open(track: &TrackRef, opts: &DecodeOptions, rate: u32, start_ms: u64) -> Res
         dec,
         resampler,
         done: false,
+        seek_to: (start_ms > 0).then_some(start_ms),
     })
 }
 

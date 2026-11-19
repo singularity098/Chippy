@@ -16,6 +16,10 @@ ABI="${1:-arm64-v8a}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$HERE")"
 PREFIX="${2:-$ROOT/build/codecs/$ABI}"
+# Absolute: the FFmpeg step runs from its build directory, and a relative
+# prefix would install it there instead.
+mkdir -p "$PREFIX"
+PREFIX="$(cd "$PREFIX" && pwd)"
 API=26
 
 case "$ABI" in

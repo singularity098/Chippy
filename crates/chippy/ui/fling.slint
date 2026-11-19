@@ -1,0 +1,143 @@
+// Touch scrolling with momentum. Slint's own drag panning works out the
+// speed at release as the whole drag's distance over its whole time and
+// coasts for only 250 ms, so a list stops nearly dead when the finger
+// lifts. Fling follows the finger, measures its speed over the last few
+// frames and, on release, keeps going at that speed while friction slows
+// it down, as Android's and iOS's own lists do. Touching the list again
+// stops it (or catches it to drag on).
+//
+// Wrap a ListView or ScrollView (with drag panning left off) in it and
+// bind its scroll position:
+//
+//     Fling {
+//         offset <=> list.viewport-y;
+//         range: list.viewport-height - list.visible-height;
+//         list := ListView { ... }
+//     }
+import { Theme } from "theme.slint";
+
+export component Fling inherits SwipeGestureHandler {
+    // The child's viewport-y: 0 at the top, -range at the bottom.
+    in-out property <length> offset;
+    // How far the child scrolls (viewport height less visible height).
+    in property <length> range;
+    out property <bool> flinging;
+
+    // Friction: the speed left after each millisecond (a time constant of
+    // 400 ms: a flick at 3000 px/s travels about 1200 px).
+    property <float> decay: 0.9975;
+    // Speeds in px per ms.
+    property <float> max-speed: 10;
+    property <float> min-speed: 0.05;
+
+    property <bool> dragging;
+    property <length> anchor-offset;
+    property <length> anchor-y;
+    property <length> last-y;
+    property <duration> last-t;
+    property <float> velocity;
+    property <duration> fling-t;
+    // Changes on every frame while the list coasts: reading the animation
+    // clock keeps frames coming (at the display's rate on Android too)
+    // until it stops.
+    property <duration> frame: root.flinging ? animation-tick() : 0ms;
+
+    enabled: Theme.mobile;
+    handle-swipe-up: true;
+    handle-swipe-down: true;
+    preferred-width: 100%;
+    preferred-height: 100%;
+
+    function bound(y: length) -> length {
+        return max(-max(0px, root.range), min(0px, y));
+    }
+
+    // Folds the finger's latest position into the speed, weighting each
+    // sample by how much time it covers (events arrive per frame, so
+    // several can share a timestamp). A finger held still before it lifts
+    // brings the speed to nothing.
+    function sample(y: length) {
+        let now = animation-tick();
+        let dt = (now - root.last-t) / 1ms;
+        if dt < 4 {
+            return;
+        }
+        let speed = (y - root.last-y) / 1px / dt;
+        let weight = min(1, dt / 40);
+        root.velocity = root.velocity * (1 - weight) + speed * weight;
+        root.last-y = y;
+        root.last-t = now;
+    }
+
+    moved => {
+        if !self.swiping {
+            return;
+        }
+        if !root.dragging {
+            // Starts from here rather than from where the finger went down,
+            // so the list does not jump by the swipe threshold.
+            root.dragging = true;
+            root.flinging = false;
+            root.anchor-offset = root.offset;
+            root.anchor-y = self.current-position.y;
+            root.last-y = self.current-position.y;
+            root.last-t = animation-tick();
+            root.velocity = 0;
+            return;
+        }
+        root.offset = root.bound(root.anchor-offset + self.current-position.y - root.anchor-y);
+        root.sample(self.current-position.y);
+    }
+
+    swiped => {
+        if !root.dragging {
+            return;
+        }
+        root.dragging = false;
+        root.sample(self.current-position.y);
+        root.velocity = max(-root.max-speed, min(root.max-speed, root.velocity));
+        if abs(root.velocity) > root.min-speed * 4 {
+            root.fling-t = animation-tick();
+            root.flinging = true;
+        }
+    }
+
+    cancelled => {
+        root.dragging = false;
+    }
+
+    // Coasts: the speed falls by `decay` every millisecond, and the list
+    // moves by the integral of it, so the path does not depend on the
+    // frame rate.
+    changed frame => {
+        if !root.flinging {
+            return;
+        }
+        let now = animation-tick();
+        let dt = (now - root.fling-t) / 1ms;
+        root.fling-t = now;
+        let left = pow(root.decay, dt);
+        let tau = -1 / ln(root.decay);
+        let next = root.bound(root.offset + root.velocity * tau * (1 - left) * 1px);
+        root.offset = next;
+        root.velocity = root.velocity * left;
+        // Stops at either end (compared with some slack: lengths are not
+        // exact) or once barely moving.
+        let at-top = root.velocity > 0 && next > -0.5px;
+        let at-bottom = root.velocity < 0 && next < 0.5px - max(0px, root.range);
+        if at-top || at-bottom || abs(root.velocity) < root.min-speed {
+            root.flinging = false;
+        }
+    }
+
+    @children
+
+    // A tap on a moving list stops it, and does not reach the row under it.
+    if root.flinging: TouchArea {
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                root.flinging = false;
+            }
+        }
+    }
+}

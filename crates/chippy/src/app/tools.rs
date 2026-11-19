@@ -91,7 +91,8 @@ impl App {
             return;
         }
         let current = match which {
-            "music" => self.settings.music_dir.clone(),
+            // A new music folder: start from the browser's folder.
+            "music" => None,
             "soundfont" => self.settings.soundfont_dir.clone(),
             "export" => self.settings.export_dir.clone(),
             _ => return,
@@ -151,12 +152,7 @@ impl App {
     pub(super) fn picked(&mut self, p: Picked) {
         self.picker_open = false;
         match p {
-            Picked::MusicDir(d) => {
-                self.settings.music_dir = Some(d);
-                self.mark_dirty();
-                self.sync_prefs();
-                self.toast("Music folder saved", false);
-            }
+            Picked::MusicDir(d) => self.add_music_dir(d),
             Picked::SoundfontDir(d) => self.set_soundfont_dir(d),
             Picked::ExportDir(d) => {
                 self.settings.export_dir = Some(d);
@@ -320,8 +316,8 @@ impl App {
         } as i32);
         e.set_folder(ss(s
             .export_dir
-            .as_ref()
-            .map(|d| d.to_string_lossy().into_owned())
+            .as_deref()
+            .map(super::tilde)
             .unwrap_or_default()));
     }
 

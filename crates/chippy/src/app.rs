@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use chippy_core::decode::midi;
 use chippy_core::meta::{self, format_ms, TrackMeta};
 use chippy_core::playlist::Playlist as Queue;
-use chippy_core::settings::{default_columns, Repeat, Settings};
+use chippy_core::settings::{default_columns, Repeat, Session, Settings};
 use chippy_core::vfs::{self, Entry, EntryKind, Node, TrackRef};
 use chippy_core::{decode, formats, DecodeOptions};
 
@@ -29,8 +29,8 @@ use crate::media::{Media, Playback, Request};
 use crate::player::{Cmd, Event, Player};
 use crate::spectrum::{Spectrum, FFT_LEN};
 use crate::{
-    Browser, ColumnItem, Crumb, Export, FileItem, Info, MainWindow, Now, PlRow, Playlist, Prefs,
-    Theme,
+    Browser, ColumnItem, Crumb, Export, FileItem, Info, MainWindow, MusicDir, Now, PlRow, Playlist,
+    Prefs, Theme,
 };
 
 mod tools;
@@ -70,6 +70,9 @@ pub struct App {
     history: Vec<PathBuf>,
     hist_pos: usize,
     files: Rc<VecModel<FileItem>>,
+    /// Where the browser last was inside each music folder, so switching
+    /// back to one returns there.
+    dir_places: HashMap<PathBuf, PathBuf>,
 
     // ---- playlist
     queue: Queue,
@@ -87,6 +90,14 @@ pub struct App {
     started: bool,
     duration_ms: Option<u64>,
     failures: usize,
+    /// The track was brought back from the last session, paused: if it
+    /// cannot be played, nothing else starts in its place.
+    resumed: bool,
+    /// Where the track loading now starts.
+    start_ms: u64,
+    /// The playlist or the place in it changed since the session was saved.
+    session_dirty: Option<Instant>,
+    session_saved: Instant,
     muted: bool,
     art_tx: Sender<(u64, Option<Picture>)>,
     art_rx: Receiver<(u64, Option<Picture>)>,
@@ -176,6 +187,7 @@ impl App {
             history: Vec::new(),
             hist_pos: 0,
             files: Rc::new(VecModel::default()),
+            dir_places: HashMap::new(),
             queue: Queue::default(),
             queue_gen: 0,
             meta_cache: HashMap::new(),
@@ -189,6 +201,10 @@ impl App {
             started: false,
             duration_ms: None,
             failures: 0,
+            resumed: false,
+            start_ms: 0,
+            session_dirty: None,
+            session_saved: Instant::now(),
             muted: false,
             art_tx,
             art_rx,
@@ -222,6 +238,8 @@ impl App {
             a.navigate(&start, true);
             if let Some(p) = opts.open {
                 a.open_external(&p);
+            } else if a.settings.restore_session {
+                a.restore_session();
             }
         }
         // The clock: the position, the spectrum and the meter move on every
@@ -271,6 +289,7 @@ impl App {
             a.filter = t.to_string();
             a.apply_filter();
         });
+        on!(app, b, on_go_music_dir, |a, i: i32| a.go_music_dir(i));
         on!(app, b, on_toggle_show_all, |a| {
             let v = !a.settings.show_all_files;
             a.set_flag("show-all", v);
@@ -336,15 +355,16 @@ impl App {
         }
 
         let s = ui.global::<Prefs>();
-        on!(app, s, on_set_music_dir, |a, t: SharedString| {
-            let p = expand(&t);
-            if p.is_dir() {
-                a.settings.music_dir = Some(p);
+        on!(app, s, on_add_music_dir, |a, t: SharedString| {
+            if !t.trim().is_empty() {
+                a.add_music_dir(expand(&t));
+            }
+        });
+        on!(app, s, on_remove_music_dir, |a, i: i32| a.remove_music_dir(i));
+        on!(app, s, on_set_home_dir, |a, i: i32| {
+            if let Some(d) = a.settings.music_dirs.get(i.max(0) as usize) {
+                a.settings.music_dir = Some(d.clone());
                 a.mark_dirty();
-                a.sync_prefs();
-                a.toast("Music folder saved", false);
-            } else {
-                a.toast(&format!("{} is not a folder", p.display()), true);
                 a.sync_prefs();
             }
         });
@@ -359,9 +379,7 @@ impl App {
                         None => break,
                     }
                 }
-                a.settings.music_dir = Some(node.vpath());
-                a.mark_dirty();
-                a.sync_prefs();
+                a.add_music_dir(node.vpath());
             }
         });
         on!(app, s, on_set_flag, |a, id: SharedString, v: bool| a
@@ -373,7 +391,7 @@ impl App {
             if p.is_dir() {
                 a.set_soundfont_dir(p);
             } else {
-                a.toast(&format!("{} is not a folder", p.display()), true);
+                a.toast(&format!("{} is not a folder", tilde(&p)), true);
                 a.sync_prefs();
             }
         });
@@ -613,20 +631,29 @@ impl App {
         let ui = self.ui();
         let p = ui.global::<Prefs>();
         let s = &self.settings;
-        p.set_music_dir(ss(s
-            .music_dir
-            .as_ref()
-            .map(|d| d.to_string_lossy().into_owned())
-            .unwrap_or_default()));
-        p.set_browser_dir(ss(self
-            .node
-            .as_ref()
-            .map(|n| n.vpath().to_string_lossy().into_owned())
-            .unwrap_or_default()));
+        let here = self.node.as_ref().map(Node::vpath);
+        let current = here.as_deref().and_then(|h| self.music_dir_of(h));
+        let dirs: Vec<MusicDir> = s
+            .music_dirs
+            .iter()
+            .map(|d| MusicDir {
+                label: ss(Some(file_name(d))
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| tilde(d))),
+                path: ss(tilde(d)),
+                home: s.music_dir.as_ref() == Some(d),
+                current: current == Some(d.as_path()),
+            })
+            .collect();
+        let dirs = ModelRc::new(VecModel::from(dirs));
+        p.set_music_dirs(dirs.clone());
+        ui.global::<Browser>().set_music_dirs(dirs);
+        p.set_browser_dir(ss(here.as_deref().map(tilde).unwrap_or_default()));
         p.set_show_all(s.show_all_files);
         p.set_single_tap(s.single_tap);
         p.set_hover_opens(s.hover_opens_browser);
         p.set_folder_playlist(s.open_folder_as_playlist);
+        p.set_restore_session(s.restore_session);
         p.set_embedded_art(s.prefer_embedded_art);
         p.set_usf_hle(s.usf_hle);
         p.set_gme_accuracy(s.gme_accuracy);
@@ -668,6 +695,60 @@ impl App {
         }
     }
 
+    fn mark_session(&mut self) {
+        if self.settings.restore_session {
+            self.session_dirty.get_or_insert_with(Instant::now);
+        }
+    }
+
+    fn save_session(&mut self) {
+        self.session_dirty = None;
+        self.session_saved = Instant::now();
+        if !self.settings.restore_session {
+            return;
+        }
+        let session = Session {
+            tracks: self.queue.items.iter().map(|i| i.track.clone()).collect(),
+            current: self.queue.current,
+            position_ms: match self.state {
+                State::Stopped => 0,
+                _ if !self.started => self.start_ms,
+                _ => self.position_ms(),
+            },
+        };
+        if let Err(e) = session.save() {
+            log::warn!("could not save the session: {e}");
+        }
+    }
+
+    /// Brings back the playlist and track of the last session, paused
+    /// where it was. Tracks whose files are gone are left out.
+    fn restore_session(&mut self) {
+        let Some(session) = Session::load() else { return };
+        let mut tracks = Vec::new();
+        let mut current = None;
+        for (i, t) in session.tracks.into_iter().enumerate() {
+            let exists = match &t.loc {
+                vfs::Location::Fs(p) => p.is_file(),
+                vfs::Location::Archive { archive, .. } => archive.is_file(),
+            };
+            if !exists {
+                continue;
+            }
+            if session.current == Some(i) {
+                current = Some(tracks.len());
+            }
+            tracks.push(t);
+        }
+        if tracks.is_empty() {
+            return;
+        }
+        self.set_queue(tracks, current);
+        if let Some(c) = current {
+            self.play_index_at(c, session.position_ms, true);
+        }
+    }
+
     fn decode_options(&self) -> DecodeOptions {
         self.settings.decode_options(self.output.rate)
     }
@@ -682,6 +763,15 @@ impl App {
             "single-tap" => s.single_tap = v,
             "hover-opens" => s.hover_opens_browser = v,
             "folder-playlist" => s.open_folder_as_playlist = v,
+            "restore-session" => {
+                s.restore_session = v;
+                if v {
+                    self.mark_session();
+                } else {
+                    self.session_dirty = None;
+                    Session::forget();
+                }
+            }
             "embedded-art" => {
                 s.prefer_embedded_art = v;
                 self.art_for = None;
@@ -765,6 +855,7 @@ impl App {
     pub fn shutdown(&mut self) {
         self.settings.volume = self.settings.volume.clamp(0.0, 1.0);
         self.save_settings();
+        self.save_session();
         self.player.send(Cmd::Stop);
     }
 
@@ -918,6 +1009,65 @@ impl App {
             .unwrap_or_else(|| PathBuf::from("/"))
     }
 
+    /// The music folder a path is in (the deepest, should they nest).
+    fn music_dir_of(&self, p: &Path) -> Option<&Path> {
+        self.settings
+            .music_dirs
+            .iter()
+            .filter(|d| p.starts_with(d))
+            .max_by_key(|d| d.components().count())
+            .map(PathBuf::as_path)
+    }
+
+    fn add_music_dir(&mut self, p: PathBuf) {
+        if !p.is_dir() {
+            self.toast(&format!("{} is not a folder", tilde(&p)), true);
+            return;
+        }
+        if self.settings.music_dirs.contains(&p) {
+            self.toast(&format!("{} is already a music folder", tilde(&p)), false);
+            return;
+        }
+        self.settings.music_dirs.push(p);
+        if self.settings.music_dir.is_none() {
+            self.settings.music_dir = self.settings.music_dirs.first().cloned();
+        }
+        self.mark_dirty();
+        self.sync_prefs();
+        self.toast("Music folder added", false);
+    }
+
+    fn remove_music_dir(&mut self, i: i32) {
+        if i < 0 || i as usize >= self.settings.music_dirs.len() {
+            return;
+        }
+        let d = self.settings.music_dirs.remove(i as usize);
+        self.dir_places.remove(&d);
+        if self.settings.music_dir.as_ref() == Some(&d) {
+            self.settings.music_dir = self.settings.music_dirs.first().cloned();
+        }
+        self.mark_dirty();
+        self.sync_prefs();
+    }
+
+    /// Switches the browser to a music folder: back to where it was in it,
+    /// or to its top if it is there already.
+    fn go_music_dir(&mut self, i: i32) {
+        let Some(d) = self.settings.music_dirs.get(i.max(0) as usize).cloned() else {
+            return;
+        };
+        let here = self.node.as_ref().map(Node::vpath);
+        let inside = here.as_deref().and_then(|h| self.music_dir_of(h)) == Some(d.as_path());
+        let target = if inside {
+            d.clone()
+        } else {
+            self.dir_places.get(&d).cloned().unwrap_or_else(|| d.clone())
+        };
+        if !self.navigate(&target, true) && target != d {
+            self.navigate(&d, true);
+        }
+    }
+
     /// Shows a virtual path in the browser. Returns false when it cannot.
     fn navigate(&mut self, vpath: &Path, push: bool) -> bool {
         let node = match vfs::resolve(vpath) {
@@ -946,6 +1096,9 @@ impl App {
             self.history.truncate(self.hist_pos + 1);
             self.history.push(vp.clone());
             self.hist_pos = self.history.len() - 1;
+        }
+        if let Some(d) = self.music_dir_of(&vp).map(Path::to_path_buf) {
+            self.dir_places.insert(d, vp.clone());
         }
         self.node = Some(node);
         self.entries = entries;
@@ -1380,6 +1533,7 @@ impl App {
     }
 
     fn rebuild_rows(&mut self) {
+        self.mark_session();
         let rows: Vec<PlRow> = (0..self.queue.len()).map(|i| self.row_for(i)).collect();
         self.rows.set_vec(rows);
         let ui = self.ui();
@@ -1515,9 +1669,18 @@ impl App {
     // ------------------------------------------------------------ playback
 
     fn play_index(&mut self, i: usize) {
-        let Some(item) = self.queue.items.get(i) else {
+        self.play_index_at(i, 0, false);
+    }
+
+    /// Plays track `i` from `start_ms`, or loads it there paused.
+    fn play_index_at(&mut self, i: usize, start_ms: u64, paused: bool) {
+        if i >= self.queue.len() {
             return;
-        };
+        }
+        self.resumed = paused;
+        self.start_ms = start_ms;
+        self.mark_session();
+        let item = &self.queue.items[i];
         let track = item.track.clone();
         let old = self.queue.current;
         self.queue.current = Some(i);
@@ -1527,10 +1690,10 @@ impl App {
         self.player.send(Cmd::Load {
             track,
             generation: self.generation,
-            start_ms: 0,
+            start_ms,
         });
-        self.state = State::Playing;
-        self.output.shared.lock().unwrap().paused = false;
+        self.state = if paused { State::Paused } else { State::Playing };
+        self.output.shared.lock().unwrap().paused = paused;
         if let Some(o) = old {
             if o < self.queue.len() {
                 self.update_row(o);
@@ -1547,6 +1710,7 @@ impl App {
     }
 
     fn play_pause(&mut self) {
+        self.mark_session();
         match self.state {
             State::Playing => {
                 self.state = State::Paused;
@@ -1613,6 +1777,7 @@ impl App {
             .unwrap_or(ms);
         self.player.send(Cmd::Seek { ms });
         self.media.moved();
+        self.mark_session();
         // Show the new place at once.
         let mut s = self.output.shared.lock().unwrap();
         s.buf.clear();
@@ -1692,7 +1857,7 @@ impl App {
                 if self.duration_ms.is_none() {
                     self.duration_ms = m.length_ms;
                 }
-                ui.set_subtitle(ss(item.track.loc.vpath().to_string_lossy()));
+                ui.set_subtitle(ss(tilde(&item.track.loc.vpath())));
                 n.set_midi(matches!(
                     formats::kind_of(&item.track.loc.name()),
                     formats::FileKind::Audio(formats::Codec::Midi)
@@ -1855,6 +2020,7 @@ impl App {
                     duration_ms,
                 } if generation == self.generation => {
                     self.started = true;
+                    self.resumed = false;
                     self.failures = 0;
                     if duration_ms.is_some() {
                         self.duration_ms = duration_ms;
@@ -1868,7 +2034,13 @@ impl App {
                         .unwrap_or_default();
                     self.toast(&format!("Cannot play {name}: {error}"), true);
                     self.failures += 1;
-                    if self.failures < self.queue.len().max(1) {
+                    if self.resumed {
+                        // Brought back from the last session: nothing
+                        // starts playing on its own.
+                        self.resumed = false;
+                        self.failures = 0;
+                        self.stop();
+                    } else if self.failures < self.queue.len().max(1) {
                         self.next(false);
                     } else {
                         self.failures = 0;
@@ -1990,6 +2162,17 @@ impl App {
             .is_some_and(|t| now.duration_since(t) > Duration::from_secs(2))
         {
             self.save_settings();
+        }
+        // The session: soon after a change, and every 15 s while playing
+        // (Android may end the app without warning).
+        let session_due = self
+            .session_dirty
+            .is_some_and(|t| now.duration_since(t) > Duration::from_secs(2))
+            || (self.state == State::Playing
+                && self.settings.restore_session
+                && now.duration_since(self.session_saved) > Duration::from_secs(15));
+        if session_due {
+            self.save_session();
         }
     }
 }

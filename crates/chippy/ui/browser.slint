@@ -3,9 +3,9 @@
 // rest of the music beside it.
 import { Fling } from "fling.slint";
 import { Theme } from "theme.slint";
-import { IconButton, TextField, Tip, MenuItem } from "widgets.slint";
+import { IconButton, TextField, Tip, MenuItem, Chip } from "widgets.slint";
 import { Icon, Icons } from "icons.slint";
-import { FileItem, Crumb } from "types.slint";
+import { FileItem, Crumb, MusicDir } from "types.slint";
 import { ListView } from "std-widgets.slint";
 
 export global Browser {
@@ -37,6 +37,10 @@ export global Browser {
     callback go(string);
     callback set-filter(string);
     callback toggle-show-all;
+    // The music folders (set in Settings): a tap goes back to where the
+    // browser was in that folder, or to its top when already in it.
+    in property <[MusicDir]> music-dirs;
+    callback go-music-dir(int);
 }
 
 component FileRow inherits Rectangle {
@@ -229,7 +233,7 @@ export component BrowserPanel inherits Rectangle {
                 IconButton { icon: Icons.forward-line; enabled: Browser.can-forward; tip: "Forward (Alt+Right)"; clicked => { root.interacted(); Browser.forward(); } }
                 IconButton { icon: Icons.up-line; enabled: Browser.can-up; tip: "Up one level (Backspace)"; clicked => { root.interacted(); Browser.up(); } }
                 IconButton { icon: Icons.refresh-line; tip: "Refresh (F5)"; clicked => { root.interacted(); Browser.refresh(); } }
-                IconButton { icon: Icons.home-line; tip: "Music folder (set in Settings)"; clicked => { root.interacted(); Browser.home(); } }
+                IconButton { icon: Icons.home-line; tip: "Home: the main music folder (set in Settings)"; clicked => { root.interacted(); Browser.home(); } }
                 Rectangle { horizontal-stretch: 1; }
                 IconButton {
                     icon: Icons.eye-line;
@@ -237,6 +241,25 @@ export component BrowserPanel inherits Rectangle {
                     active: Browser.show-all;
                     tip: Browser.show-all ? "Showing every file: show only folders and music" : "Show every file, not only folders and music";
                     clicked => { root.interacted(); Browser.toggle-show-all(); }
+                }
+            }
+
+            // The music folders, one tap apart.
+            if Browser.music-dirs.length > 1: Flickable {
+                height: 32px;
+                viewport-width: max(self.width, dir-row.preferred-width);
+                interactive: true;
+                dir-row := HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    for d[i] in Browser.music-dirs: Chip {
+                        height: 32px;
+                        border-radius: 16px;
+                        text: d.label;
+                        tip: d.path;
+                        selected: d.current;
+                        clicked => { root.interacted(); Browser.go-music-dir(i); keys.focus(); }
+                    }
                 }
             }
 

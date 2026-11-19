@@ -37,8 +37,13 @@ pub struct Column {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// Where the file browser starts.
+    /// Where the file browser starts (its home button); one of
+    /// `music_dirs`.
     pub music_dir: Option<PathBuf>,
+    /// Every music folder, switched between in the file browser.
+    pub music_dirs: Vec<PathBuf>,
+    /// Bring back the last playlist, track and place at start-up.
+    pub restore_session: bool,
     /// List every file, not only folders, archives and music.
     pub show_all_files: bool,
     /// A file opened from outside (command line, file manager) brings the
@@ -109,6 +114,8 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             music_dir: directories::UserDirs::new().and_then(|u| u.audio_dir().map(PathBuf::from)),
+            music_dirs: Vec::new(),
+            restore_session: true,
             show_all_files: false,
             open_folder_as_playlist: true,
             // Touch first on Android: a tap plays, and nothing hovers.
@@ -186,6 +193,17 @@ impl Settings {
         self.volume = self.volume.clamp(0.0, 1.0);
         self.loops = self.loops.clamp(0.0, 20.0);
         self.spectrum_bars = self.spectrum_bars.clamp(8, 96);
+        // Settings from before there were several music folders: the one
+        // folder is the first. The home folder is always one of them.
+        let mut seen = std::collections::HashSet::new();
+        self.music_dirs.retain(|d| seen.insert(d.clone()));
+        if let Some(home) = &self.music_dir {
+            if !self.music_dirs.contains(home) {
+                self.music_dirs.insert(0, home.clone());
+            }
+        } else {
+            self.music_dir = self.music_dirs.first().cloned();
+        }
     }
 
     pub fn save(&self) -> std::io::Result<()> {
@@ -210,9 +228,64 @@ impl Settings {
     }
 }
 
+/// What was playing when Chippy last ran, kept beside the settings in
+/// `session.json` (when [`Settings::restore_session`] is on).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Session {
+    pub tracks: Vec<crate::vfs::TrackRef>,
+    pub current: Option<usize>,
+    pub position_ms: u64,
+}
+
+impl Session {
+    pub fn path() -> PathBuf {
+        config_dir().join("session.json")
+    }
+
+    pub fn load() -> Option<Session> {
+        let d = std::fs::read(Self::path()).ok()?;
+        serde_json::from_slice(&d)
+            .map_err(|e| log::warn!("session.json unreadable: {e}"))
+            .ok()
+    }
+
+    pub fn save(&self) -> std::io::Result<()> {
+        let p = Self::path();
+        if let Some(d) = p.parent() {
+            std::fs::create_dir_all(d)?;
+        }
+        let tmp = p.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_vec(self).unwrap_or_default())?;
+        std::fs::rename(tmp, p)
+    }
+
+    pub fn forget() {
+        let _ = std::fs::remove_file(Self::path());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn music_dirs_include_home() {
+        let mut s = Settings {
+            music_dir: Some("/m/a".into()),
+            music_dirs: vec!["/m/b".into(), "/m/b".into()],
+            ..Default::default()
+        };
+        s.normalise();
+        assert_eq!(s.music_dirs, [PathBuf::from("/m/a"), PathBuf::from("/m/b")]);
+        let mut s = Settings {
+            music_dir: None,
+            music_dirs: vec!["/m/b".into()],
+            ..Default::default()
+        };
+        s.normalise();
+        assert_eq!(s.music_dir, Some(PathBuf::from("/m/b")));
+    }
 
     #[test]
     fn round_trip_and_unknown_fields() {

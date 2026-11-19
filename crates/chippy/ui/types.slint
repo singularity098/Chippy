@@ -48,3 +48,14 @@ export struct InfoField {
     label: string,
     value: string,
 }
+
+// One of the music folders.
+export struct MusicDir {
+    // The folder's name, and its path with the home folder as "~".
+    label: string,
+    path: string,
+    // The file browser's home (its home button).
+    home: bool,
+    // The file browser is in this folder now.
+    current: bool,
+}

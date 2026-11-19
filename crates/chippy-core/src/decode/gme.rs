@@ -249,14 +249,15 @@ pub fn meta(loc: &Location, track: u32, opts: &DecodeOptions) -> Result<TrackMet
 
 /// A four-digit year in a copyright line ("1988 Capcom").
 pub(crate) fn year_in(s: &str) -> Option<String> {
+    // Works on bytes: the line may hold "©" or other non-ASCII text.
     let b = s.as_bytes();
     (0..b.len().saturating_sub(3)).find_map(|i| {
-        let w = &s[i..i + 4];
-        let ok = w.bytes().all(|c| c.is_ascii_digit())
-            && (w.starts_with("19") || w.starts_with("20"))
+        let w = &b[i..i + 4];
+        let ok = w.iter().all(u8::is_ascii_digit)
+            && (w.starts_with(b"19") || w.starts_with(b"20"))
             && (i == 0 || !b[i - 1].is_ascii_digit())
             && (i + 4 == b.len() || !b[i + 4].is_ascii_digit());
-        ok.then(|| w.to_string())
+        ok.then(|| String::from_utf8_lossy(w).into_owned())
     })
 }
 
@@ -268,6 +269,8 @@ mod tests {
     fn years() {
         assert_eq!(year_in("1988 Capcom").as_deref(), Some("1988"));
         assert_eq!(year_in("(c) Konami, 2001").as_deref(), Some("2001"));
+        assert_eq!(year_in("\u{a9}1991 Rare").as_deref(), Some("1991"));
+        assert_eq!(year_in("\u{a9}\u{a9}").as_deref(), None);
         assert_eq!(year_in("12345"), None);
     }
 

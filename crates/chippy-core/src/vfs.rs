@@ -107,6 +107,36 @@ impl Location {
         }
     }
 
+    /// The other files in this file's folder (or folder in the archive),
+    /// itself included.
+    pub fn folder_files(&self) -> Vec<Location> {
+        match self {
+            Location::Fs(p) => p
+                .parent()
+                .and_then(|d| std::fs::read_dir(d).ok())
+                .map(|rd| {
+                    rd.flatten()
+                        .map(|e| e.path())
+                        .filter(|p| p.is_file())
+                        .map(Location::Fs)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            Location::Archive { archive, entry } => archive::list(archive)
+                .map(|entries| {
+                    archive::children(&entries, archive::parent_of(entry))
+                        .into_iter()
+                        .filter(|e| !e.is_dir)
+                        .map(|e| Location::Archive {
+                            archive: archive.clone(),
+                            entry: e.path,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+
     /// The file's extension, lowercase.
     pub fn extension(&self) -> String {
         formats::extension(&self.name())
@@ -309,7 +339,7 @@ fn shown(e: &Entry, show_all: bool) -> bool {
         || (!e.name.starts_with('.')
             && matches!(
                 e.kind,
-                EntryKind::Dir | EntryKind::Archive | EntryKind::Audio
+                EntryKind::Dir | EntryKind::Archive | EntryKind::Audio | EntryKind::Track
             ))
 }
 
@@ -336,10 +366,10 @@ fn list_dir(dir: &Path, show_all: bool) -> Result<Vec<Entry>> {
         } else {
             file_entry(name, path.clone(), md.len(), Location::Fs(path))
         };
-        if shown(&entry, show_all) {
-            out.push(entry);
-        }
+        out.push(entry);
     }
+    promote_m3us(&mut out);
+    out.retain(|e| shown(e, show_all));
     Ok(out)
 }
 
@@ -375,11 +405,38 @@ fn list_archive(archive_path: &Path, dir: &str, show_all: bool) -> Result<Vec<En
             }
             en
         };
-        if shown(&entry, show_all) {
-            out.push(entry);
+        out.push(entry);
+    }
+    promote_m3us(&mut out);
+    out.retain(|e| shown(e, show_all));
+    Ok(out)
+}
+
+/// Turns per-song M3Us (`01 Title.m3u` holding `game.wsr::WSR,$03,...`)
+/// into tracks that play their song, named like the M3U.
+fn promote_m3us(entries: &mut [Entry]) {
+    let wsrs: Vec<Location> = entries
+        .iter()
+        .filter(|e| formats::extension(&e.name) == "wsr")
+        .filter_map(|e| e.track.as_ref().map(|t| t.loc.clone()))
+        .collect();
+    for wsr in wsrs {
+        for song in decode::wsr::m3u_songs(&wsr) {
+            let Some(e) = entries
+                .iter_mut()
+                .find(|e| e.kind == EntryKind::Other && e.name == song.m3u_name)
+            else {
+                continue;
+            };
+            e.name = formats::split_name(&e.name).0.to_string();
+            e.kind = EntryKind::Track;
+            e.track = Some(TrackRef {
+                loc: wsr.clone(),
+                sub: Some(song.index),
+            });
+            e.length_ms = song.length_ms;
         }
     }
-    Ok(out)
 }
 
 fn list_tracks(loc: &Location, opts: &DecodeOptions) -> Result<Vec<Entry>> {

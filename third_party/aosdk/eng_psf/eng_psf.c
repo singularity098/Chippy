@@ -62,6 +62,17 @@ static void spu_update (unsigned char* pSound,long lBytes,void *data)
 	memcpy(s->spu_pOutput, pSound, lBytes);
 }
 
+/* Chippy: how many bytes of a PS-X EXE to copy into RAM. The header's text
+   size is often wrong (rippers append SEQ/VAB data after it, or Philosoma's
+   is too large), so the whole program section is loaded, as other players
+   do, clamped to the 2 MB of RAM. */
+static uint32 load_length(uint64 decoded_len, uint32 offset)
+{
+	uint64 n = decoded_len > 2048 ? decoded_len - 2048 : 0;
+	uint32 room = 2*1024*1024 - (offset & 0x1fffff);
+	return n > room ? room : (uint32)n;
+}
+
 void *psf_start(const char *path, uint8 *buffer, uint32 length)
 {
     psf_synth_t *s = malloc (sizeof (psf_synth_t));
@@ -189,7 +200,8 @@ void *psf_start(const char *path, uint8 *buffer, uint32 length)
 		#if DEBUG_LOADER
 		printf("library offset: %x plength: %d\n", offset, plength);
 		#endif
-		memcpy(&s->mips_cpu->psx_ram[offset/4], lib_decoded+2048, plength);
+		plength = load_length(lib_len, offset);
+		memcpy(&s->mips_cpu->psx_ram[(offset & 0x1fffff)/4], lib_decoded+2048, plength);
 		
 		// Dispose the corlett structure for the lib - we don't use it
 		free(lib);
@@ -201,12 +213,8 @@ void *psf_start(const char *path, uint8 *buffer, uint32 length)
 	offset &= 0x3fffffff;	// kill any MIPS cache segment indicators
 	plength = file[0x1c] | file[0x1d]<<8 | file[0x1e]<<16 | file[0x1f]<<24;
 
-	// Philosoma has an illegal "plength".  *sigh*
-	if (plength > (file_len-2048))
-	{
-		plength = file_len-2048;
-	}
-	memcpy(&s->mips_cpu->psx_ram[offset/4], file+2048, plength);
+	plength = load_length(file_len, offset);
+	memcpy(&s->mips_cpu->psx_ram[(offset & 0x1fffff)/4], file+2048, plength);
 
 	// load any auxiliary libraries now
 	for (i = 0; i < 8; i++)
@@ -254,7 +262,8 @@ void *psf_start(const char *path, uint8 *buffer, uint32 length)
 			offset = alib_decoded[0x18] | alib_decoded[0x19]<<8 | alib_decoded[0x1a]<<16 | alib_decoded[0x1b]<<24;
 			offset &= 0x3fffffff;	// kill any MIPS cache segment indicators
 			plength = alib_decoded[0x1c] | alib_decoded[0x1d]<<8 | alib_decoded[0x1e]<<16 | alib_decoded[0x1f]<<24;
-			memcpy(&s->mips_cpu->psx_ram[offset/4], alib_decoded+2048, plength);
+			plength = load_length(alib_len, offset);
+			memcpy(&s->mips_cpu->psx_ram[(offset & 0x1fffff)/4], alib_decoded+2048, plength);
 		
 			// Dispose the corlett structure for the lib - we don't use it
 			free(lib);

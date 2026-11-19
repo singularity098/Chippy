@@ -13,13 +13,14 @@ import { Theme, ThemeLook } from "theme.slint";
 import { IconButton, Tips } from "widgets.slint";
 import { Icon, Icons, IconArt } from "icons.slint";
 import { TooltipLayer } from "tooltip.slint";
-import { FileItem, PlRow, ColumnItem, Crumb } from "types.slint";
+import { FileItem, PlRow, ColumnItem, Crumb, InfoField } from "types.slint";
 import { Browser, BrowserPanel } from "browser.slint";
 import { Playlist, PlaylistPanel } from "playlist.slint";
 import { Now, ArtPanel, BottomBar } from "nowplaying.slint";
 import { Prefs, SettingsPanel } from "settings.slint";
+import { Info, Export, InfoDialog, ExportDialog } from "dialogs.slint";
 
-export { Theme, IconArt, Browser, Playlist, Now, Prefs, FileItem, PlRow, ColumnItem, Crumb }
+export { Theme, IconArt, Browser, Playlist, Now, Prefs, Info, Export, FileItem, PlRow, ColumnItem, Crumb, InfoField }
 
 // A window edge that brings in a sidebar: follows the finger and snaps
 // open or closed, opens on a tap, and shows a tab while the mouse is over it.
@@ -105,14 +106,25 @@ component TopBar inherits Rectangle {
     callback open-browser;
     background: #00000066;
     Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
-    // Dragging the bar's empty parts moves the window.
+    // Dragging the bar's empty parts moves the window; double-clicking
+    // maximises or restores it. The window manager is handed the drag only
+    // once the pointer moves: taken at the press, it would swallow the
+    // second click of a double-click.
     TouchArea {
+        property <bool> armed;
         pointer-event(e) => {
-            if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+            if e.button == PointerEventButton.left {
+                if e.kind == PointerEventKind.down { self.armed = true; }
+                if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel { self.armed = false; }
+            }
+        }
+        moved => {
+            if self.armed && self.pressed && (abs(self.mouse-x - self.pressed-x) > 3px || abs(self.mouse-y - self.pressed-y) > 3px) {
+                self.armed = false;
                 root.start-drag();
             }
         }
-        double-clicked => { root.toggle-maximize(); }
+        double-clicked => { self.armed = false; root.toggle-maximize(); }
     }
     HorizontalLayout {
         padding-left: 10px;
@@ -124,6 +136,15 @@ component TopBar inherits Rectangle {
             icon: Icons.menu-line;
             tip: "File browser";
             clicked => { root.open-browser(); }
+        }
+        IconButton {
+            y: (parent.height - self.height) / 2;
+            size: 34px;
+            icon-size: 18px;
+            icon: Icons.open-line;
+            weight: 1.6;
+            tip: "Open a file (Ctrl+O)";
+            clicked => { Playlist.open-file(); }
         }
         Icon {
             y: (parent.height - self.height) / 2;
@@ -259,6 +280,7 @@ export component MainWindow inherits Window {
             if e.text == "]" { Now.cycle-soundfont(1); return accept; }
             if e.text == "b" || e.text == Key.Tab { root.open-left(); return accept; }
             if e.text == "," { root.open-right(); return accept; }
+            if e.modifiers.control && (e.text == "o" || e.text == "O") { Playlist.open-file(); return accept; }
             reject
         }
     }
@@ -420,6 +442,19 @@ export component MainWindow inherits Window {
         ResizeHandle { direction: "ne"; x: root.width - parent.c; y: 0; width: parent.c; height: parent.c; start(d) => { root.start-resize(d); } }
         ResizeHandle { direction: "sw"; x: 0; y: root.height - parent.c; width: parent.c; height: parent.c; start(d) => { root.start-resize(d); } }
         ResizeHandle { direction: "se"; x: root.width - parent.c; y: root.height - parent.c; width: parent.c; height: parent.c; start(d) => { root.start-resize(d); } }
+    }
+
+    if Info.shown: InfoDialog {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+    }
+    if Export.shown: ExportDialog {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
     }
 
     TooltipLayer {

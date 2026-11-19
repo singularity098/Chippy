@@ -5,6 +5,7 @@ GenericName=Music Player
 Comment=A chiptune-focused music player with a file browser
 Exec=chippy %f
 Icon=chippy
+StartupWMClass=chippy
 Terminal=false
 Categories=AudioVideo;Audio;Player;
 Keywords=music;chiptune;nsf;spc;vgm;player;

@@ -61,6 +61,10 @@ pub struct Settings {
     pub window_width: u32,
     pub window_height: u32,
     pub maximized: bool,
+    /// Where the window was (its outer top-left corner, in physical
+    /// pixels), when the window system says.
+    pub window_x: Option<i32>,
+    pub window_y: Option<i32>,
     pub columns: Vec<Column>,
     pub prefer_embedded_art: bool,
     /// Seconds: tracks that do not say how long they are play this long.
@@ -129,6 +133,8 @@ impl Default for Settings {
             window_width: 1360,
             window_height: 820,
             maximized: false,
+            window_x: None,
+            window_y: None,
             columns: default_columns(),
             prefer_embedded_art: true,
             default_length_s: 150,

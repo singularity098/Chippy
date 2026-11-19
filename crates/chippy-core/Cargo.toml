@@ -24,6 +24,8 @@ serde_json.workspace = true
 directories.workspace = true
 symphonia = { version = "0.5", features = ["all"] }
 lofty = "0.22"
+# Opus in WebM/Matroska, which Symphonia cannot decode.
+opus = "0.3"
 zip = { version = "2", default-features = false, features = ["deflate", "deflate64"] }
 sevenz-rust = "0.6"
 tar = "0.4"

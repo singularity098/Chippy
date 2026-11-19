@@ -119,14 +119,7 @@ impl AoEngine {
                 let lib = loc.sibling(name)?;
                 lib.read().ok().map(|d| d.to_vec())
             },
-            || unsafe {
-                ffi::ao_start(
-                    kind,
-                    path.as_ptr(),
-                    data.as_mut_ptr(),
-                    data.len() as u32,
-                )
-            },
+            || unsafe { ffi::ao_start(kind, path.as_ptr(), data.as_mut_ptr(), data.len() as u32) },
         );
         if handle.is_null() {
             bail!("the emulator could not load this file (a missing library?)");

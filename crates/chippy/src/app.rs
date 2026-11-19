@@ -243,21 +243,25 @@ impl App {
             }
         }
         // The clock: the position, the spectrum and the meter move on every
-        // tick. 8 ms keeps up with 120 Hz screens (at 16 ms they moved only
-        // on every other frame).
-        let timer = slint::Timer::default();
+        // tick.
+        // With nothing moving it ticks only 20 times a second, for what
+        // finishes in the background, so an idle window costs no CPU.
+        let timer = Rc::new(slint::Timer::default());
         let weak = Rc::downgrade(&app);
-        timer.start(
-            slint::TimerMode::Repeated,
-            Duration::from_millis(8),
-            move || {
-                if let Some(app) = weak.upgrade() {
-                    if let Ok(mut a) = app.try_borrow_mut() {
-                        a.tick();
-                    }
+        let weak_timer = Rc::downgrade(&timer);
+        let busy = std::cell::Cell::new(true);
+        timer.start(slint::TimerMode::Repeated, TICK_BUSY, move || {
+            let Some(app) = weak.upgrade() else { return };
+            let Ok(mut a) = app.try_borrow_mut() else {
+                return;
+            };
+            let now_busy = a.tick();
+            if now_busy != busy.replace(now_busy) {
+                if let Some(t) = weak_timer.upgrade() {
+                    t.set_interval(if now_busy { TICK_BUSY } else { TICK_IDLE });
                 }
-            },
-        );
+            }
+        });
         // Keep the timer alive as long as the window.
         std::mem::forget(timer);
         Ok(app)
@@ -360,7 +364,8 @@ impl App {
                 a.add_music_dir(expand(&t));
             }
         });
-        on!(app, s, on_remove_music_dir, |a, i: i32| a.remove_music_dir(i));
+        on!(app, s, on_remove_music_dir, |a, i: i32| a
+            .remove_music_dir(i));
         on!(app, s, on_set_home_dir, |a, i: i32| {
             if let Some(d) = a.settings.music_dirs.get(i.max(0) as usize) {
                 a.settings.music_dir = Some(d.clone());
@@ -724,7 +729,9 @@ impl App {
     /// Brings back the playlist and track of the last session, paused
     /// where it was. Tracks whose files are gone are left out.
     fn restore_session(&mut self) {
-        let Some(session) = Session::load() else { return };
+        let Some(session) = Session::load() else {
+            return;
+        };
         let mut tracks = Vec::new();
         let mut current = None;
         for (i, t) in session.tracks.into_iter().enumerate() {
@@ -1061,7 +1068,10 @@ impl App {
         let target = if inside {
             d.clone()
         } else {
-            self.dir_places.get(&d).cloned().unwrap_or_else(|| d.clone())
+            self.dir_places
+                .get(&d)
+                .cloned()
+                .unwrap_or_else(|| d.clone())
         };
         if !self.navigate(&target, true) && target != d {
             self.navigate(&d, true);
@@ -1692,7 +1702,11 @@ impl App {
             generation: self.generation,
             start_ms,
         });
-        self.state = if paused { State::Paused } else { State::Playing };
+        self.state = if paused {
+            State::Paused
+        } else {
+            State::Playing
+        };
         self.output.shared.lock().unwrap().paused = paused;
         if let Some(o) = old {
             if o < self.queue.len() {
@@ -1986,7 +2000,9 @@ impl App {
 
     // --------------------------------------------------------------- clock
 
-    fn tick(&mut self) {
+    /// Moves everything along; true while something on screen moves (the
+    /// clock wants to tick quickly).
+    fn tick(&mut self) -> bool {
         let now = Instant::now();
         let dt = now.duration_since(self.last_tick).as_secs_f32().min(0.1);
         self.last_tick = now;
@@ -2114,7 +2130,7 @@ impl App {
         };
         if ended {
             self.next(true);
-            return;
+            return true;
         }
         let ui = self.ui();
         let n = ui.global::<Now>();
@@ -2149,6 +2165,9 @@ impl App {
                 0.0
             };
             *level = v.max(*level * decay);
+            if *level < 0.001 {
+                *level = 0.0;
+            }
         }
         n.set_level_l(self.levels[0]);
         n.set_level_r(self.levels[1]);
@@ -2174,8 +2193,17 @@ impl App {
         if session_due {
             self.save_session();
         }
+        self.state == State::Playing
+            || !self.spectrum.is_still()
+            || self.levels.iter().any(|&l| l > 0.0)
     }
 }
+
+/// How often the clock ticks while something moves (8 ms keeps up with
+/// 120 Hz screens; at 16 ms the clock and spectrum moved only on every
+/// other frame), and while nothing does.
+const TICK_BUSY: Duration = Duration::from_millis(8);
+const TICK_IDLE: Duration = Duration::from_millis(50);
 
 thread_local! {
     /// Where the pointer is, in logical pixels.

@@ -41,37 +41,55 @@ pub fn run(opts: StartOptions) -> anyhow::Result<()> {
 }
 
 /// Draws the window on every display frame, not only when something on it
-/// changed (as Carlita does). Drawn on demand, frames came whenever the
-/// clock timer asked for one, out of step with the display: animations
-/// stuttered, and on some X servers input showed up only with the next
-/// event. The buffer swap waits for the display, so this draws at its
-/// rate; frames are still kept at least 4 ms apart should a driver not wait.
+/// changed (as Carlita does), while anything moves. Drawn on demand, frames
+/// came whenever the clock timer asked for one, out of step with the
+/// display: animations stuttered, and on some X servers input showed up only
+/// with the next event. The buffer swap waits for the display, so this draws
+/// at its rate; frames are still kept at least 4 ms apart should a driver
+/// not wait.
 ///
-/// On Android this is what reaches 90 or 120 Hz: drawn on demand, Slint's
+/// It draws continuously only while something moves (an animation, a
+/// scroll, the music playing) and, on the desktop, for a moment after
+/// anything else was drawn (input, a list filling in); when all is still it
+/// goes back to drawing on demand, so an idle window costs no CPU. On
+/// Android this is also what reaches 90 or 120 Hz: drawn on demand, Slint's
 /// event loop sleeps 10 ms between animation frames and then waits for the
-/// display, which halves the frame rate. To save the battery it draws
-/// continuously only while something moves (an animation, a scroll, the
-/// spectrum of the music playing).
-/// `CHIPPY_LAZY_REDRAW=1` goes back to drawing on demand.
+/// display, which halves the frame rate.
+/// `CHIPPY_LAZY_REDRAW=1` always draws on demand.
 fn redraw_every_frame(ui: &MainWindow) {
     use slint::ComponentHandle;
     use std::cell::Cell;
+    use std::rc::Rc;
     use std::time::{Duration, Instant};
     const MIN_FRAME: Duration = Duration::from_micros(4_150);
+    // How long the desktop keeps drawing every frame after the last change
+    // it did not ask for itself.
+    let grace = if cfg!(target_os = "android") {
+        Duration::ZERO
+    } else {
+        Duration::from_millis(1500)
+    };
     let weak = ui.as_weak();
     let last = Cell::new(Instant::now());
+    let busy_at = Cell::new(Instant::now());
+    // A redraw this asked for is pending, so the next frame is its own.
+    let looping = Rc::new(Cell::new(false));
     let result = ui.window().set_rendering_notifier(move |state, _| {
         if !matches!(state, slint::RenderingState::AfterRendering) {
             return;
         }
-        if cfg!(target_os = "android") {
-            let Some(ui) = weak.upgrade() else { return };
-            let moving = ui.window().has_active_animations() || ui.global::<Now>().get_state() == 1;
-            if !moving {
-                return;
-            }
+        let Some(ui) = weak.upgrade() else { return };
+        let moving = ui.window().has_active_animations() || ui.global::<Now>().get_state() == 1;
+        let now = Instant::now();
+        if moving || !looping.get() {
+            busy_at.set(now);
         }
-        let since = last.replace(Instant::now()).elapsed();
+        if !moving && now.duration_since(busy_at.get()) >= grace {
+            looping.set(false);
+            return;
+        }
+        looping.set(true);
+        let since = last.replace(now).elapsed();
         let weak = weak.clone();
         let redraw = move || {
             if let Some(ui) = weak.upgrade() {

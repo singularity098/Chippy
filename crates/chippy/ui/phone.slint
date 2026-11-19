@@ -4,6 +4,7 @@
 // button, the title, or the "up next" line at the bottom) on a page of its
 // own. The file browser and the settings slide in from the sides as on the
 // desktop.
+import { Fling } from "fling.slint";
 import { Theme } from "theme.slint";
 import { IconButton, PlayButton, Scrubber } from "widgets.slint";
 import { Icon, Icons } from "icons.slint";
@@ -479,20 +480,22 @@ export component QueuePage inherits Rectangle {
         Rectangle { height: 1px; background: Theme.border; }
         Rectangle {
             vertical-stretch: 1;
-            list := ListView {
-                // Touch screens scroll by dragging (the desktop style turns it off).
-                mouse-drag-pan-enabled: Theme.mobile;
-                for row[i] in Playlist.rows: QueueRow {
-                    index: i;
-                    title: row.title;
-                    detail: row.detail;
-                    playing: row.playing;
-                    pending: row.pending;
-                    menu(x, y) => {
-                        Playlist.selected = i;
-                        root.menu-x = root.width - 230px;
-                        root.menu-y = min(root.height - 300px, self.absolute-position.y - root.absolute-position.y + y);
-                        row-menu.show();
+            Fling {
+                offset <=> list.viewport-y;
+                range: list.viewport-height - list.visible-height;
+                list := ListView {
+                    for row[i] in Playlist.rows: QueueRow {
+                        index: i;
+                        title: row.title;
+                        detail: row.detail;
+                        playing: row.playing;
+                        pending: row.pending;
+                        menu(x, y) => {
+                            Playlist.selected = i;
+                            root.menu-x = root.width - 230px;
+                            root.menu-y = min(root.height - 300px, self.absolute-position.y - root.absolute-position.y + y);
+                            row-menu.show();
+                        }
                     }
                 }
             }

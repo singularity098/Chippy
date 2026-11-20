@@ -70,7 +70,10 @@ const MAX_SECONDS: u64 = 3 * 60 * 60;
 pub fn spawn(job: Job, cancel: Arc<AtomicBool>, tx: Sender<Progress>) {
     std::thread::Builder::new()
         .name("export".into())
-        .spawn(move || run(job, &cancel, &tx))
+        .spawn(move || {
+            crate::background_thread();
+            run(job, &cancel, &tx)
+        })
         .ok();
 }
 

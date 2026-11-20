@@ -1003,6 +1003,7 @@ dependencies = [
  "flacenc",
  "image",
  "jni 0.21.1",
+ "libc",
  "lofty",
  "log",
  "mp3lame-encoder",

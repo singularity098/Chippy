@@ -25,6 +25,7 @@ export global Prefs {
     in property <string> fade;
     in property <string> loops;
     in property <string> bars;
+    in property <string> zoom;
     in property <int> theme;
     in property <string> device;
     in property <string> config-path;
@@ -38,7 +39,7 @@ export global Prefs {
     // restore-session, embedded-art, usf-hle, gme-accuracy, fullscreen,
     // native-wayland.
     callback set-flag(string, bool);
-    // Steppers by id: default-length, fade, loops, bars.
+    // Steppers by id: default-length, fade, loops, bars, zoom.
     callback step(string, int);
     callback set-theme(int);
 
@@ -396,6 +397,11 @@ export component SettingsPanel inherits Rectangle {
                             label: "Prefer embedded artwork";
                             detail: "Over cover.jpg, folder.jpg and other images beside the music.";
                             Toggle { checked: Prefs.embedded-art; toggled(v) => { root.interacted(); Prefs.set-flag("embedded-art", v); } }
+                        }
+                        if !Theme.mobile: SettingRow {
+                            label: "Zoom";
+                            detail: "Text and controls. Ctrl+plus and Ctrl+minus change it too; Ctrl+0 goes back to 100 %.";
+                            Stepper { text: Prefs.zoom; step(d) => { root.interacted(); Prefs.step("zoom", d); } }
                         }
                         SettingRow {
                             label: "Spectrum bars";

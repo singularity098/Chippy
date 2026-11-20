@@ -76,7 +76,8 @@ export component Fling inherits SwipeGestureHandler {
     // until it stops.
     property <duration> frame: root.flinging ? animation-tick() : 0ms;
 
-    enabled: Theme.mobile;
+    // (A mouse drags rows; a finger scrolls.)
+    enabled: Theme.mobile || Theme.finger;
     handle-swipe-up: true;
     handle-swipe-down: true;
     preferred-width: 100%;

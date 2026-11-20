@@ -34,7 +34,9 @@ use crate::{
 };
 
 mod tools;
+mod window;
 use tools::{ExportState, Picked};
+use window::WinPhase;
 
 #[derive(Default)]
 pub struct StartOptions {
@@ -57,7 +59,10 @@ pub struct App {
     ui: slint::Weak<MainWindow>,
     settings: Settings,
     settings_dirty: Option<Instant>,
+    win_phase: WinPhase,
     output: Output,
+    /// Times the sound ran dry, as last logged.
+    underruns: u64,
     player: Player,
     media: Media,
 
@@ -189,7 +194,9 @@ impl App {
             ui: ui.as_weak(),
             settings,
             settings_dirty: None,
+            win_phase: WinPhase::Waiting,
             output,
+            underruns: 0,
             player,
             media: Media::connect(),
             node: None,
@@ -509,6 +516,8 @@ impl App {
             a.remember_window();
             let _ = slint::quit_event_loop();
         });
+        on!(app, ui, on_zoom_by, |a, d: i32| a.zoom_by(d));
+        on!(app, ui, on_rescaled, |a| a.apply_zoom());
         on!(app, ui, on_toggle_fullscreen, |a| {
             let v = !a.settings.fullscreen;
             a.set_fullscreen(v);
@@ -527,10 +536,14 @@ impl App {
         #[cfg(not(target_os = "android"))]
         {
             use slint::winit_030::winit::event::{ElementState, WindowEvent};
+            use slint::winit_030::winit::keyboard::{Key, KeyCode, ModifiersState, PhysicalKey};
             use slint::winit_030::{EventResult, WinitWindowAccessor};
             let weak = ui.as_weak();
             let mut cursor = (0.0f32, 0.0f32);
+            let mut modifiers = ModifiersState::empty();
             ui.window().on_winit_window_event(move |w, e| {
+                // (Slint's scale: the system's times the zoom.)
+                let scale = || w.scale_factor();
                 if matches!(
                     e,
                     WindowEvent::CursorMoved { .. }
@@ -545,7 +558,7 @@ impl App {
                 }
                 match e {
                     WindowEvent::CursorMoved { position, .. } => {
-                        let s = w.scale_factor();
+                        let s = scale();
                         cursor = (position.x as f32 / s, position.y as f32 / s);
                         CURSOR.with(|c| c.set(cursor));
                         if let Some(ui) = weak.upgrade() {
@@ -557,16 +570,70 @@ impl App {
                         ..
                     } => {
                         if let Some(ui) = weak.upgrade() {
+                            // A mouse: lists no longer scroll by dragging.
+                            ui.global::<Theme>().set_finger(false);
                             ui.invoke_pointer_pressed(cursor.0, cursor.1);
                         }
                     }
-                    WindowEvent::Touch(t) => {
+                    WindowEvent::MouseWheel { .. } => {
                         if let Some(ui) = weak.upgrade() {
-                            let s = w.scale_factor();
-                            ui.invoke_pointer_pressed(
-                                t.location.x as f32 / s,
-                                t.location.y as f32 / s,
-                            );
+                            ui.global::<Theme>().set_finger(false);
+                        }
+                    }
+                    WindowEvent::Touch(t) => {
+                        // A touch screen comes as touches, not mouse
+                        // presses (winit drops the mouse presses the system
+                        // makes of them). While fingers are in use, lists
+                        // scroll by dragging, as on a phone. Set before
+                        // Slint sees the touch.
+                        if let Some(ui) = weak.upgrade() {
+                            ui.global::<Theme>().set_finger(true);
+                            if t.phase == slint::winit_030::winit::event::TouchPhase::Started {
+                                let s = scale();
+                                ui.invoke_pointer_pressed(
+                                    t.location.x as f32 / s,
+                                    t.location.y as f32 / s,
+                                );
+                            }
+                        }
+                    }
+                    WindowEvent::Moved(_) | WindowEvent::Resized(_) => window::window_changed(),
+                    WindowEvent::ScaleFactorChanged { .. } => {
+                        // The system's scale changed (another screen, or
+                        // its settings): the zoom goes on top once Slint has
+                        // taken the new scale.
+                        let weak = weak.clone();
+                        slint::Timer::single_shot(Duration::ZERO, move || {
+                            if let Some(ui) = weak.upgrade() {
+                                ui.invoke_rescaled();
+                            }
+                        });
+                    }
+                    WindowEvent::ModifiersChanged(m) => modifiers = m.state(),
+                    WindowEvent::KeyboardInput { event, .. }
+                        if event.state == ElementState::Pressed
+                            && modifiers.control_key()
+                            && !modifiers.alt_key() =>
+                    {
+                        // Zoom: Ctrl+plus, Ctrl+minus, Ctrl+0 (here, so
+                        // they work whatever has the keyboard focus).
+                        let d = match (&event.logical_key, event.physical_key) {
+                            (_, PhysicalKey::Code(KeyCode::NumpadAdd)) => Some(1),
+                            (_, PhysicalKey::Code(KeyCode::NumpadSubtract)) => Some(-1),
+                            (_, PhysicalKey::Code(KeyCode::Numpad0)) => Some(0),
+                            (Key::Character(c), _) => match c.as_str() {
+                                "+" | "=" => Some(1),
+                                "-" | "_" => Some(-1),
+                                "0" => Some(0),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        if let Some(d) = d {
+                            if let Some(ui) = weak.upgrade() {
+                                ui.invoke_zoom_by(d);
+                            }
+                            return EventResult::PreventDefault;
                         }
                     }
                     WindowEvent::DroppedFile(path) => {
@@ -640,58 +707,15 @@ impl App {
             .position(|n| n == self.settings.theme.as_str())
             .unwrap_or(0);
         theme.set_index(idx as i32);
-        // The window comes back as it was: its size and place, maximised,
-        // or fullscreen (over its normal size and place, for leaving it).
-        // Once the window exists (before, its preferred size wins).
-        let (width, height, max, fs) = (
-            self.settings.window_width,
-            self.settings.window_height,
-            self.settings.maximized,
-            self.settings.fullscreen,
-        );
-        let place = self.settings.window_x.zip(self.settings.window_y);
-        // Set before the window shows, too: otherwise Slint first sizes it
-        // to its preferred size, and that resize could land after ours.
-        ui.window()
-            .set_size(slint::LogicalSize::new(width as f32, height as f32));
-        let weak = self.ui.clone();
-        slint::Timer::single_shot(Duration::from_millis(1), move || {
-            let Some(ui) = weak.upgrade() else { return };
-            let w = ui.window();
-            w.set_size(slint::LogicalSize::new(width as f32, height as f32));
-            if let Some((x, y)) = place {
-                w.set_position(slint::PhysicalPosition::new(x, y));
-            }
-            if max {
-                w.set_maximized(true);
-                ui.set_window_maximized(true);
-            }
-            if fs {
-                w.set_fullscreen(true);
-            }
-            if max || fs {
-                return;
-            }
-            // On X11 a resize to the preferred size made while the window
-            // was being shown can land after ours: ask again once it has
-            // settled.
-            let weak = ui.as_weak();
-            slint::Timer::single_shot(Duration::from_millis(250), move || {
-                let Some(ui) = weak.upgrade() else { return };
-                let w = ui.window();
-                let now = w.size().to_logical(w.scale_factor());
-                let off = |a: f32, b: u32| (a - b as f32).abs() > 2.0;
-                if !w.is_maximized()
-                    && !w.is_fullscreen()
-                    && (off(now.width, width) || off(now.height, height))
-                {
-                    w.set_size(slint::LogicalSize::new(width as f32, height as f32));
-                    if let Some((x, y)) = place {
-                        w.set_position(slint::PhysicalPosition::new(x, y));
-                    }
-                }
-            });
-        });
+        // The window comes back as it was (its size and place, maximised or
+        // fullscreen) once it is on screen: see `window_tick`. Its size is
+        // set before it shows, too: otherwise Slint first sizes it to its
+        // preferred size, and that resize could land after ours.
+        #[cfg(not(target_os = "android"))]
+        ui.window().set_size(slint::LogicalSize::new(
+            self.settings.window_width as f32,
+            self.settings.window_height as f32,
+        ));
         ui.set_fullscreen(self.settings.fullscreen);
         ui.set_hover_opens(self.settings.hover_opens_browser);
         ui.global::<Prefs>()
@@ -741,6 +765,7 @@ impl App {
         p.set_fade(ss(format!("{} s", s.fade_s)));
         p.set_loops(ss(format!("{}", s.loops)));
         p.set_bars(ss(format!("{}", s.spectrum_bars)));
+        self.sync_zoom_pref();
         p.set_soundfont_dir(ss(s
             .soundfont_dir
             .as_ref()
@@ -878,6 +903,10 @@ impl App {
     }
 
     fn step(&mut self, id: &str, d: i32) {
+        if id == "zoom" {
+            self.zoom_by(d);
+            return;
+        }
         let s = &mut self.settings;
         match id {
             "default-length" => {
@@ -911,11 +940,9 @@ impl App {
                 w.set_maximized(true);
                 ui.set_window_maximized(true);
             } else {
-                w.set_size(slint::LogicalSize::new(
-                    self.settings.window_width as f32,
-                    self.settings.window_height as f32,
-                ));
-                if let Some((x, y)) = self.settings.window_x.zip(self.settings.window_y) {
+                w.set_size(self.normal_size());
+                #[cfg(not(target_os = "android"))]
+                if let Some((x, y)) = self.saved_place() {
                     w.set_position(slint::PhysicalPosition::new(x, y));
                 }
             }
@@ -932,7 +959,7 @@ impl App {
         if !self.settings.fullscreen && !w.is_fullscreen() && !w.is_minimized() {
             self.settings.maximized = w.is_maximized();
             if !w.is_maximized() {
-                let size = w.size().to_logical(w.scale_factor());
+                let size = w.size().to_logical(self.system_scale());
                 self.settings.window_width = size.width.round() as u32;
                 self.settings.window_height = size.height.round() as u32;
                 // Wayland does not tell where windows are (it reads 0, 0).
@@ -1058,6 +1085,7 @@ impl App {
         std::thread::Builder::new()
             .name("soundfont".into())
             .spawn(move || {
+                crate::background_thread();
                 let result = midi::load_soundfont(&path).map_err(|e| format!("{e:#}"));
                 // Only the last SoundFont asked for plays.
                 if latest.load(Ordering::SeqCst) == id {
@@ -1419,6 +1447,7 @@ impl App {
             self.settings.show_all_files,
         );
         std::thread::spawn(move || {
+            crate::background_thread();
             let mut count = 0;
             vfs::search(&node, &query, show_all, &mut |hits| {
                 if current.load(Ordering::SeqCst) != gen {
@@ -1729,6 +1758,7 @@ impl App {
         std::thread::Builder::new()
             .name("tags".into())
             .spawn(move || {
+                crate::background_thread();
                 for (i, t) in todo {
                     // A decoder bug on one file must not leave the rest of
                     // the playlist without tags.
@@ -2244,6 +2274,9 @@ impl App {
         let dt = now.duration_since(self.last_tick).as_secs_f32().min(0.1);
         self.last_tick = now;
 
+        #[cfg(not(target_os = "android"))]
+        self.window_tick(now);
+
         // Files dropped on the window.
         // (Each file arrives as an event of its own, all in one go.)
         let dropped: Vec<PathBuf> = DROPPED.with(|d| d.borrow_mut().drain(..).collect());
@@ -2368,6 +2401,13 @@ impl App {
             };
             let samples = (self.state == State::Playing && current).then(|| s.scope_tail(FFT_LEN));
             let peak = std::mem::take(&mut s.peak);
+            if s.underruns != self.underruns {
+                log::warn!(
+                    "the sound ran dry mid-track ({} times so far): decoding fell behind",
+                    s.underruns
+                );
+                self.underruns = s.underruns;
+            }
             (ended, pos, samples, peak)
         };
         if ended {

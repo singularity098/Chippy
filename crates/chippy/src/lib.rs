@@ -98,6 +98,20 @@ fn redraw_every_frame(ui: &MainWindow) {
     }
 }
 
+/// Lowers the calling thread's priority, for work in the background
+/// (reading tags, which can mean running a whole track through its
+/// emulator; album art; searching; exporting): the player thread and the
+/// window come first, so a busy moment does not starve the sound.
+pub(crate) fn background_thread() {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    // SAFETY: plain system calls on this thread; nice values are per thread
+    // on Linux.
+    unsafe {
+        let tid = libc::syscall(libc::SYS_gettid) as libc::id_t;
+        libc::setpriority(libc::PRIO_PROCESS, tid, 10);
+    }
+}
+
 thread_local! {
     /// When the user last moved the pointer, pressed or turned something.
     static LAST_INPUT: std::cell::Cell<std::time::Instant> =

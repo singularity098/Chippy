@@ -57,8 +57,9 @@ impl Player {
     }
 }
 
-/// Decode this far ahead of the output.
-const AHEAD_MS: u64 = 400;
+/// Decode this far ahead of the output: slack for when the decoder is held
+/// up for a moment (the system busy elsewhere, a slow stretch of a track).
+const AHEAD_MS: u64 = 1000;
 const CHUNK: usize = 1024;
 /// How long a seek runs before the thread looks for newer commands.
 const SEEK_SLICE: Duration = Duration::from_millis(20);

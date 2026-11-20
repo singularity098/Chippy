@@ -80,9 +80,9 @@ info, PSF tags, vgmstream stream names).
   and similar next to the music (any image as a last resort). For music in
   an archive, images in the archive and next to it (including one named like
   the archive) are used.
-* **Bottom bar**: now playing (thumbnail, title, artist, album and a live
-  spectrum), stop/previous/play/next, shuffle, the timeline, repeat
-  (off/all/one), volume and a stereo level meter.
+* **Bottom bar**: now playing (thumbnail, title, artist and album),
+  stop/previous/play/next, shuffle, the timeline, a live spectrum, repeat
+  (off/all/one) and volume.
 * **Settings (right edge, or the gear)**: music folder (typed, or picked
   with *Choose…*), browser behaviour,
   the length and fade of chiptunes that loop forever, vgmstream loop count,
@@ -99,7 +99,8 @@ info, PSF tags, vgmstream stream names).
   finger-sized, and *Open with a single tap* in Settings replaces
   double-clicks.
 * **Zoom**: text and controls grow with `Ctrl+plus` and shrink with
-  `Ctrl+minus` (`Ctrl+0` resets), or with *Zoom* in Settings.
+  `Ctrl+minus` (`Ctrl+0` resets), with `Ctrl` and the mouse wheel, or with
+  *Zoom* in Settings.
 * **Wayland**: on a Wayland desktop Chippy runs through XWayland, where
   dropping files on the window and the window's icon work (the toolkit
   supports neither natively yet). *Native Wayland window* in Settings, or

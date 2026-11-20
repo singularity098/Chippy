@@ -54,6 +54,7 @@ pub fn load(
     std::thread::Builder::new()
         .name("art".into())
         .spawn(move || {
+            crate::background_thread();
             let pic = chippy_core::art::find(&loc, prefer_embedded).and_then(|a| decode(&a.data));
             let _ = tx.send((generation, pic));
         })

@@ -65,6 +65,9 @@ pub struct Settings {
     /// pixels), when the window system says.
     pub window_x: Option<i32>,
     pub window_y: Option<i32>,
+    /// How much bigger than the system's size text and controls are drawn
+    /// (1.0 is the system's size; Ctrl+plus and Ctrl+minus change it).
+    pub zoom: f32,
     pub columns: Vec<Column>,
     pub prefer_embedded_art: bool,
     /// Seconds: tracks that do not say how long they are play this long.
@@ -135,6 +138,7 @@ impl Default for Settings {
             maximized: false,
             window_x: None,
             window_y: None,
+            zoom: 1.0,
             columns: default_columns(),
             prefer_embedded_art: true,
             default_length_s: 150,

@@ -94,8 +94,12 @@ info, PSF tags, vgmstream stream names).
   use can change while a song plays (the list in Settings, the arrows beside
   the title in the bottom bar, or `[` and `]`); the song crossfades to it.
 * **Media keys** and the desktop's player controls work (MPRIS on Linux).
-* **Touch**: panels follow a swipe, everything is finger-sized, and
-  *Open with a single tap* in Settings replaces double-clicks.
+* **Touch**: panels follow a swipe, lists scroll with a finger (on a
+  desktop's touch screen too, while a mouse still drags rows), everything is
+  finger-sized, and *Open with a single tap* in Settings replaces
+  double-clicks.
+* **Zoom**: text and controls grow with `Ctrl+plus` and shrink with
+  `Ctrl+minus` (`Ctrl+0` resets), or with *Zoom* in Settings.
 * **Wayland**: on a Wayland desktop Chippy runs through XWayland, where
   dropping files on the window and the window's icon work (the toolkit
   supports neither natively yet). *Native Wayland window* in Settings, or
@@ -110,7 +114,7 @@ info, PSF tags, vgmstream stream names).
 Keys: `Space` play/pause, `←`/`→` seek 5 s (`Shift` 30 s), `↑`/`↓` volume,
 `N`/`P` next/previous, `S` shuffle, `R` repeat, `M` mute, `[`/`]` SoundFont,
 `B` browser, `,`
-settings, `Ctrl+O` open a file, `Ctrl+F` search, `F11` fullscreen, `Esc` closes panels. In the browser: arrows,
+settings, `Ctrl+O` open a file, `Ctrl+F` search, `Ctrl+plus`/`Ctrl+minus` zoom, `F11` fullscreen, `Esc` closes panels. In the browser: arrows,
 `Enter`, `Backspace` (up), `Alt+←/→`, `F5`.
 
 Command line:

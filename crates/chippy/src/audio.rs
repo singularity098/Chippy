@@ -8,6 +8,10 @@
 //! it (say, one paused by the system mid-update while the app is busy
 //! starting up) it plays from what it has in hand instead of a click of
 //! silence.
+//!
+//! Peaks above full scale (loud tracks at full volume, and the overshoot
+//! resampling adds to square waves) are rounded off rather than clipped:
+//! clipped, each one is a crackle.
 
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -35,6 +39,9 @@ pub struct Shared {
     pub scope_pos: usize,
     /// Highest level per channel since last read (after volume).
     pub peak: [f32; 2],
+    /// Times the output ran out of samples mid-track (the decoder fell
+    /// behind), each one heard as a click.
+    pub underruns: u64,
     /// Bumped by every reset, so the output drops what it holds from before.
     epoch: u64,
     /// Frames taken from `buf` that the output holds but has not played.
@@ -54,6 +61,7 @@ impl Shared {
             scope: vec![0.0; SCOPE_LEN],
             scope_pos: 0,
             peak: [0.0; 2],
+            underruns: 0,
             epoch: 0,
             held: 0,
         }
@@ -96,6 +104,9 @@ struct Feed {
     paused: bool,
     /// Frames played while the lock was busy, not yet counted.
     unreported: u64,
+    /// Sound has come since the last reset (before, an empty buffer is the
+    /// decoder starting, not running late).
+    flowing: bool,
 }
 
 impl Feed {
@@ -110,6 +121,7 @@ impl Feed {
             target: 0.0,
             paused: false,
             unreported: 0,
+            flowing: false,
         }
     }
 
@@ -126,6 +138,7 @@ impl Feed {
             self.epoch = s.epoch;
             self.hand.clear();
             self.unreported = 0;
+            self.flowing = false;
         }
         s.frames_played += std::mem::take(&mut self.unreported);
         self.paused = s.paused;
@@ -136,6 +149,12 @@ impl Feed {
             self.hand.extend(s.buf.drain(..n));
         }
         let n = self.play(out, Some(&mut s));
+        if n > 0 {
+            self.flowing = true;
+        }
+        if self.flowing && n < frames && !self.paused && !s.producer_done {
+            s.underruns += 1;
+        }
         s.frames_played += n as u64;
         s.held = self.hand.len() / 2;
         n
@@ -159,7 +178,7 @@ impl Feed {
                 s.scope[s.scope_pos] = (l + r) * 0.5;
                 s.scope_pos = (s.scope_pos + 1) % SCOPE_LEN;
             }
-            let (l, r) = (l * self.gain, r * self.gain);
+            let (l, r) = (soft_clip(l * self.gain), soft_clip(r * self.gain));
             peak[0] = peak[0].max(l.abs());
             peak[1] = peak[1].max(r.abs());
             f[0] = l;
@@ -170,6 +189,19 @@ impl Feed {
         }
         taken
     }
+}
+
+/// Leaves samples up to the knee alone and bends louder ones smoothly
+/// towards full scale, which they never reach.
+#[inline]
+fn soft_clip(x: f32) -> f32 {
+    const KNEE: f32 = 0.9;
+    let a = x.abs();
+    if a <= KNEE {
+        return x;
+    }
+    let bent = KNEE + (1.0 - KNEE) * ((a - KNEE) / (1.0 - KNEE)).tanh();
+    bent.copysign(x)
 }
 
 pub struct Output {
@@ -345,6 +377,38 @@ mod tests {
         let s = shared.lock().unwrap();
         assert_eq!(s.frames_played, 768);
         assert_eq!(s.buffered_frames(), 24_000 - 768);
+    }
+
+    #[test]
+    fn rounds_off_peaks() {
+        assert_eq!(soft_clip(0.5), 0.5);
+        assert_eq!(soft_clip(-0.9), -0.9);
+        for x in [0.95f32, 1.0, 1.2, 3.0, 100.0] {
+            let y = soft_clip(x);
+            assert!(y > 0.9 && y <= 1.0, "{x} -> {y}");
+            assert_eq!(soft_clip(-x), -y);
+        }
+        // Smooth at the knee and rising all the way.
+        assert!((soft_clip(0.9001) - 0.9001).abs() < 1e-5);
+        assert!(soft_clip(1.2) > soft_clip(1.1));
+    }
+
+    #[test]
+    fn counts_running_dry_mid_track() {
+        let shared = Mutex::new(Shared::new());
+        let mut feed = Feed::new(0);
+        shared.lock().unwrap().reset(0);
+        let mut out = vec![0f32; 8];
+        // The decoder has not started: not late.
+        feed.fill(&shared, &mut out);
+        assert_eq!(shared.lock().unwrap().underruns, 0);
+        shared.lock().unwrap().buf.extend([0.5f32; 4]);
+        feed.fill(&shared, &mut out);
+        assert_eq!(shared.lock().unwrap().underruns, 1);
+        // The end of the track is not running dry.
+        shared.lock().unwrap().producer_done = true;
+        feed.fill(&shared, &mut out);
+        assert_eq!(shared.lock().unwrap().underruns, 1);
     }
 
     #[test]

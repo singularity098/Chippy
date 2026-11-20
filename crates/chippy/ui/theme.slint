@@ -28,6 +28,9 @@ export global Theme {
     // A phone or tablet (Android): touch only, no window to manage, and in
     // portrait a player laid out as phones' players are.
     in property <bool> mobile;
+    // The last pointer input was a finger on a touch screen (desktop): lists
+    // scroll by dragging, as on a phone. Set from Rust.
+    in property <bool> finger;
 
     // Colours light enough to read over the dark background.
     out property <[ThemeLook]> looks: [

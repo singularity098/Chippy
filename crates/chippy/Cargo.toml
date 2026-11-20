@@ -55,6 +55,10 @@ souvlaki = { version = "0.9.3", default-features = false, features = ["use_zbus"
 # The system's file and folder pickers (XDG portal on Linux).
 rfd = "0.15"
 
+# Background threads run at a lower priority than playback.
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "android")'.dependencies]
 slint = { version = "~1.14", default-features = false, features = [
     "std",

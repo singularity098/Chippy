@@ -191,8 +191,10 @@ export component MainWindow inherits Window {
     no-frame: true;
     icon: @image-url("../../../assets/chippy-icon.svg");
     background: Theme.bg;
-    min-width: Theme.mobile ? 0 : 760px;
-    min-height: Theme.mobile ? 0 : 520px;
+    // Zoomed in, the window may be smaller (in the zoomed pixels), so it
+    // still fits on the screen.
+    min-width: Theme.mobile ? 0 : 760px / max(1, root.zoom);
+    min-height: Theme.mobile ? 0 : 520px / max(1, root.zoom);
     preferred-width: Theme.mobile ? 412px : 1360px;
     preferred-height: Theme.mobile ? 880px : 820px;
     default-font-size: Theme.font;
@@ -201,6 +203,8 @@ export component MainWindow inherits Window {
 
     in property <bool> fullscreen;
     in property <bool> window-maximized;
+    // How much bigger than the system's size everything is drawn (from Rust).
+    in property <float> zoom: 1;
     in property <bool> hover-opens: true;
     in property <[string]> theme-names: Theme.names;
     in-out property <string> toast;
@@ -217,6 +221,10 @@ export component MainWindow inherits Window {
     callback toggle-maximize;
     callback close-window;
     callback toggle-fullscreen;
+    // Ctrl+plus (1), Ctrl+minus (-1), Ctrl+0 (0); and the system's scale
+    // changed (the zoom goes on top of it). Both from Rust.
+    callback zoom-by(int);
+    callback rescaled;
     callback seek-by(int);
     callback volume-by(float);
 

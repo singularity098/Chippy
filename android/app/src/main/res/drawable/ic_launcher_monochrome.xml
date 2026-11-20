@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The themed (monochrome) launcher icon: Chippy's isometric chip as
+     line art, the same drawing as the notification icon and Icons.chip-iso-line. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="256" android:viewportHeight="256">
+    <group android:scaleX="0.66" android:scaleY="0.66" android:pivotX="128" android:pivotY="128"
+        android:translateY="13">
+        <path android:pathData="M32 96 128 40 224 96 128 152 ZM32 96 32 126 128 182 224 126 224 96M128 152 128 182M63.68 144.48 63.68 170.48M96.32 163.52 96.32 189.52M159.68 163.52 159.68 189.52M192.32 144.48 192.32 170.48M110.72 124 131.84 111.68 101.12 93.76 124.16 80.32 154.88 98.24 176 85.92" android:fillColor="#00000000"
+            android:strokeColor="#ffffff" android:strokeWidth="16"
+            android:strokeLineCap="round" android:strokeLineJoin="round" />
+    </group>
+</vector>

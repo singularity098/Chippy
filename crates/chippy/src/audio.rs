@@ -2,6 +2,12 @@
 //! consumes samples in real time) playing from a buffer the player thread
 //! fills. The callback also keeps the last few thousand samples for the
 //! spectrum and the peak levels for the meter.
+//!
+//! The callback never waits for the lock: it takes a little more than it
+//! needs whenever it gets the lock, so when another thread happens to hold
+//! it (say, one paused by the system mid-update while the app is busy
+//! starting up) it plays from what it has in hand instead of a click of
+//! silence.
 
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -29,6 +35,10 @@ pub struct Shared {
     pub scope_pos: usize,
     /// Highest level per channel since last read (after volume).
     pub peak: [f32; 2],
+    /// Bumped by every reset, so the output drops what it holds from before.
+    epoch: u64,
+    /// Frames taken from `buf` that the output holds but has not played.
+    held: usize,
 }
 
 impl Shared {
@@ -44,16 +54,21 @@ impl Shared {
             scope: vec![0.0; SCOPE_LEN],
             scope_pos: 0,
             peak: [0.0; 2],
+            epoch: 0,
+            held: 0,
         }
     }
 
+    /// Frames still to play, including those the output holds.
     pub fn buffered_frames(&self) -> usize {
-        self.buf.len() / 2
+        self.buf.len() / 2 + self.held
     }
 
     /// Forgets queued sound and restarts the clock at `ms`.
     pub fn reset(&mut self, ms: u64) {
         self.buf.clear();
+        self.held = 0;
+        self.epoch += 1;
         self.frames_played = 0;
         self.base_ms = ms;
         self.producer_done = false;
@@ -66,34 +81,93 @@ impl Shared {
             .map(|i| self.scope[(self.scope_pos + SCOPE_LEN - n + i) % SCOPE_LEN])
             .collect()
     }
+}
 
-    /// Plays up to `frames` frames into `out` (stereo), returns frames
-    /// taken. `gain` follows the volume smoothly.
-    fn render(&mut self, out: &mut [f32], gain: &mut f32) -> usize {
+/// The output's side: samples in hand and the state they play with, so a
+/// callback that cannot get the lock still has something to play.
+struct Feed {
+    /// Interleaved stereo samples taken from `Shared::buf`.
+    hand: VecDeque<f32>,
+    /// Frames kept in hand beyond what a callback needs.
+    reserve: usize,
+    epoch: u64,
+    gain: f32,
+    target: f32,
+    paused: bool,
+    /// Frames played while the lock was busy, not yet counted.
+    unreported: u64,
+}
+
+impl Feed {
+    fn new(rate: u32) -> Self {
+        Feed {
+            hand: VecDeque::new(),
+            // 50 ms: longer than any lock is held, even by a thread the
+            // system has paused for a moment.
+            reserve: rate as usize / 20,
+            epoch: 0,
+            gain: 0.0,
+            target: 0.0,
+            paused: false,
+            unreported: 0,
+        }
+    }
+
+    /// Fills `out` (stereo), returns frames played.
+    fn fill(&mut self, shared: &Mutex<Shared>, out: &mut [f32]) -> usize {
+        let frames = out.len() / 2;
+        let Ok(mut s) = shared.try_lock() else {
+            let n = self.play(out, None);
+            self.unreported += n as u64;
+            return n;
+        };
+        if s.epoch != self.epoch {
+            // Seek, stop or a new track: what is in hand is stale.
+            self.epoch = s.epoch;
+            self.hand.clear();
+            self.unreported = 0;
+        }
+        s.frames_played += std::mem::take(&mut self.unreported);
+        self.paused = s.paused;
+        self.target = s.volume * s.volume;
+        let want = (frames + self.reserve) * 2;
+        if self.hand.len() < want {
+            let n = (want - self.hand.len()).min(s.buf.len() & !1);
+            self.hand.extend(s.buf.drain(..n));
+        }
+        let n = self.play(out, Some(&mut s));
+        s.frames_played += n as u64;
+        s.held = self.hand.len() / 2;
+        n
+    }
+
+    fn play(&mut self, out: &mut [f32], mut s: Option<&mut Shared>) -> usize {
         if self.paused {
             out.fill(0.0);
             return 0;
         }
-        let target = self.volume * self.volume;
         let mut taken = 0;
-        let mut peak = self.peak;
+        let mut peak = [0.0f32; 2];
         for f in out.as_chunks_mut::<2>().0 {
-            let (Some(l), Some(r)) = (self.buf.pop_front(), self.buf.pop_front()) else {
+            let (Some(l), Some(r)) = (self.hand.pop_front(), self.hand.pop_front()) else {
                 f.fill(0.0);
                 continue;
             };
             taken += 1;
-            *gain += (target - *gain) * 0.002;
-            self.scope[self.scope_pos] = (l + r) * 0.5;
-            self.scope_pos = (self.scope_pos + 1) % SCOPE_LEN;
-            let (l, r) = (l * *gain, r * *gain);
+            self.gain += (self.target - self.gain) * 0.002;
+            if let Some(s) = s.as_deref_mut() {
+                s.scope[s.scope_pos] = (l + r) * 0.5;
+                s.scope_pos = (s.scope_pos + 1) % SCOPE_LEN;
+            }
+            let (l, r) = (l * self.gain, r * self.gain);
             peak[0] = peak[0].max(l.abs());
             peak[1] = peak[1].max(r.abs());
             f[0] = l;
             f[1] = r;
         }
-        self.peak = peak;
-        self.frames_played += taken as u64;
+        if let Some(s) = s {
+            s.peak = [s.peak[0].max(peak[0]), s.peak[1].max(peak[1])];
+        }
         taken
     }
 }
@@ -144,10 +218,10 @@ fn open_device(shared: Arc<Mutex<Shared>>) -> Result<(cpal::Stream, u32, String)
     let config: cpal::StreamConfig = supported.into();
     let rate = config.sample_rate.0;
     let stream = match format {
-        cpal::SampleFormat::F32 => build::<f32>(&device, &config, shared)?,
-        cpal::SampleFormat::I16 => build::<i16>(&device, &config, shared)?,
-        cpal::SampleFormat::U16 => build::<u16>(&device, &config, shared)?,
-        cpal::SampleFormat::I32 => build::<i32>(&device, &config, shared)?,
+        cpal::SampleFormat::F32 => build::<f32>(&device, &config, shared, rate)?,
+        cpal::SampleFormat::I16 => build::<i16>(&device, &config, shared, rate)?,
+        cpal::SampleFormat::U16 => build::<u16>(&device, &config, shared, rate)?,
+        cpal::SampleFormat::I32 => build::<i32>(&device, &config, shared, rate)?,
         f => return Err(anyhow!("unsupported sample format {f:?}")),
     };
     stream.play()?;
@@ -158,26 +232,21 @@ fn build<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     shared: Arc<Mutex<Shared>>,
+    rate: u32,
 ) -> Result<cpal::Stream>
 where
     T: cpal::SizedSample + cpal::FromSample<f32>,
 {
     let channels = config.channels as usize;
     let mut stereo: Vec<f32> = Vec::new();
-    let mut gain = 0.0f32;
+    let mut feed = Feed::new(rate);
     let stream = device.build_output_stream(
         config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
             let frames = data.len() / channels.max(1);
             stereo.resize(frames * 2, 0.0);
-            // Never wait for the player thread: a busy lock is a moment of
-            // silence, not a glitch in the whole system's audio.
-            match shared.try_lock() {
-                Ok(mut s) => {
-                    s.render(&mut stereo, &mut gain);
-                }
-                Err(_) => stereo.fill(0.0),
-            }
+            // Never waits for the lock (see the top of this file).
+            feed.fill(&shared, &mut stereo);
             for (i, f) in data.chunks_mut(channels.max(1)).enumerate() {
                 let (l, r) = (stereo[2 * i], stereo[2 * i + 1]);
                 match f.len() {
@@ -206,13 +275,13 @@ fn null_clock(shared: Arc<Mutex<Shared>>, rate: u32) {
         .spawn(move || {
             let block = (rate / 100) as usize;
             let mut buf = vec![0f32; block * 2];
-            let mut gain = 0.0;
+            let mut feed = Feed::new(rate);
             let start = std::time::Instant::now();
             let mut played = 0u64;
             loop {
                 let due = start.elapsed().as_secs_f64() * rate as f64;
                 while (played as f64) < due {
-                    shared.lock().unwrap().render(&mut buf, &mut gain);
+                    feed.fill(&shared, &mut buf);
                     played += block as u64;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(5));
@@ -227,19 +296,66 @@ mod tests {
 
     #[test]
     fn renders_and_counts() {
-        let mut s = Shared::new();
-        s.reset(0);
-        s.volume = 1.0;
-        s.buf.extend([0.5f32; 8]);
+        let shared = Mutex::new(Shared::new());
+        let mut feed = Feed::new(0);
+        feed.gain = 1.0;
+        {
+            let mut s = shared.lock().unwrap();
+            s.reset(0);
+            s.volume = 1.0;
+            s.buf.extend([0.5f32; 8]);
+        }
         let mut out = vec![0f32; 12];
-        let mut gain = 1.0;
-        assert_eq!(s.render(&mut out, &mut gain), 4);
-        assert_eq!(s.frames_played, 4);
+        assert_eq!(feed.fill(&shared, &mut out), 4);
+        {
+            let s = shared.lock().unwrap();
+            assert_eq!(s.frames_played, 4);
+            assert_eq!(s.scope_tail(2), vec![0.5, 0.5]);
+            assert_eq!(s.buffered_frames(), 0);
+        }
         assert_eq!(&out[8..], &[0.0; 4]);
-        assert_eq!(s.scope_tail(2), vec![0.5, 0.5]);
-        s.paused = true;
-        s.buf.extend([0.5f32; 2]);
-        assert_eq!(s.render(&mut out, &mut gain), 0);
-        assert_eq!(s.buffered_frames(), 1);
+        {
+            let mut s = shared.lock().unwrap();
+            s.paused = true;
+            s.buf.extend([0.5f32; 2]);
+        }
+        assert_eq!(feed.fill(&shared, &mut out), 0);
+        assert_eq!(shared.lock().unwrap().buffered_frames(), 1);
+    }
+
+    #[test]
+    fn plays_through_a_busy_lock() {
+        let shared = Mutex::new(Shared::new());
+        let mut feed = Feed::new(48_000);
+        {
+            let mut s = shared.lock().unwrap();
+            s.reset(0);
+            s.volume = 1.0;
+            s.buf.extend(std::iter::repeat_n(0.5f32, 48_000));
+        }
+        let mut out = vec![0f32; 512];
+        assert_eq!(feed.fill(&shared, &mut out), 256);
+        // Another thread holds the lock: the output plays what it has.
+        let guard = shared.lock().unwrap();
+        assert_eq!(feed.fill(&shared, &mut out), 256);
+        assert!(out.iter().all(|&x| x > 0.0));
+        drop(guard);
+        // Counted once the lock is free again.
+        feed.fill(&shared, &mut out);
+        let s = shared.lock().unwrap();
+        assert_eq!(s.frames_played, 768);
+        assert_eq!(s.buffered_frames(), 24_000 - 768);
+    }
+
+    #[test]
+    fn drops_what_it_holds_on_reset() {
+        let shared = Mutex::new(Shared::new());
+        let mut feed = Feed::new(48_000);
+        shared.lock().unwrap().buf.extend([0.5f32; 4_000]);
+        let mut out = vec![0f32; 64];
+        feed.fill(&shared, &mut out);
+        shared.lock().unwrap().reset(1_000);
+        assert_eq!(feed.fill(&shared, &mut out), 0);
+        assert_eq!(shared.lock().unwrap().buffered_frames(), 0);
     }
 }

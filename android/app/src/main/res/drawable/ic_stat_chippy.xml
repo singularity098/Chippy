@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The notification's small icon: the chip in white. -->
+<!-- The notification's small icon: the isometric chip as white line art. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="256" android:viewportHeight="256">
-    <path android:pathData="M86,66 h84 a20,20 0 0 1 20,20 v84 a20,20 0 0 1 -20,20 h-84 a20,20 0 0 1 -20,-20 v-84 a20,20 0 0 1 20,-20 z M97,40v26M128,40v26M159,40v26M97,190v26M128,190v26M159,190v26M40,97h26M40,128h26M40,159h26M190,97h26M190,128h26M190,159h26" android:fillColor="#00000000"
-        android:strokeColor="#ffffff" android:strokeWidth="16" android:strokeLineCap="round" />
-    <path android:pathData="M84,144H100V112H124V144H148V112H172" android:fillColor="#00000000"
-        android:strokeColor="#ffffff" android:strokeWidth="16"
-        android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <group android:translateY="13">
+        <path android:pathData="M32 96 128 40 224 96 128 152 ZM32 96 32 126 128 182 224 126 224 96M128 152 128 182M63.68 144.48 63.68 170.48M96.32 163.52 96.32 189.52M159.68 163.52 159.68 189.52M192.32 144.48 192.32 170.48M110.72 124 131.84 111.68 101.12 93.76 124.16 80.32 154.88 98.24 176 85.92" android:fillColor="#00000000"
+            android:strokeColor="#ffffff" android:strokeWidth="18"
+            android:strokeLineCap="round" android:strokeLineJoin="round" />
+    </group>
 </vector>

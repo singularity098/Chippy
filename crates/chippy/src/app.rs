@@ -121,7 +121,6 @@ pub struct App {
     spectrum: Spectrum,
     bars: Rc<VecModel<f32>>,
     peaks: Rc<VecModel<f32>>,
-    levels: [f32; 2],
     last_tick: Instant,
     toast_until: Option<Instant>,
 
@@ -238,7 +237,6 @@ impl App {
             spectrum: Spectrum::new(bands),
             bars: Rc::new(VecModel::from(vec![0.0; bands])),
             peaks: Rc::new(VecModel::from(vec![0.0; bands])),
-            levels: [0.0; 2],
             last_tick: Instant::now(),
             toast_until: None,
             soundfonts: Vec::new(),
@@ -541,6 +539,7 @@ impl App {
             let weak = ui.as_weak();
             let mut cursor = (0.0f32, 0.0f32);
             let mut modifiers = ModifiersState::empty();
+            let mut wheel_zoom = 0.0f32;
             ui.window().on_winit_window_event(move |w, e| {
                 // (Slint's scale: the system's times the zoom.)
                 let scale = || w.scale_factor();
@@ -575,9 +574,25 @@ impl App {
                             ui.invoke_pointer_pressed(cursor.0, cursor.1);
                         }
                     }
-                    WindowEvent::MouseWheel { .. } => {
+                    WindowEvent::MouseWheel { delta, .. } => {
                         if let Some(ui) = weak.upgrade() {
                             ui.global::<Theme>().set_finger(false);
+                            if modifiers.control_key() && !modifiers.alt_key() {
+                                // Ctrl+wheel zooms, a step per notch (a
+                                // touchpad's pixels add up to notches).
+                                use slint::winit_030::winit::event::MouseScrollDelta;
+                                let y = match delta {
+                                    MouseScrollDelta::LineDelta(_, y) => *y,
+                                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 50.0,
+                                };
+                                wheel_zoom += y;
+                                let steps = wheel_zoom.trunc();
+                                if steps != 0.0 {
+                                    wheel_zoom -= steps;
+                                    ui.invoke_zoom_by(steps as i32);
+                                }
+                                return EventResult::PreventDefault;
+                            }
                         }
                     }
                     WindowEvent::Touch(t) => {
@@ -2385,9 +2400,9 @@ impl App {
             }
         }
 
-        // Track end, position, spectrum, meter.
-        let (ended, pos_ms, samples, peak) = {
-            let mut s = self.output.shared.lock().unwrap();
+        // Track end, position, spectrum.
+        let (ended, pos_ms, samples) = {
+            let s = self.output.shared.lock().unwrap();
             let current = s.generation == self.generation;
             let ended = current
                 && self.started
@@ -2400,7 +2415,6 @@ impl App {
                 0
             };
             let samples = (self.state == State::Playing && current).then(|| s.scope_tail(FFT_LEN));
-            let peak = std::mem::take(&mut s.peak);
             if s.underruns != self.underruns {
                 log::warn!(
                     "the sound ran dry mid-track ({} times so far): decoding fell behind",
@@ -2408,7 +2422,7 @@ impl App {
                 );
                 self.underruns = s.underruns;
             }
-            (ended, pos, samples, peak)
+            (ended, pos, samples)
         };
         if ended {
             self.next(true);
@@ -2438,21 +2452,6 @@ impl App {
                 }
             }
         }
-        let decay = (1.0 - dt * 3.0).max(0.0);
-        for (level, p) in self.levels.iter_mut().zip(peak) {
-            // Shown on a dB-ish scale, so quiet music still moves the meter.
-            let v = if p > 0.0 {
-                ((20.0 * p.log10() + 48.0) / 48.0).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            *level = v.max(*level * decay);
-            if *level < 0.001 {
-                *level = 0.0;
-            }
-        }
-        n.set_level_l(self.levels[0]);
-        n.set_level_r(self.levels[1]);
 
         if self.toast_until.is_some_and(|t| now >= t) {
             self.toast_until = None;
@@ -2479,7 +2478,6 @@ impl App {
             || self.searching
             || self.search_due.is_some()
             || !self.spectrum.is_still()
-            || self.levels.iter().any(|&l| l > 0.0)
     }
 }
 

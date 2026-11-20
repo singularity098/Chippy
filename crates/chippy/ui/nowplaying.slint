@@ -1,7 +1,7 @@
 // What is playing: the large album art, and the bottom bar (now playing
 // with its spectrum, the transport and timeline, shuffle, repeat, volume).
 import { Theme } from "theme.slint";
-import { IconButton, PlayButton, Scrubber, LevelMeter, Tip } from "widgets.slint";
+import { IconButton, PlayButton, Scrubber, Tip } from "widgets.slint";
 import { Icon, Icons } from "icons.slint";
 
 export global Now {
@@ -26,8 +26,6 @@ export global Now {
     in property <[float]> peaks;
     in property <float> volume: 0.8;
     in property <bool> muted;
-    in property <float> level-l;
-    in property <float> level-r;
     in property <bool> shuffle;
     // 0 off, 1 all, 2 one.
     in property <int> repeat;
@@ -254,9 +252,6 @@ export component BottomBar inherits Rectangle {
                     }
                 }
             }
-            if !root.narrow: Spectrum {
-                width: 150px;
-            }
         }
 
         // ---- transport and timeline
@@ -332,7 +327,12 @@ export component BottomBar inherits Rectangle {
             }
         }
 
-        // ---- repeat, volume, meter
+        // ---- the spectrum, beside the volume
+        if !root.narrow: Spectrum {
+            width: 150px;
+        }
+
+        // ---- repeat, volume
         HorizontalLayout {
             width: root.narrow ? 220px : 280px;
             spacing: 8px;
@@ -354,17 +354,12 @@ export component BottomBar inherits Rectangle {
             }
             VerticalLayout {
                 alignment: center;
-                spacing: 4px;
                 horizontal-stretch: 1;
                 Scrubber {
                     value: Now.muted ? 0 : Now.volume;
                     tip: "Volume " + round((Now.muted ? 0 : Now.volume) * 100) + "%";
                     changed(v) => { Now.set-volume(v); }
                     released(v) => { Now.set-volume(v); }
-                }
-                LevelMeter {
-                    left: Now.level-l;
-                    right: Now.level-r;
                 }
             }
         }

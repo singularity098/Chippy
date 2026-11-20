@@ -1,7 +1,7 @@
 //! Sound output: a cpal stream (or, without a sound device, a clock that
 //! consumes samples in real time) playing from a buffer the player thread
 //! fills. The callback also keeps the last few thousand samples for the
-//! spectrum and the peak levels for the meter.
+//! spectrum.
 //!
 //! The callback never waits for the lock: it takes a little more than it
 //! needs whenever it gets the lock, so when another thread happens to hold
@@ -37,8 +37,6 @@ pub struct Shared {
     /// Ring of the latest mono samples (before volume) for the spectrum.
     pub scope: Vec<f32>,
     pub scope_pos: usize,
-    /// Highest level per channel since last read (after volume).
-    pub peak: [f32; 2],
     /// Times the output ran out of samples mid-track (the decoder fell
     /// behind), each one heard as a click.
     pub underruns: u64,
@@ -60,7 +58,6 @@ impl Shared {
             generation: 0,
             scope: vec![0.0; SCOPE_LEN],
             scope_pos: 0,
-            peak: [0.0; 2],
             underruns: 0,
             epoch: 0,
             held: 0,
@@ -166,7 +163,6 @@ impl Feed {
             return 0;
         }
         let mut taken = 0;
-        let mut peak = [0.0f32; 2];
         for f in out.as_chunks_mut::<2>().0 {
             let (Some(l), Some(r)) = (self.hand.pop_front(), self.hand.pop_front()) else {
                 f.fill(0.0);
@@ -179,13 +175,8 @@ impl Feed {
                 s.scope_pos = (s.scope_pos + 1) % SCOPE_LEN;
             }
             let (l, r) = (soft_clip(l * self.gain), soft_clip(r * self.gain));
-            peak[0] = peak[0].max(l.abs());
-            peak[1] = peak[1].max(r.abs());
             f[0] = l;
             f[1] = r;
-        }
-        if let Some(s) = s {
-            s.peak = [s.peak[0].max(peak[0]), s.peak[1].max(peak[1])];
         }
         taken
     }

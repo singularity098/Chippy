@@ -2034,11 +2034,7 @@ impl App {
         self.media.moved();
         self.mark_session();
         // Show the new place at once.
-        let mut s = self.output.shared.lock().unwrap();
-        s.buf.clear();
-        s.base_ms = ms;
-        s.frames_played = 0;
-        s.producer_done = false;
+        self.output.shared.lock().unwrap().reset(ms);
     }
 
     fn position_ms(&self) -> u64 {
@@ -2364,7 +2360,7 @@ impl App {
                 && self.started
                 && self.state == State::Playing
                 && s.producer_done
-                && s.buf.is_empty();
+                && s.buffered_frames() == 0;
             let pos = if current {
                 s.base_ms + s.frames_played * 1000 / self.output.rate as u64
             } else {

@@ -199,21 +199,46 @@ pub struct Output {
     pub shared: Arc<Mutex<Shared>>,
     pub rate: u32,
     pub device_name: String,
-    _stream: Option<cpal::Stream>,
+    /// The stream lives on a thread of its own (cpal's streams cannot move
+    /// between threads, and the Android engine is shared by several); it
+    /// stops when this is dropped.
+    _stream: Option<crossbeam_channel::Sender<()>>,
 }
 
 impl Output {
     /// Opens the default sound device, or the silent clock if there is none.
     pub fn open() -> Output {
         let shared = Arc::new(Mutex::new(Shared::new()));
-        match open_device(shared.clone()) {
-            Ok((stream, rate, name)) => {
+        let (opened_tx, opened) = crossbeam_channel::bounded(1);
+        let (keep, stop) = crossbeam_channel::bounded::<()>(0);
+        let for_device = shared.clone();
+        let spawned = std::thread::Builder::new()
+            .name("sound-output".into())
+            .spawn(move || match open_device(for_device) {
+                Ok((stream, rate, name)) => {
+                    let _ = opened_tx.send(Ok((rate, name)));
+                    // Until the output is dropped.
+                    let _ = stop.recv();
+                    drop(stream);
+                }
+                Err(e) => {
+                    let _ = opened_tx.send(Err(e));
+                }
+            });
+        let result = match spawned {
+            Ok(_) => opened
+                .recv()
+                .unwrap_or_else(|_| Err(anyhow!("the sound output thread ended"))),
+            Err(e) => Err(e.into()),
+        };
+        match result {
+            Ok((rate, name)) => {
                 log::info!("sound output: {name} at {rate} Hz");
                 Output {
                     shared,
                     rate,
                     device_name: name,
-                    _stream: Some(stream),
+                    _stream: Some(keep),
                 }
             }
             Err(e) => {

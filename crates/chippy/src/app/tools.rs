@@ -59,12 +59,6 @@ impl App {
         if self.picker_open {
             return;
         }
-        // No file picker that gives paths on Android: the browser it is.
-        #[cfg(target_os = "android")]
-        {
-            self.ui().invoke_open_left();
-        }
-        #[cfg(not(target_os = "android"))]
         self.pick_open_desktop();
     }
 
@@ -106,17 +100,6 @@ impl App {
             "soundfont" => "SoundFont folder",
             _ => "Export to folder",
         };
-        // Android: the system's folder picker, in the activity.
-        #[cfg(target_os = "android")]
-        {
-            let _ = title;
-            if crate::android::pick_folder(&which, start.as_deref()) {
-                self.picker_open = true;
-            } else {
-                self.toast("The folder picker could not be shown", true);
-            }
-        }
-        #[cfg(not(target_os = "android"))]
         {
             self.picker_open = true;
             spawn_picker(self.pick_tx.clone(), move || {

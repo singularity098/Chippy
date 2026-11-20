@@ -1,7 +1,9 @@
 # Chippy
 
 A music player for chiptunes (and everything else), in Rust with a
-[Slint](https://slint.dev) interface. There is no library to build: a file
+[Slint](https://slint.dev) interface on the desktop and a native
+[Jetpack Compose](https://developer.android.com/compose) one on Android.
+There is no library to build: a file
 browser slides in from the left edge and you play music straight from your
 folders, from inside zip/7z archives, and from inside multi-track chiptune
 files as if they were folders.
@@ -142,20 +144,27 @@ key, so a new one installs over the last without losing settings.
 
 ### On Android
 
-Held upright, the player looks like a phone's: the cover large, the title
-under it, the timeline and transport below, and the playlist one tap away:
-the playlist button at the top, the title, or the *Up next* line at the
-bottom, whose page slides up (the back button brings the player back).
-Turned sideways, or on a tablet, it is the desktop's layout. The file
-browser and the settings slide in from the left and right edges as on the
-desktop (or from the ☰ and gear buttons); a single tap plays.
+The Android app has its own interface, written in Jetpack Compose with
+Material 3 (Chippy's themes and font included) over the same Rust engine,
+so it scrolls, animates and responds the way Android apps do. The player
+fills the screen: the cover, the title, the spectrum, the timeline and the
+transport, with what comes next at the bottom (a tap there, or on the
+title, opens the playlist). Turned sideways, the cover and the controls sit
+side by side. The file browser (the folder button, top left) and the
+settings (the gear, top right) open as pages of their own, and the back
+button or gesture closes them; in the browser, back retraces the folders
+you opened first. A tap opens a folder or plays a track with the rest of
+its folder; a long press adds it to the playlist instead. The field above
+the listing filters the folder, or searches everything below it (*Below*).
+In the playlist, swipe a track away to remove it; its menu shows it in the
+browser, its properties, or exports it.
 
 At the first start Chippy asks for *All files access*, as the file browser
-reads folders anywhere in shared storage (it starts in `/storage/emulated/0`;
-set the music folder in Settings with *Use the browser's folder*). Music
-keeps playing with the screen off or another app in front, with the usual
-media notification, lock-screen and headset controls; a call or unplugged
-headphones pause it. Back with nothing open sends Chippy to the background;
+reads folders anywhere in shared storage (it starts in *Internal storage*;
+add music folders in Settings, or from the browser's menu). Music keeps
+playing with the screen off or another app in front, with the usual media
+notification, lock-screen and headset controls; a call or unplugged
+headphones pause it. Back from the player sends Chippy to the background;
 swiping it away from the recent apps stops it.
 
 ## Building
@@ -183,8 +192,13 @@ cargo run --release
 
 ### Android
 
-You need the Android SDK (platform 35, build-tools 35) and NDK (r27),
-JDK 17+, Gradle 8, the Rust target and cargo-ndk:
+The app is two halves: the Rust engine (`crates/chippy-android`, built as a
+`cdylib` with cargo-ndk, the same playback engine and decoders as the
+desktop's), and the Compose UI in Kotlin (`android/`), which calls the
+engine through bindings [UniFFI](https://mozilla.github.io/uniffi-rs/)
+generates from it. `build-apk.sh` does all of it. You need the Android SDK
+(platform 35, build-tools 35) and NDK (r27), JDK 17+, Gradle 8, the Rust
+target and cargo-ndk:
 
 ```bash
 rustup target add aarch64-linux-android
@@ -195,8 +209,10 @@ android/build-apk.sh          # or: android/build-apk.sh debug
 
 The first run builds FFmpeg, mpg123, libvorbis and libogg for vgmstream
 into `build/codecs` (`packaging/build-codecs.sh`, a minute or two). The APK is
-in `android/app/build/outputs/apk/`. `CHIPPY_MOBILE=1 cargo run` shows the
-phone's layout on the desktop (make the window taller than wide).
+in `android/app/build/outputs/apk/`. Once the script has run, `android/` opens
+in Android Studio as it is (the engine and its bindings are in place; run the
+script again after changing the Rust side). `cargo test -p chippy-android`
+drives the engine on the desktop as the app does.
 
 ### Downloads
 
@@ -218,10 +234,14 @@ runs without OpenGL.
 
 ```
 crates/
-  chippy/          the app: Slint UI (ui/), audio output, player thread, spectrum
-  chippy-android/  the library Android's activity loads (android_main)
+  chippy/          the desktop app: Slint UI (ui/) and what drives it
+  chippy-android/  the Android app's engine: the same logic with no UI,
+                   exposed to Kotlin through UniFFI (a cdylib)
+  chippy-engine/   playback, shared by both: audio output, player thread,
+                   resampling, spectrum, album art, exporting
   chippy-core/     no UI: virtual file system (folders, archives, multi-track
                    files), decoders, tags, album art, playlist, settings
+  uniffi-bindgen/  generates chippy-android's Kotlin bindings
   gme-sys/         builds third_party/game-music-emu
   vgmstream-sys/   builds third_party/vgmstream, with mpg123, libvorbis and
                    FFmpeg (the system's, or static ones from
@@ -234,8 +254,8 @@ crates/
   sidplayfp-sys/   third_party/libsidplayfp (SID)
   xmp-sys/         third_party/libxmp (tracker modules)
   archive-sys/     third_party/libarchive (RAR, RSN)
-android/           the Android app (Gradle, a little Java: the activity,
-                   media session and playback service) and its build scripts
+android/           the Android app: the Compose UI, media session and
+                   playback service in Kotlin (Gradle), and build-apk.sh
 ```
 
 `cargo run -p chippy-core --example probe -- PATH` lists a path the way the

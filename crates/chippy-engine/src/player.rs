@@ -207,13 +207,13 @@ fn open(track: &TrackRef, opts: &DecodeOptions, rate: u32, start_ms: u64) -> Res
 }
 
 /// Streaming stereo resampler (windowed sinc).
-pub(crate) struct Resample {
+pub struct Resample {
     r: SincFixedIn<f32>,
     input: [Vec<f32>; 2],
 }
 
 impl Resample {
-    pub(crate) fn new(from: u32, to: u32) -> Result<Self> {
+    pub fn new(from: u32, to: u32) -> Result<Self> {
         let params = SincInterpolationParameters {
             sinc_len: 128,
             f_cutoff: 0.95,
@@ -234,7 +234,7 @@ impl Resample {
         self.input[1].clear();
     }
 
-    pub(crate) fn push(&mut self, interleaved: &[f32], out: &mut Vec<f32>) {
+    pub fn push(&mut self, interleaved: &[f32], out: &mut Vec<f32>) {
         for f in interleaved.as_chunks::<2>().0 {
             self.input[0].push(f[0]);
             self.input[1].push(f[1]);
@@ -254,7 +254,7 @@ impl Resample {
     }
 
     /// Pushes out what is left (padded with silence).
-    pub(crate) fn flush(&mut self, out: &mut Vec<f32>) {
+    pub fn flush(&mut self, out: &mut Vec<f32>) {
         if self.input[0].is_empty() {
             return;
         }

@@ -2242,10 +2242,7 @@ impl App {
                 // Closes what is open (a panel, the playlist, a dialog);
                 // with nothing open the app goes to the background, still
                 // playing, as Android players do.
-                if !self.ui().invoke_back() {
-                    #[cfg(target_os = "android")]
-                    crate::android::move_to_back();
-                }
+                self.ui().invoke_back();
             }
             Request::Refresh => self.refresh(),
             Request::Folder(which, dir) => {

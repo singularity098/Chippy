@@ -1,0 +1,31 @@
+[package]
+name = "chippy-engine"
+description = "Chippy's playback engine, shared by the desktop app and the Android library: sound output, the player thread, the spectrum, album art and exporting"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+chippy-core.workspace = true
+anyhow.workspace = true
+log.workspace = true
+crossbeam-channel.workspace = true
+cpal = "0.15"
+rubato = "0.15"
+rustfft = "6"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp", "webp"] }
+# Exporting: FLAC (pure Rust), MP3 (LAME, built from source), Opus in Ogg.
+flacenc = "0.5"
+mp3lame-encoder = "0.2"
+opus = "0.3"
+ogg = "0.9"
+lofty = "0.22"
+
+# Background threads run at a lower priority than playback.
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true

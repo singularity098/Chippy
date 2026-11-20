@@ -1,10 +1,8 @@
 //! The system's media controls: media keys, and the player widgets of the
-//! desktop (MPRIS on Linux, Now Playing on macOS; on Android the media
-//! session and its notification, in `crate::android`). Their requests come
-//! in on a channel the clock reads; what plays is told back to them.
+//! desktop (MPRIS on Linux, Now Playing on macOS). Their requests come in
+//! on a channel the clock reads; what plays is told back to them. (The
+//! Android app has its own media session, in Kotlin.)
 
-#[cfg(target_os = "android")]
-pub use crate::android::Media;
 #[cfg(not(target_os = "android"))]
 pub use desktop::Media;
 

@@ -2,13 +2,114 @@
 <resources>
     <string name="app_name">Chippy</string>
     <string name="channel_playback">Playback</string>
+
+    <!-- Transport -->
     <string name="previous">Previous</string>
     <string name="play">Play</string>
     <string name="pause">Pause</string>
     <string name="next">Next</string>
+    <string name="shuffle">Shuffle</string>
+    <string name="repeat_off">Repeat: off</string>
+    <string name="repeat_all">Repeat: all</string>
+    <string name="repeat_one">Repeat: this track</string>
+    <string name="previous_soundfont">Previous SoundFont</string>
+    <string name="next_soundfont">Next SoundFont</string>
+    <string name="no_soundfont">No SoundFont</string>
+
+    <!-- Player -->
+    <string name="now_playing">Now playing</string>
+    <string name="nothing_playing">Nothing playing</string>
+    <string name="nothing_playing_hint">Pick some music in the file browser</string>
+    <string name="up_next">Up next</string>
+    <string name="album_art">Album art</string>
+    <string name="playing">Playing</string>
+
+    <!-- Pages -->
+    <string name="file_browser">File browser</string>
+    <string name="playlist">Playlist</string>
+    <string name="settings">Settings</string>
+    <string name="close">Close</string>
+    <string name="more">More options</string>
+
+    <!-- Browser -->
+    <string name="close_browser">Back to the player</string>
+    <string name="up">Up a folder</string>
+    <string name="home">Home folder</string>
+    <string name="forward">Forward</string>
+    <string name="refresh">Refresh</string>
+    <string name="add_to_music_folders">Add to music folders</string>
+    <string name="filter_folder">Filter this folder</string>
+    <string name="search_below">Search below this folder</string>
+    <string name="this_folder">Here</string>
+    <string name="below">Below</string>
+    <string name="clear">Clear</string>
+    <string name="open">Open</string>
+    <string name="add_to_playlist">Add to playlist</string>
+    <string name="searching">Searching…</string>
+    <string name="nothing_found">Nothing found below this folder</string>
+    <string name="nothing_matches">Nothing matches “%1$s”</string>
+    <string name="nothing_here">Nothing to play here</string>
+    <string name="nothing_here_hint">Folders, archives and music files show up here.</string>
+
+    <!-- Playlist -->
+    <string name="export_all">Export the playlist</string>
+    <string name="clear_playlist">Clear the playlist</string>
+    <string name="clear_playlist_title">Clear the playlist?</string>
+    <string name="clear_playlist_text">%1$s. Playback stops.</string>
+    <string name="cancel">Cancel</string>
+    <string name="playlist_empty">The playlist is empty</string>
+    <string name="playlist_empty_hint">A tap on a track in the file browser plays it, with the rest of its folder.</string>
+    <string name="show_in_browser">Show in the browser</string>
+    <string name="properties">Properties</string>
+    <string name="export">Export</string>
+    <string name="remove">Remove</string>
+
+    <!-- Export and properties -->
+    <string name="export_title">Export %1$s</string>
+    <string name="bitrate">Bitrate</string>
+    <string name="export_folder">To the folder</string>
+    <string name="hide">Hide</string>
+    <string name="copy_all">Copy all</string>
+
+    <!-- Settings -->
+    <string name="music_folders">Music folders</string>
+    <string name="music_folders_hint">Folders the file browser switches between. The one picked is where it starts.</string>
+    <string name="music_folders_none">None yet: the browser starts in your internal storage.</string>
+    <string name="remove_folder">Remove %1$s</string>
+    <string name="add_folder">Add folder…</string>
+    <string name="browsers_folder">Browser\'s folder</string>
+    <string name="playback">Playback</string>
+    <string name="resume">Resume where you left off</string>
+    <string name="resume_detail">The playlist and the track come back, paused, when Chippy starts.</string>
+    <string name="show_all">Show every file</string>
+    <string name="show_all_detail">Not only folders, archives and music.</string>
+    <string name="chiptunes">Chiptunes</string>
+    <string name="untimed_length">Length of untimed tracks</string>
+    <string name="fade_out">Fade-out</string>
+    <string name="loops">Loops (vgmstream)</string>
+    <string name="gme_accuracy">Accurate sound (GME)</string>
+    <string name="usf_hle">Fast N64 audio (USF)</string>
+    <string name="next_track_note">Changes apply from the next track.</string>
+    <string name="midi">MIDI</string>
+    <string name="midi_hint">MIDI files play through a SoundFont (SF2). Pick a folder of them; the one chosen can change while a song plays, beside its title.</string>
+    <string name="soundfont_folder">SoundFont folder</string>
+    <string name="none_chosen">None chosen</string>
+    <string name="choose">Choose…</string>
+    <string name="no_soundfonts">No .sf2 files in this folder.</string>
+    <string name="display">Display</string>
+    <string name="theme">Theme</string>
+    <string name="embedded_art">Prefer embedded artwork</string>
+    <string name="spectrum_bars">Spectrum bars</string>
+    <string name="about">About</string>
+    <string name="formats">Game Music Emu (NSF, NSFE, SPC, VGM, GBS, HES, KSS, AY, SAP, GYM), Audio Overload SDK (PSF, PSF2, SSF, DSF, QSF), lazyusf2 (USF), mGBA (GSF), vio2sf (2SF), Mednafen (WSR), libsidplayfp (SID), Chippy (SGC), libxmp (MOD, XM, S3M, IT…), RustySynth (MIDI), vgmstream (hundreds of game formats), Symphonia (MP3, FLAC, WAV, OGG, M4A, AIFF…). Archives: ZIP, 7z, TAR, TAR.GZ, RAR, RSN.</string>
+    <string name="sound_output">Sound output: %1$s</string>
+    <string name="settings_file">Settings: %1$s</string>
+
+    <!-- Permissions and pickers -->
     <string name="storage_title">Your music folders</string>
     <string name="storage_message">Chippy plays music straight from your folders, archives and chiptune files, with a file browser instead of a library. For that it needs to see your files: allow \"All files access\" on the next screen.</string>
     <string name="storage_allow">Continue</string>
     <string name="storage_later">Not now</string>
     <string name="folder_not_local">Pick a folder on this device or its SD card: Chippy cannot read folders in cloud storage.</string>
+    <string name="no_folder_picker">The folder picker could not be shown</string>
 </resources>

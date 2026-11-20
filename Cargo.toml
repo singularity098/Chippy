@@ -12,8 +12,10 @@ members = [
     "crates/wsr-sys",
     "crates/xmp-sys",
     "crates/chippy-core",
+    "crates/chippy-engine",
     "crates/chippy",
     "crates/chippy-android",
+    "crates/uniffi-bindgen",
 ]
 default-members = ["crates/chippy"]
 

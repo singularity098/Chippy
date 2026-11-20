@@ -1,20 +1,15 @@
 //! Chippy: a chiptune-focused music player with a file browser instead of a
-//! library. The desktop binary (`main.rs`) and the Android library
-//! (`crates/chippy-android`) both start it from here.
+//! library. This is the desktop app (Slint); the desktop binary
+//! (`main.rs`) starts it from here. The Android app is a Jetpack Compose UI
+//! over the same engine (`crates/chippy-android`).
 
 mod app;
-mod art;
-mod audio;
-#[cfg(not(target_os = "android"))]
 mod desktop;
-mod export;
 mod icons;
 mod media;
-mod player;
-mod spectrum;
 
-#[cfg(target_os = "android")]
-pub mod android;
+// The playback engine, shared with the Android app.
+pub(crate) use chippy_engine::{art, audio, background_thread, export, player, spectrum};
 
 slint::include_modules!();
 
@@ -95,20 +90,6 @@ fn redraw_every_frame(ui: &MainWindow) {
     });
     if let Err(e) = result {
         log::warn!("cannot draw every frame ({e:?}); drawing on demand");
-    }
-}
-
-/// Lowers the calling thread's priority, for work in the background
-/// (reading tags, which can mean running a whole track through its
-/// emulator; album art; searching; exporting): the player thread and the
-/// window come first, so a busy moment does not starve the sound.
-pub(crate) fn background_thread() {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    // SAFETY: plain system calls on this thread; nice values are per thread
-    // on Linux.
-    unsafe {
-        let tid = libc::syscall(libc::SYS_gettid) as libc::id_t;
-        libc::setpriority(libc::PRIO_PROCESS, tid, 10);
     }
 }
 

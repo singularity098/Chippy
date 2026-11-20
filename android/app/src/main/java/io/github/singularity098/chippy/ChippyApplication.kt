@@ -13,6 +13,7 @@ class ChippyApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        NativeContext.ensure(this)
         store = Store(this)
         MediaBridge.init(this, store)
     }

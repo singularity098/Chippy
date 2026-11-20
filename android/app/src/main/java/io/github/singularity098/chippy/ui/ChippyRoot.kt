@@ -12,6 +12,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Scaffold
@@ -29,6 +30,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.singularity098.chippy.Store
 import io.github.singularity098.chippy.core.TrackInfo
@@ -93,7 +96,8 @@ fun ChippyRoot(store: Store, host: Host) {
                             listOf(look.paintC.copy(alpha = 0.10f), Color.Transparent),
                             radius = 1400f,
                         )
-                    ),
+                    )
+                    .swipeBetweenPages(page) { page = it },
             ) {
                 AnimatedContent(
                     targetState = page,
@@ -137,6 +141,40 @@ fun ChippyRoot(store: Store, host: Host) {
         info?.let { InfoSheet(it, onClose = { info = null }) }
     }
 }
+
+/**
+ * Swiping sideways moves between the pages the way they slide in: on the
+ * player, a swipe to the right pulls the browser in from the left and one
+ * to the left pulls the settings in from the right; the opposite swipe
+ * puts either away. Drags a slider or a list takes for itself (the seek
+ * and volume bars) are left to it.
+ */
+private fun Modifier.swipeBetweenPages(page: Page, go: (Page) -> Unit): Modifier =
+    pointerInput(page) {
+        val needed = 72.dp.toPx()
+        var dx = 0f
+        detectHorizontalDragGestures(
+            onDragStart = { dx = 0f },
+            onDragCancel = { dx = 0f },
+            onDragEnd = {
+                val to = when {
+                    dx > needed -> when (page) {
+                        Page.Player -> Page.Browser
+                        Page.Settings -> Page.Player
+                        else -> null
+                    }
+                    dx < -needed -> when (page) {
+                        Page.Player -> Page.Settings
+                        Page.Browser -> Page.Player
+                        else -> null
+                    }
+                    else -> null
+                }
+                to?.let(go)
+            },
+            onHorizontalDrag = { _, amount -> dx += amount },
+        )
+    }
 
 /** The browser comes from the left, the settings from the right, the
  * playlist from below, as their buttons sit on the player. */

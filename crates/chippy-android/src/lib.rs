@@ -13,6 +13,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
+#[cfg(target_os = "android")]
+mod android_context;
 mod core;
 mod paths;
 mod types;

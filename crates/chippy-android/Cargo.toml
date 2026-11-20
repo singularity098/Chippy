@@ -25,6 +25,10 @@ uniffi = "0.29.5"
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.15"
+# Hands the app's JavaVM and Context to cpal's Oboe backend, which asks
+# Java for buffer sizes while opening the sound output.
+jni = "0.21"
+ndk-context = "0.1"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 env_logger.workspace = true

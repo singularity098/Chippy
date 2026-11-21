@@ -286,12 +286,14 @@ impl App {
             Format::Flac => 1,
             Format::Mp3 => 2,
             Format::Opus => 3,
+            Format::Midi => 4,
         });
         e.set_format_detail(ss(match format {
             Format::Wav => "Uncompressed, 16-bit.",
             Format::Flac => "Lossless and compressed, 16-bit.",
             Format::Mp3 => "Lossy; plays everywhere.",
             Format::Opus => "Lossy; best quality for its size.",
+            Format::Midi => "Notes, for tabs and sheet music.",
         }));
         e.set_bitrate(match format {
             Format::Opus => s.export_opus_kbps,
@@ -305,7 +307,7 @@ impl App {
     }
 
     pub(super) fn set_export_format(&mut self, i: i32) {
-        self.settings.export_format = i.clamp(0, 3) as u32;
+        self.settings.export_format = i.clamp(0, 4) as u32;
         self.mark_dirty();
         self.sync_export();
     }

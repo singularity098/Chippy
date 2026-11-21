@@ -1,10 +1,11 @@
 //! Exporting tracks to audio files: WAV, FLAC, MP3 or Opus, one file per
 //! track, tagged. Tracks are decoded exactly as they play (looping
 //! chiptunes end at their length, with the fade), on a thread of their own.
+//! Or to MIDI: the notes, for the chiptunes whose notes can be found.
 
 use anyhow::{anyhow, bail, Context, Result};
 use chippy_core::decode::{open_decoder, DecodeOptions, Decoder};
-use chippy_core::{TrackMeta, TrackRef};
+use chippy_core::{notes, TrackMeta, TrackRef};
 use crossbeam_channel::Sender;
 use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -19,6 +20,8 @@ pub enum Format {
     Flac,
     Mp3,
     Opus,
+    /// The notes, not the sound (see `chippy_core::notes`).
+    Midi,
 }
 
 impl Format {
@@ -27,6 +30,7 @@ impl Format {
             0 => Format::Wav,
             2 => Format::Mp3,
             3 => Format::Opus,
+            4 => Format::Midi,
             _ => Format::Flac,
         }
     }
@@ -36,6 +40,7 @@ impl Format {
             Format::Flac => "flac",
             Format::Mp3 => "mp3",
             Format::Opus => "opus",
+            Format::Midi => "mid",
         }
     }
 }
@@ -255,8 +260,22 @@ fn export_track(
     cancel: &AtomicBool,
     tx: &Sender<Progress>,
 ) -> Result<()> {
+    match job.format {
+        Format::Midi => write_midi(track, meta, path),
+        _ => export_audio(track, meta, path, job, cancel, tx),
+    }
+}
+
+fn export_audio(
+    track: &TrackRef,
+    meta: &TrackMeta,
+    path: &Path,
+    job: &Job,
+    cancel: &AtomicBool,
+    tx: &Sender<Progress>,
+) -> Result<()> {
     let rate = match job.format {
-        Format::Wav | Format::Flac => None,
+        Format::Wav | Format::Flac | Format::Midi => None,
         Format::Mp3 => Some(44_100),
         Format::Opus => Some(48_000),
     };
@@ -282,6 +301,7 @@ fn export_track(
         Format::Flac => write_flac(&mut pcm, path, meta, &mut report)?,
         Format::Mp3 => write_mp3(&mut pcm, path, job.kbps, &mut report)?,
         Format::Opus => write_opus(&mut pcm, path, job.kbps, meta, &mut report)?,
+        Format::Midi => bail!("MIDI is not audio"),
     }
     // FLAC and Opus carry their tags from the start.
     if matches!(job.format, Format::Wav | Format::Mp3) {
@@ -290,6 +310,22 @@ fn export_track(
         }
     }
     Ok(())
+}
+
+/// The notes of a chiptune (NES, SNES, Genesis) as a MIDI file, over the
+/// length it plays for; a MIDI file is copied as it is.
+fn write_midi(track: &TrackRef, meta: &TrackMeta, path: &Path) -> Result<()> {
+    let bytes = match track.loc.extension().as_str() {
+        "mid" | "midi" | "kar" | "smf" => track.loc.read()?.to_vec(),
+        _ => {
+            let t = notes::transcribe(&track.loc, track.sub, meta.length_ms)?;
+            if t.parts.is_empty() {
+                bail!("no notes found");
+            }
+            notes::midi::write(&t, &meta.title)
+        }
+    };
+    std::fs::write(path, bytes).with_context(|| format!("cannot write {}", path.display()))
 }
 
 type Report<'a> = dyn FnMut(&Pcm) -> Result<()> + 'a;
@@ -767,5 +803,39 @@ mod tests {
             file_name(0, 2, &m, Format::Flac, &mut used),
             "01 a_b_ c_ (2).flac"
         );
+    }
+}
+
+#[cfg(test)]
+mod midi_tests {
+    use super::*;
+
+    #[test]
+    fn exports_the_notes_of_a_chiptune() {
+        let dir = tempfile::tempdir().unwrap();
+        let nsf =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../third_party/game-music-emu/test.nsf");
+        let track = TrackRef::file(chippy_core::Location::Fs(nsf));
+        let meta = TrackMeta {
+            title: "Test".into(),
+            length_ms: Some(10_000),
+            ..Default::default()
+        };
+        let out = dir.path().join("test.mid");
+        write_midi(&track, &meta, &out).unwrap();
+        let bytes = std::fs::read(&out).unwrap();
+        assert!(bytes.starts_with(b"MThd"));
+        // The tempo track and the two pulse channels.
+        assert_eq!(u16::from_be_bytes([bytes[10], bytes[11]]), 3);
+
+        let wav = dir.path().join("tone.wav");
+        std::fs::write(&wav, b"RIFF").unwrap();
+        let err = write_midi(
+            &TrackRef::file(chippy_core::Location::Fs(wav)),
+            &meta,
+            &dir.path().join("tone.mid"),
+        )
+        .unwrap_err();
+        assert!(format!("{err}").contains("notes"), "{err}");
     }
 }

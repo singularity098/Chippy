@@ -50,7 +50,7 @@ fn cstr(p: *const c_char) -> String {
 }
 
 /// The file's bytes, inflated if gzip-compressed (VGZ).
-fn load(loc: &Location) -> Result<Arc<Vec<u8>>> {
+pub(crate) fn load(loc: &Location) -> Result<Arc<Vec<u8>>> {
     let data = loc.read()?;
     if data.len() > 2 && data[0] == 0x1f && data[1] == 0x8b {
         let mut out = Vec::new();
@@ -220,6 +220,96 @@ impl Decoder for GmeDecoder {
         check(unsafe { ffi::gme_seek(self.emu.0, next as i32) })?;
         Ok(next == ms)
     }
+}
+
+/// A sound-chip register write seen by [`capture`]; see gme-sys's
+/// `hooks/config.h`. `kind` 0 is an APU write, 1 a call of the play
+/// routine, 2 an S-DSP write with `time` in SPC clocks from the start of the
+/// block of `gme_play` it happened in.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ChipWrite {
+    pub kind: i32,
+    pub time: i64,
+    pub addr: i32,
+    pub data: i32,
+}
+
+/// Removes the thread's hook however capturing ends.
+struct HookGuard;
+impl Drop for HookGuard {
+    fn drop(&mut self) {
+        unsafe { ffi::chippy_gme_set_hook(None, std::ptr::null_mut()) };
+    }
+}
+
+unsafe extern "C" fn collect(
+    user: *mut std::os::raw::c_void,
+    kind: std::os::raw::c_int,
+    time: std::os::raw::c_long,
+    addr: std::os::raw::c_int,
+    data: std::os::raw::c_int,
+) {
+    let writes = unsafe { &mut *(user as *mut Vec<ChipWrite>) };
+    writes.push(ChipWrite {
+        kind,
+        // c_long: 32 bits on Windows.
+        #[allow(clippy::useless_conversion)]
+        time: i64::from(time),
+        addr,
+        data,
+    });
+}
+
+pub(crate) struct Captured {
+    pub system: String,
+    /// How long was played, in sample frames.
+    pub frames: u64,
+}
+
+/// Plays `track` (silently, as fast as it goes) for `max_ms`, or its own
+/// length, handing `f` the register writes of each `chunk` sample frames
+/// along with how many frames came before them.
+pub(crate) fn capture(
+    loc: &Location,
+    track: u32,
+    rate: u32,
+    max_ms: Option<u64>,
+    chunk: usize,
+    mut f: impl FnMut(u64, &[ChipWrite]),
+) -> Result<Captured> {
+    let emu = open_emu(loc, rate)?;
+    let count = unsafe { ffi::gme_track_count(emu.0) };
+    let track = (track as i32).min(count - 1).max(0);
+    let ms = max_ms.unwrap_or_else(|| {
+        let (start, fade) = timing(info(&emu, track).as_ref(), &DecodeOptions::default());
+        start + fade
+    });
+    let system = cstr(unsafe { ffi::gme_type_system(ffi::gme_type(emu.0)) });
+    let mut writes: Box<Vec<ChipWrite>> = Box::default();
+    let _guard = HookGuard;
+    unsafe {
+        ffi::gme_set_autoload_playback_limit(emu.0, 0);
+        // Silence detection runs the emulator ahead of what was asked for.
+        ffi::gme_ignore_silence(emu.0, 1);
+        ffi::chippy_gme_set_hook(Some(collect), (&mut *writes as *mut Vec<ChipWrite>).cast());
+    }
+    check(unsafe { ffi::gme_start_track(emu.0, track) })?;
+    let total = ms * rate as u64 / 1000;
+    let mut buf = vec![0i16; chunk * 2];
+    let mut frames = 0u64;
+    // The init routine's writes, then each block's.
+    f(0, &writes);
+    writes.clear();
+    while frames < total {
+        let err = unsafe { ffi::gme_play(emu.0, buf.len() as i32, buf.as_mut_ptr()) };
+        f(frames, &writes);
+        writes.clear();
+        frames += chunk as u64;
+        if !err.is_null() || unsafe { ffi::gme_track_ended(emu.0) } != 0 {
+            break;
+        }
+    }
+    Ok(Captured { system, frames })
 }
 
 pub fn track_list(loc: &Location, opts: &DecodeOptions) -> Result<Vec<SubTrack>> {

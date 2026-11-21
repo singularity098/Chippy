@@ -468,6 +468,9 @@ impl App {
         on!(app, tb, on_set_part, |a, i: i32| a.set_tab_part(i));
         on!(app, tb, on_set_tuning, |a, i: i32| a.set_tab_tuning(i));
         on!(app, tb, on_set_width, |a, w: i32| a.set_tab_width(w));
+        on!(app, tb, on_shift_octave, |a, d: i32| a.shift_tab_octave(d));
+        on!(app, tb, on_nudge, |a, d: i32| a.nudge_tab(d));
+        on!(app, tb, on_reset_adjust, |a| a.reset_tab_adjust());
         on!(app, tb, on_seek_line, |a, i: i32| a.seek_tab_line(i));
         on!(app, s, on_set_theme, |a, i: i32| {
             let names: Vec<String> = a

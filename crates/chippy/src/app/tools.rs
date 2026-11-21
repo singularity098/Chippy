@@ -562,6 +562,14 @@ impl App {
             Some(ly) => {
                 let lines: Vec<SharedString> = ly.lines.iter().map(|x| ss(&x.text)).collect();
                 l.set_lines(ModelRc::new(VecModel::from(lines)));
+                let times: Vec<SharedString> = ly
+                    .lines
+                    .iter()
+                    .map(|x| {
+                        x.ms.map_or_else(SharedString::new, |ms| ss(lyrics::stamp(ms)))
+                    })
+                    .collect();
+                l.set_times(ModelRc::new(VecModel::from(times)));
                 l.set_synced(ly.synced);
                 l.set_source(ss(format!(
                     "From {}{}",
@@ -573,6 +581,7 @@ impl App {
             }
             None => {
                 l.set_lines(ModelRc::default());
+                l.set_times(ModelRc::default());
                 l.set_synced(false);
                 l.set_source(SharedString::new());
                 l.set_all_text(SharedString::new());
@@ -666,6 +675,21 @@ impl App {
         self.sync_tabs();
     }
 
+    pub(super) fn shift_tab_octave(&mut self, d: i32) {
+        self.tabs.view.shift_octave(d);
+        self.sync_tabs();
+    }
+
+    pub(super) fn nudge_tab(&mut self, d: i32) {
+        self.tabs.view.nudge(d);
+        self.sync_tabs();
+    }
+
+    pub(super) fn reset_tab_adjust(&mut self) {
+        self.tabs.view.reset_adjust();
+        self.sync_tabs();
+    }
+
     pub(super) fn set_tab_width(&mut self, digits: i32) {
         if self.tabs.view.set_width(digits as f32) {
             self.tabs.line = -1;
@@ -713,6 +737,11 @@ impl App {
             .collect();
         t.set_lines(ModelRc::new(VecModel::from(lines)));
         t.set_detail(ss(v.detail()));
+        let adjust = v.adjust();
+        t.set_octave(adjust.octave);
+        t.set_position(adjust.position);
+        t.set_can_up(v.can_nudge(true));
+        t.set_can_down(v.can_nudge(false));
         let title = t.get_title().to_string();
         t.set_all_text(ss(v.text(title.trim_start_matches("Guitar tab: "))));
         t.set_current(-1);

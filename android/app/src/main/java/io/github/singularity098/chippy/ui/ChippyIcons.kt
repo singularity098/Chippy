@@ -232,6 +232,20 @@ object ChippyIcons {
             weight = 2f,
         )
     }
+    val Minus: ImageVector by lazy {
+        icon(
+            "Minus",
+            line = "M 6 12 L 18 12",
+            weight = 2f,
+        )
+    }
+    val Plus: ImageVector by lazy {
+        icon(
+            "Plus",
+            line = "M 6 12 L 18 12 M 12 6 L 12 18",
+            weight = 2f,
+        )
+    }
     val ChevronLeft: ImageVector by lazy {
         icon(
             "ChevronLeft",

@@ -171,6 +171,14 @@ export component BottomBar inherits Rectangle {
     }
 
     property <bool> narrow: root.width < 1100px;
+    // The timeline is 70% longer than it once was, the room taken from
+    // the now playing part (which seldom needs it all): what the bar used
+    // to be, then the now playing part shortened by 70% of it.
+    property <length> right-width: root.narrow ? 300px : 360px;
+    property <length> fixed: 14px + 18px + root.right-width + (root.narrow ? 2 * 18px : 150px + 3 * 18px) + 2 * 54px + 2 * 10px;
+    property <length> was-now: root.narrow ? min(300px, root.width * 0.3) : min(470px, root.width * 0.34);
+    property <length> was-bar: max(0px, root.width - root.fixed - root.was-now);
+    property <length> now-width: max(root.narrow ? 190px : 250px, root.was-now - root.was-bar * 0.7);
 
     HorizontalLayout {
         padding-left: 14px;
@@ -181,10 +189,12 @@ export component BottomBar inherits Rectangle {
 
         // ---- now playing
         now := HorizontalLayout {
-            width: root.narrow ? min(300px, root.width * 0.3) : min(470px, root.width * 0.34);
+            width: root.now-width;
             spacing: 12px;
+            // The cover's whole picture, in its own shape.
             thumb := Rectangle {
-                width: self.height;
+                property <float> aspect: Now.has-art ? max(0.5, min(1.8, Now.art-aspect)) : 1;
+                width: self.height * self.aspect;
                 border-radius: 8px;
                 clip: true;
                 background: Theme.surface-2;
@@ -194,7 +204,7 @@ export component BottomBar inherits Rectangle {
                     width: parent.width;
                     height: parent.height;
                     source: Now.art;
-                    image-fit: cover;
+                    image-fit: contain;
                 }
                 if !Now.has-art: Icon {
                     x: (parent.width - self.width) / 2;
@@ -340,7 +350,7 @@ export component BottomBar inherits Rectangle {
 
         // ---- repeat, volume
         HorizontalLayout {
-            width: root.narrow ? 300px : 360px;
+            width: root.right-width;
             spacing: 8px;
             IconButton {
                 y: (parent.height - self.height) / 2;

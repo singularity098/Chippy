@@ -285,20 +285,34 @@ fun LyricsSheet(store: Store, info: LyricsInfo, onClose: () -> Unit) {
         LazyColumn(Modifier.fillMaxSize(), state = list) {
             itemsIndexed(info.lines) { i, line ->
                 val now = i == current
-                Text(
-                    line.text.ifEmpty { " " },
+                Row(
                     Modifier
                         .fillMaxWidth()
                         .clickable(enabled = line.ms >= 0) { store.send { seekTo(line.ms.toULong()) } }
                         .padding(horizontal = 24.dp, vertical = 8.dp),
-                    style = if (now) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium,
-                    fontWeight = if (now) FontWeight.Medium else FontWeight.Light,
-                    color = when {
-                        now -> look.accent
-                        info.synced && i < current -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                        else -> MaterialTheme.colorScheme.onSurface
-                    },
-                )
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // When it is sung, faintly beside it: "[1:23]".
+                    if (line.ms >= 0) {
+                        val s = line.ms / 1000
+                        Text(
+                            "[%d:%02d]".format(s / 60, s % 60),
+                            Modifier.width(52.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                        )
+                    }
+                    Text(
+                        line.text.ifEmpty { " " },
+                        style = if (now) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium,
+                        fontWeight = if (now) FontWeight.Medium else FontWeight.Light,
+                        color = when {
+                            now -> look.accent
+                            info.synced && i < current -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            else -> MaterialTheme.colorScheme.onSurface
+                        },
+                    )
+                }
             }
         }
     }
@@ -520,6 +534,45 @@ fun TabsSheet(store: Store, state: TabsState, onClose: () -> Unit) {
                 ) { i -> store.send { setTabTuning(i.toUInt()) } }
                 // Lined up with the part's dropdown above.
                 Spacer(Modifier.width(96.dp))
+            }
+            // Moved by hand: by octaves, and along the neck.
+            val ready = !state.busy && state.lines.isNotEmpty()
+            val signed = { n: Int -> if (n > 0) "+$n" else if (n < 0) "−${-n}" else "0" }
+            Row(Modifier.padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.tab_octave), style = labelStyle, color = labelColor)
+                IconButton(
+                    onClick = { store.send { shiftTabOctave(-1) } },
+                    enabled = ready && state.octave > -3,
+                ) { Icon(ChippyIcons.Minus, stringResource(R.string.tab_octave_down)) }
+                Text(
+                    signed(state.octave),
+                    style = labelStyle,
+                    color = if (state.octave != 0) LocalLook.current.accent else labelColor,
+                )
+                IconButton(
+                    onClick = { store.send { shiftTabOctave(1) } },
+                    enabled = ready && state.octave < 3,
+                ) { Icon(ChippyIcons.Plus, stringResource(R.string.tab_octave_up)) }
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.tab_neck), style = labelStyle, color = labelColor)
+                IconButton(
+                    onClick = { store.send { nudgeTab(-1) } },
+                    enabled = ready && state.canDown,
+                ) { Icon(ChippyIcons.ChevronLeft, stringResource(R.string.tab_neck_down)) }
+                Text(
+                    signed(state.position),
+                    style = labelStyle,
+                    color = if (state.position != 0) LocalLook.current.accent else labelColor,
+                )
+                IconButton(
+                    onClick = { store.send { nudgeTab(1) } },
+                    enabled = ready && state.canUp,
+                ) { Icon(ChippyIcons.ChevronRight, stringResource(R.string.tab_neck_up)) }
+                Spacer(Modifier.weight(1f))
+                IconButton(
+                    onClick = { store.send { resetTabAdjust() } },
+                    enabled = ready && (state.octave != 0 || state.position != 0),
+                ) { Icon(ChippyIcons.Refresh, stringResource(R.string.tab_reset)) }
             }
         }
         if (state.busy || state.lines.isEmpty()) {

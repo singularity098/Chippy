@@ -134,6 +134,8 @@ impl App {
                 let mut shown = false;
                 self.with_winit(|w| shown = w.is_visible() != Some(false));
                 if shown {
+                    #[cfg(windows)]
+                    self.attach_media_controls();
                     self.restore_window();
                     self.win_phase = WinPhase::Settling(now, false);
                 }
@@ -172,6 +174,24 @@ impl App {
                     }
                 }
             }
+        }
+    }
+
+    /// Windows' media controls belong to a window: they are connected to
+    /// Chippy's once it is on screen.
+    #[cfg(windows)]
+    fn attach_media_controls(&mut self) {
+        use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let mut hwnd = None;
+        self.with_winit(|w| {
+            if let Ok(h) = w.window_handle() {
+                if let RawWindowHandle::Win32(h) = h.as_raw() {
+                    hwnd = Some(h.hwnd.get() as *mut std::ffi::c_void);
+                }
+            }
+        });
+        if let Some(h) = hwnd {
+            self.media.attach_window(h);
         }
     }
 

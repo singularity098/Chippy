@@ -1160,8 +1160,8 @@ impl App {
             .music_dir
             .clone()
             .filter(|d| d.is_dir())
-            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
-            .unwrap_or_else(|| PathBuf::from("/"))
+            .or_else(home)
+            .unwrap_or_else(|| PathBuf::from(std::path::MAIN_SEPARATOR_STR))
     }
 
     /// The music folder a path is in (the deepest, should they nest).
@@ -2528,8 +2528,8 @@ thread_local! {
 fn expand(s: &str) -> PathBuf {
     let s = s.trim();
     if let Some(rest) = s.strip_prefix('~') {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(rest.trim_start_matches('/'));
+        if let Some(home) = home() {
+            return home.join(rest.trim_start_matches(['/', '\\']));
         }
     }
     PathBuf::from(s)
@@ -2541,32 +2541,38 @@ fn file_name(p: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// The user's home folder ($HOME; on Windows the profile folder).
 fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .filter(|h| h.components().count() > 1)
+    std::env::home_dir().filter(|h| h.components().count() > 1)
 }
 
 /// A path with the home folder written as `~`.
 fn tilde(p: &Path) -> String {
     match home().and_then(|h| p.strip_prefix(&h).ok().map(Path::to_path_buf)) {
         Some(rest) if rest.as_os_str().is_empty() => "~".into(),
-        Some(rest) => format!("~/{}", rest.to_string_lossy()),
+        Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.to_string_lossy()),
         None => p.to_string_lossy().into_owned(),
     }
 }
 
 /// The levels of a path, for the path bar: (label, path, after a "/").
-/// The home folder is one level, `~`.
+/// The home folder is one level, `~`; so is a Windows drive (`C:\`).
 fn crumbs(p: &Path) -> Vec<(String, PathBuf, bool)> {
     use std::path::Component;
-    let mut out = Vec::new();
+    let mut out: Vec<(String, PathBuf, bool)> = Vec::new();
     let mut acc = PathBuf::new();
     let home = home();
     for c in p.components() {
         acc.push(c.as_os_str());
         match c {
-            Component::RootDir => out.push(("/".to_string(), acc.clone(), false)),
+            Component::RootDir => match out.last_mut() {
+                // `C:` and its root are one level, `C:\`.
+                Some(drive) => {
+                    drive.0.push('\\');
+                    drive.1 = acc.clone();
+                }
+                None => out.push(("/".to_string(), acc.clone(), false)),
+            },
             Component::Prefix(pre) => out.push((
                 pre.as_os_str().to_string_lossy().into_owned(),
                 acc.clone(),
@@ -2625,5 +2631,17 @@ mod tests {
             c.iter().map(|x| (x.0.as_str(), x.2)).collect::<Vec<_>>(),
             [("/", false), ("srv", false), ("x", true)]
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn path_bar_drives() {
+        let c = crumbs(Path::new(r"D:\Music\nes.zip"));
+        assert_eq!(
+            c.iter().map(|x| (x.0.as_str(), x.2)).collect::<Vec<_>>(),
+            [(r"D:\", false), ("Music", false), ("nes.zip", true)]
+        );
+        assert_eq!(c[0].1, PathBuf::from(r"D:\"));
+        assert_eq!(c[1].1, PathBuf::from(r"D:\Music"));
     }
 }

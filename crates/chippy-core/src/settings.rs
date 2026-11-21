@@ -158,9 +158,24 @@ impl Default for Settings {
     }
 }
 
+/// The folder that, beside the program, makes Chippy portable: settings
+/// are kept in it instead of the user's profile (the Windows zip has one).
+pub const PORTABLE_DIR: &str = "chippy-settings";
+
+/// Where settings and the session are kept: `CHIPPY_HOME`; else a
+/// `chippy-settings` folder beside the program, if there is one; else the
+/// system's place (`~/.config/chippy`, `%APPDATA%\chippy\config`).
 pub fn config_dir() -> PathBuf {
     if let Some(h) = std::env::var_os("CHIPPY_HOME") {
         return PathBuf::from(h);
+    }
+    #[cfg(not(target_os = "android"))]
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.join(PORTABLE_DIR)))
+        .filter(|d| d.is_dir())
+    {
+        return dir;
     }
     directories::ProjectDirs::from("", "", "chippy")
         .map(|d| d.config_dir().to_path_buf())

@@ -1,0 +1,5 @@
+[env]
+# Windows builds (MinGW-w64): the cc crate would link libstdc++ for the
+# emulators' C++ as a DLL that Windows does not have. Nothing asks for it
+# here; crates/chippy/build.rs links it into chippy.exe instead.
+CXXSTDLIB_x86_64_pc_windows_gnu = ""

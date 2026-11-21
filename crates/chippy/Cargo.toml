@@ -50,3 +50,5 @@ tempfile.workspace = true
 
 [build-dependencies]
 slint-build = "~1.14"
+# The icon, version info and manifest built into chippy.exe.
+embed-resource = "3"

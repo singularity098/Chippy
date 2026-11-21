@@ -44,6 +44,9 @@ fn main() {
     }
     let dst = c
         .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON")
+        // No regex library: it is only for the tools' pattern options, and
+        // Windows has no POSIX one (libarchive would demand PCRE instead).
+        .define("POSIX_REGEX_LIB", "NONE")
         .define("CMAKE_DISABLE_FIND_PACKAGE_ZLIB", "ON")
         .define("CMAKE_DISABLE_FIND_PACKAGE_BZip2", "ON")
         .define("CMAKE_DISABLE_FIND_PACKAGE_LibLZMA", "ON")

@@ -31,6 +31,8 @@ pub extern "system" fn Java_io_github_singularity098_chippy_NativeContext_init(
         std::mem::forget(context);
         // SAFETY: both pointers stay valid for the life of the process, and
         // `INIT` makes this the only call.
-        unsafe { ndk_context::initialize_android_context(vm.get_java_vm_pointer().cast(), raw.cast()) };
+        unsafe {
+            ndk_context::initialize_android_context(vm.get_java_vm_pointer().cast(), raw.cast())
+        };
     });
 }

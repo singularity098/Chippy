@@ -719,6 +719,21 @@ impl Core {
         self.dirty.tabs = true;
     }
 
+    pub fn shift_tab_octave(&mut self, d: i32) {
+        self.tabs.shift_octave(d);
+        self.dirty.tabs = true;
+    }
+
+    pub fn nudge_tab(&mut self, d: i32) {
+        self.tabs.nudge(d);
+        self.dirty.tabs = true;
+    }
+
+    pub fn reset_tab_adjust(&mut self) {
+        self.tabs.reset_adjust();
+        self.dirty.tabs = true;
+    }
+
     /// Takes in a finished tab, and follows the playlist to the next
     /// track; true while one is being worked out.
     fn tabs_tick(&mut self) -> bool {
@@ -783,6 +798,10 @@ impl Core {
             detail: v.detail(),
             text: v.text(&title),
             title,
+            octave: v.adjust().octave,
+            position: v.adjust().position,
+            can_up: v.can_nudge(true),
+            can_down: v.can_nudge(false),
         }
     }
 

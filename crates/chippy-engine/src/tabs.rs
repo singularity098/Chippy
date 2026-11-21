@@ -6,6 +6,7 @@ use chippy_core::meta::format_ms;
 use chippy_core::notes::{self, gm, tab, Part, Transcription};
 use chippy_core::TrackRef;
 use crossbeam_channel::{Receiver, Sender};
+use std::collections::HashMap;
 
 /// The notes of a track, found in the background: (request, result).
 type Found = (u64, Result<Transcription, String>);
@@ -44,6 +45,11 @@ pub struct TabView {
     length_ms: f64,
     /// How many digits (fret numbers) fit across a line.
     width: f32,
+    /// Octaves and steps along the neck chosen by hand, per track and
+    /// part, for as long as the app runs (never saved).
+    adjusts: HashMap<(TrackRef, usize), tab::Adjust>,
+    /// The last step along the neck, up (true) or down, moved nothing.
+    stuck: Option<bool>,
 }
 
 impl Default for TabView {
@@ -63,6 +69,8 @@ impl Default for TabView {
             lines: Vec::new(),
             length_ms: 0.0,
             width: DEFAULT_WIDTH,
+            adjusts: HashMap::new(),
+            stuck: None,
         }
     }
 }
@@ -313,9 +321,70 @@ impl TabView {
         }
     }
 
+    /// Where the shown part's adjustments are kept.
+    fn adjust_key(&self) -> Option<(TrackRef, usize)> {
+        Some((self.track.clone()?, *self.parts.get(self.part)?))
+    }
+
+    /// The shown part's octave and steps along the neck, chosen by hand.
+    pub fn adjust(&self) -> tab::Adjust {
+        self.adjust_key()
+            .and_then(|k| self.adjusts.get(&k).copied())
+            .unwrap_or_default()
+    }
+
+    fn set_adjust(&mut self, a: tab::Adjust) {
+        let Some(k) = self.adjust_key() else { return };
+        if a == tab::Adjust::default() {
+            self.adjusts.remove(&k);
+        } else {
+            self.adjusts.insert(k, a);
+        }
+        self.arrange();
+    }
+
+    /// Shows the part `d` octaves higher (lower, if negative).
+    pub fn shift_octave(&mut self, d: i32) {
+        let mut a = self.adjust();
+        a.octave = (a.octave + d).clamp(-tab::MAX_OCTAVES, tab::MAX_OCTAVES);
+        self.set_adjust(a);
+    }
+
+    /// Moves the fingering `d` steps up the neck (down, if negative).
+    pub fn nudge(&mut self, d: i32) {
+        let mut a = self.adjust();
+        let before = a.position;
+        a.position = (a.position + d).clamp(-tab::MAX_STEPS, tab::MAX_STEPS);
+        self.set_adjust(a);
+        if d != 0 && self.adjust().position == before {
+            self.stuck = Some(d > 0);
+        }
+    }
+
+    /// Back to the part as it fits best.
+    pub fn reset_adjust(&mut self) {
+        self.set_adjust(tab::Adjust::default());
+    }
+
+    /// Whether the part can be moved further up (`up`) or down the neck:
+    /// false once a step that way moved nothing.
+    pub fn can_nudge(&self, up: bool) -> bool {
+        let Some(t) = &self.tab else { return false };
+        let p = self.adjust().position;
+        !t.notes.is_empty()
+            && self.stuck != Some(up)
+            && if up {
+                p < tab::MAX_STEPS
+            } else {
+                p > -tab::MAX_STEPS
+            }
+    }
+
     fn arrange(&mut self) {
         self.tab = None;
         self.lines.clear();
+        self.stuck = None;
+        let adjust = self.adjust();
         let Some(p) = self.current_part() else { return };
         let tuning = if self.tuning_chosen {
             self.tuning
@@ -325,7 +394,22 @@ impl TabView {
         } else {
             0
         };
-        let tab = tab::arrange(&p.notes, &tab::TUNINGS[tuning]);
+        let tab = tab::arrange_with(&p.notes, &tab::TUNINGS[tuning], adjust);
+        // Steps asked for past where anything moves are forgotten, so a
+        // step back the other way shows at once.
+        if tab.position != adjust.position {
+            if let Some(k) = self.adjust_key() {
+                let a = tab::Adjust {
+                    position: tab.position,
+                    ..adjust
+                };
+                if a == tab::Adjust::default() {
+                    self.adjusts.remove(&k);
+                } else {
+                    self.adjusts.insert(k, a);
+                }
+            }
+        }
         self.tuning = tuning;
         self.tab = Some(tab);
         self.layout();
@@ -395,6 +479,26 @@ impl TabView {
                     1 => "an octave".to_string(),
                     n => format!("{n} octaves"),
                 }
+            ));
+        }
+        if t.octave != 0 {
+            out.push(format!(
+                "Shown {} {} by hand.",
+                match t.octave.abs() {
+                    1 => "an octave".to_string(),
+                    n => format!("{n} octaves"),
+                },
+                if t.octave > 0 { "higher" } else { "lower" },
+            ));
+        }
+        if t.position != 0 {
+            out.push(format!(
+                "Moved {} {} the neck.",
+                match t.position.abs() {
+                    1 => "a step".to_string(),
+                    n => format!("{n} steps"),
+                },
+                if t.position > 0 { "up" } else { "down" },
             ));
         }
         if t.folded > 0 {

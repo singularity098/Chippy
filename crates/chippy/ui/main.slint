@@ -363,9 +363,12 @@ export component MainWindow inherits Window {
     // bar (and so the transport) still below them.
     property <length> sheet-height: root.phone ? root.height - root.top-inset : root.mid-height;
     property <length> sheet-inset: root.phone ? 0 : root.gutter;
+    // Lyrics are seldom long lines: on a wide window, a column in the
+    // middle.
+    property <length> lyrics-width: root.phone ? root.width : min(root.width - 2 * root.sheet-inset, 760px);
     LyricsSheet {
-        x: root.sheet-inset;
-        width: root.width - 2 * root.sheet-inset;
+        x: (root.width - self.width) / 2;
+        width: root.lyrics-width;
         height: root.sheet-height;
         y: Lyrics.shown ? root.top-inset : root.height;
         visible: self.y < root.height;

@@ -5,6 +5,12 @@
 //! hand in one place, low frets, and chords within a hand's reach. A part
 //! outside the instrument's range is moved by octaves to fit; single notes
 //! still out of reach are folded into it an octave at a time.
+//!
+//! By hand, a part can be shown an octave or more higher or lower, and its
+//! shapes nudged up or down the neck: each step up moves the lowest-fretted
+//! notes of every passage onto a lower string, where they are played
+//! higher up (each step down, the highest onto a higher string), and the
+//! rest of the fingering follows to stay comfortable.
 
 use super::Note;
 
@@ -71,11 +77,31 @@ pub struct TabNote {
     pub key: u8,
 }
 
+/// Changes made by hand to how a part is shown.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Adjust {
+    /// Octaves up (or down) from where the part fits best.
+    pub octave: i32,
+    /// Steps up (or down) the neck from the most comfortable fingering.
+    pub position: i32,
+}
+
+/// The most octaves a part can be moved by hand.
+pub const MAX_OCTAVES: i32 = 3;
+/// The most steps a part can be nudged along the neck.
+pub const MAX_STEPS: i32 = 12;
+
 #[derive(Clone, Debug, Default)]
 pub struct Tab {
     pub notes: Vec<TabNote>,
-    /// Semitones the part was moved to fit (a multiple of 12).
+    /// Semitones the part was moved to fit (a multiple of 12), not
+    /// counting `octave`.
     pub transpose: i32,
+    /// Octaves moved by hand.
+    pub octave: i32,
+    /// Steps nudged along the neck that changed something (fewer than
+    /// asked for once nothing more can move).
+    pub position: i32,
     /// Notes moved by an octave or more on their own to fit.
     pub folded: usize,
     /// The strings' names, lowest first ("E", "A", ...).
@@ -167,6 +193,115 @@ fn moving(hand: Option<f64>, frets: Option<(f64, f64)>) -> (f64, Option<f64>) {
 
 /// Lays `notes` out on an instrument tuned `tuning`.
 pub fn arrange(notes: &[Note], tuning: &Tuning) -> Tab {
+    arrange_with(notes, tuning, Adjust::default())
+}
+
+/// The most comfortable fingering of each chord over the whole part (a
+/// Viterbi search), notes outside each chord's `limits` (lowest, highest
+/// fret) counting heavily against it: an index into each chord's options.
+fn choose(options: &[Vec<Fingering>], limits: &[(u8, u8)]) -> Vec<usize> {
+    let outside = |f: &Fingering, (lo, hi): (u8, u8)| -> f64 {
+        f.places
+            .iter()
+            .map(|&(_, fret)| {
+                let d = if fret < lo {
+                    lo - fret
+                } else {
+                    fret.saturating_sub(hi)
+                };
+                if d > 0 {
+                    4.0 + d as f64
+                } else {
+                    0.0
+                }
+            })
+            .sum()
+    };
+    // Per option: (total cost, best previous option, where the hand is,
+    // carried through open strings).
+    let mut best: Vec<Vec<(f64, usize, Option<f64>)>> = Vec::with_capacity(options.len());
+    for (i, opts) in options.iter().enumerate() {
+        let row: Vec<(f64, usize, Option<f64>)> = opts
+            .iter()
+            .map(|o| {
+                let own = o.cost + outside(o, limits[i]);
+                if i == 0 {
+                    return (own, 0, moving(None, o.pos).1);
+                }
+                best[i - 1]
+                    .iter()
+                    .enumerate()
+                    .map(|(j, &(c, _, hand))| {
+                        let (m, to) = moving(hand, o.pos);
+                        (c + m + own, j, to)
+                    })
+                    .min_by(|a, b| a.0.total_cmp(&b.0))
+                    .unwrap_or((own, 0, None))
+            })
+            .collect();
+        best.push(row);
+    }
+    let mut pick = vec![0usize; options.len()];
+    if let Some(last) = best.last() {
+        let mut j = last
+            .iter()
+            .enumerate()
+            .min_by(|a, b| a.1 .0.total_cmp(&b.1 .0))
+            .map_or(0, |(j, _)| j);
+        for i in (0..options.len()).rev() {
+            pick[i] = j;
+            j = best[i][j].1;
+        }
+    }
+    pick
+}
+
+/// How far either side of a chord its passage reaches, for nudging.
+const PASSAGE_MS: f64 = 2000.0;
+
+/// One step up (`up`) or down the neck from `pick`: each chord's limits
+/// close in past the lowest (highest) fret played around it, so those
+/// notes move to another string. Notes that could not move before are
+/// passed over: the next ones in are moved instead.
+fn step_limits(
+    options: &[Vec<Fingering>],
+    pick: &[usize],
+    times: &[f64],
+    limits: &mut [(u8, u8)],
+    up: bool,
+) {
+    let frets: Vec<Vec<u8>> = options
+        .iter()
+        .zip(pick)
+        .map(|(o, &j)| {
+            o.get(j)
+                .map_or(Vec::new(), |f| f.places.iter().map(|p| p.1).collect())
+        })
+        .collect();
+    let old = limits.to_vec();
+    let (mut a, mut b) = (0usize, 0usize);
+    for i in 0..times.len() {
+        while times[a] < times[i] - PASSAGE_MS {
+            a += 1;
+        }
+        while b + 1 < times.len() && times[b + 1] <= times[i] + PASSAGE_MS {
+            b += 1;
+        }
+        let (lo, hi) = old[i];
+        let near = frets[a..=b].iter().flatten().copied();
+        if up {
+            let m = near.filter(|&f| f >= lo).min().unwrap_or(lo);
+            limits[i].0 = (m.max(lo) + 1).min(FRETS);
+        } else {
+            let m = near.filter(|&f| f <= hi).max().unwrap_or(hi);
+            limits[i].1 = m.min(hi).saturating_sub(1);
+        }
+    }
+}
+
+/// Lays `notes` out on an instrument tuned `tuning`, moved by hand as
+/// `adjust` says.
+pub fn arrange_with(notes: &[Note], tuning: &Tuning, adjust: Adjust) -> Tab {
     let low = *tuning.strings.iter().min().unwrap_or(&40);
     let high = tuning.strings.iter().max().unwrap_or(&64) + FRETS;
     let string_names = tuning.strings.iter().map(|&k| name(k)).collect();
@@ -187,11 +322,13 @@ pub fn arrange(notes: &[Note], tuning: &Tuning) -> Tab {
             (fit, -s.abs())
         })
         .unwrap_or(0);
+    let octave = adjust.octave.clamp(-MAX_OCTAVES, MAX_OCTAVES);
+    let shift = transpose + octave * 12;
     let mut folded = 0;
     let mut sorted: Vec<(f64, f64, u8)> = notes
         .iter()
         .map(|n| {
-            let mut k = n.key as i32 + transpose;
+            let mut k = n.key as i32 + shift;
             if k < low as i32 || k > high as i32 {
                 folded += 1;
             }
@@ -240,40 +377,32 @@ pub fn arrange(notes: &[Note], tuning: &Tuning) -> Tab {
             f
         })
         .collect();
-    // Per option: (total cost, best previous option, where the hand is,
-    // carried through open strings).
-    let mut best: Vec<Vec<(f64, usize, Option<f64>)>> = Vec::with_capacity(options.len());
-    for (i, opts) in options.iter().enumerate() {
-        let row: Vec<(f64, usize, Option<f64>)> = opts
-            .iter()
-            .map(|o| {
-                if i == 0 {
-                    return (o.cost, 0, moving(None, o.pos).1);
-                }
-                best[i - 1]
-                    .iter()
-                    .enumerate()
-                    .map(|(j, &(c, _, hand))| {
-                        let (m, to) = moving(hand, o.pos);
-                        (c + m + o.cost, j, to)
-                    })
-                    .min_by(|a, b| a.0.total_cmp(&b.0))
-                    .unwrap_or((o.cost, 0, None))
-            })
-            .collect();
-        best.push(row);
-    }
-    let mut pick = vec![0usize; options.len()];
-    if let Some(last) = best.last() {
-        let mut j = last
-            .iter()
-            .enumerate()
-            .min_by(|a, b| a.1 .0.total_cmp(&b.1 .0))
-            .map_or(0, |(j, _)| j);
-        for i in (0..options.len()).rev() {
-            pick[i] = j;
-            j = best[i][j].1;
+    let mut limits = vec![(0u8, FRETS); options.len()];
+    let mut pick = choose(&options, &limits);
+    // Along the neck, a step at a time, each one moving something; it
+    // stops when nothing more will move.
+    let times: Vec<f64> = chords.iter().map(|c| c[0].0).collect();
+    let wanted = adjust.position.clamp(-MAX_STEPS, MAX_STEPS);
+    let mut position = 0;
+    'steps: while position != wanted {
+        let up = wanted > 0;
+        for _ in 0..FRETS {
+            let before = limits.clone();
+            step_limits(&options, &pick, &times, &mut limits, up);
+            if limits == before {
+                break 'steps;
+            }
+            let next = choose(&options, &limits);
+            let moved = next.iter().zip(&pick).enumerate().any(|(i, (&a, &b))| {
+                options[i].get(a).map(|f| &f.places) != options[i].get(b).map(|f| &f.places)
+            });
+            pick = next;
+            if moved {
+                position += if up { 1 } else { -1 };
+                continue 'steps;
+            }
         }
+        break;
     }
     let mut out = Vec::new();
     for ((chord, opts), &j) in chords.iter().zip(&options).zip(&pick) {
@@ -296,6 +425,8 @@ pub fn arrange(notes: &[Note], tuning: &Tuning) -> Tab {
     Tab {
         notes: out,
         transpose,
+        octave,
+        position,
         folded,
         string_names,
     }
@@ -609,6 +740,107 @@ mod tests {
         }
         assert!(playhead(r, 0.0) < r.cells[0].0);
         assert!(playhead(r, 5000.0) > r.cells[7].0);
+    }
+
+    fn riff() -> Vec<Note> {
+        // A riff low on the neck: G A B C D, twice.
+        [55u8, 57, 59, 60, 62, 55, 57, 59, 60, 62]
+            .iter()
+            .enumerate()
+            .map(|(i, &k)| note(i as f64 * 200.0, k))
+            .collect()
+    }
+
+    fn lowest_fret(tab: &Tab) -> u8 {
+        tab.notes.iter().map(|n| n.fret).min().unwrap()
+    }
+
+    #[test]
+    fn nudges_up_and_down_the_neck() {
+        let notes = riff();
+        let g = &TUNINGS[0];
+        let base = arrange(&notes, g);
+        let mut last = lowest_fret(&base);
+        for steps in 1..=4 {
+            let tab = arrange_with(
+                &notes,
+                g,
+                Adjust {
+                    octave: 0,
+                    position: steps,
+                },
+            );
+            assert_eq!(tab.position, steps);
+            // The same notes, higher on the neck.
+            for (n, m) in tab.notes.iter().zip(&base.notes) {
+                assert_eq!(n.key, m.key);
+                assert_eq!(g.strings[n.string as usize] + n.fret, n.key);
+            }
+            let low = lowest_fret(&tab);
+            assert!(low > last, "{steps}: {low} after {last}");
+            last = low;
+        }
+        // Down from there comes back towards the nut.
+        let up = arrange_with(
+            &notes,
+            g,
+            Adjust {
+                octave: 0,
+                position: 4,
+            },
+        );
+        let down = arrange_with(
+            &notes,
+            g,
+            Adjust {
+                octave: 0,
+                position: -2,
+            },
+        );
+        assert!(down.position < 0);
+        let top = |t: &Tab| t.notes.iter().map(|n| n.fret).max().unwrap();
+        assert!(top(&down) <= top(&base) && top(&base) < top(&up));
+        // As far as it goes, and no further.
+        let far = arrange_with(
+            &notes,
+            g,
+            Adjust {
+                octave: 0,
+                position: MAX_STEPS,
+            },
+        );
+        assert!(far.position > 0 && far.position <= MAX_STEPS);
+    }
+
+    #[test]
+    fn shifts_by_octaves() {
+        let notes = riff();
+        let g = &TUNINGS[0];
+        let base = arrange(&notes, g);
+        let up = arrange_with(
+            &notes,
+            g,
+            Adjust {
+                octave: 1,
+                position: 0,
+            },
+        );
+        assert_eq!(up.octave, 1);
+        assert_eq!(up.transpose, base.transpose);
+        for (n, m) in up.notes.iter().zip(&base.notes) {
+            assert_eq!(n.key, m.key + 12);
+        }
+        let down = arrange_with(
+            &notes,
+            g,
+            Adjust {
+                octave: -1,
+                position: 0,
+            },
+        );
+        for (n, m) in down.notes.iter().zip(&base.notes) {
+            assert_eq!(n.key + 12, m.key);
+        }
     }
 
     #[test]

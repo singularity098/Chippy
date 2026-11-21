@@ -46,6 +46,12 @@ impl Lyrics {
     }
 }
 
+/// When a line is sung, as shown beside it: "[1:23]".
+pub fn stamp(ms: u64) -> String {
+    let s = ms / 1000;
+    format!("[{}:{:02}]", s / 60, s % 60)
+}
+
 /// A time tag: `mm:ss`, `mm:ss.xx`, `mm:ss:xx` or `hh:mm:ss.xx`, in ms.
 fn time_of(tag: &str) -> Option<u64> {
     let tag = tag.trim();

@@ -304,6 +304,23 @@ impl Engine {
         self.act(|c| c.set_tab_tuning(index as usize));
     }
 
+    /// Shows the tab `d` octaves higher (lower if negative), for this
+    /// track and part until the app closes.
+    pub fn shift_tab_octave(&self, d: i32) {
+        self.act(|c| c.shift_tab_octave(d));
+    }
+
+    /// Moves the tab's fingering `d` steps up the neck (down if negative):
+    /// the lowest-fretted notes onto another string, played higher up.
+    pub fn nudge_tab(&self, d: i32) {
+        self.act(|c| c.nudge_tab(d));
+    }
+
+    /// The tab back as it fits best.
+    pub fn reset_tab_adjust(&self) {
+        self.act(|c| c.reset_tab_adjust());
+    }
+
     /// How many fret numbers (a digit and its padding) fit across a line
     /// of the tab as shown: the lines are laid out to that width.
     pub fn set_tab_width(&self, digits: f32) {

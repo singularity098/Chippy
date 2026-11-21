@@ -284,6 +284,13 @@ pub struct TabsState {
     pub detail: String,
     /// The tab as text, to copy.
     pub text: String,
+    /// Moved by hand, for this track and part (until the app closes):
+    /// octaves up (down if negative), and steps up the neck.
+    pub octave: i32,
+    pub position: i32,
+    /// Whether it can be moved further up, or down, the neck.
+    pub can_up: bool,
+    pub can_down: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]

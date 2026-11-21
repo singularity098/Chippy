@@ -39,6 +39,8 @@ export global Lyrics {
     // "From Song.lrc", "From the file's tags".
     in property <string> source;
     in property <[string]> lines;
+    // When each line is sung, "[1:23]" ("" for untimed lyrics).
+    in property <[string]> times;
     // The lines are timed: the current one is marked and kept in view.
     in property <bool> synced;
     in property <int> current: -1;
@@ -72,7 +74,16 @@ export global Tabs {
     // "Moved down an octave to fit."
     in property <string> detail;
     in property <string> all-text;
+    // Moved by hand, for this track and part (until the app closes): by
+    // octaves, and by steps along the neck; and whether it can go further.
+    in property <int> octave;
+    in property <int> position;
+    in property <bool> can-up;
+    in property <bool> can-down;
     callback close;
+    callback shift-octave(int);
+    callback nudge(int);
+    callback reset-adjust;
     callback step-part(int);
     callback set-part(int);
     callback set-tuning(int);
@@ -541,9 +552,19 @@ export component LyricsSheet inherits Sheet {
                     property <bool> now: Lyrics.synced && i == Lyrics.current;
                     border-radius: 8px;
                     background: touch.has-hover && Lyrics.synced ? Theme.surface-2 : transparent;
-                    Text {
+                    property <string> time: i < Lyrics.times.length ? Lyrics.times[i] : "";
+                    stamp := Text {
                         x: 12px;
-                        width: parent.width - 24px;
+                        width: self.text == "" ? 0 : 52px;
+                        text: parent.time;
+                        vertical-alignment: center;
+                        font-size: Theme.font-small - 1px;
+                        font-weight: Theme.regular;
+                        color: Theme.text-faint.transparentize(45%);
+                    }
+                    Text {
+                        x: 12px + stamp.width;
+                        width: parent.width - 24px - stamp.width;
                         text: line;
                         wrap: word-wrap;
                         overflow: elide;
@@ -594,6 +615,92 @@ export component LyricsSheet inherits Sheet {
             tip: "Copy the lyrics as text";
             clicked => { copier.select-all(); copier.copy(); copier.clear-selection(); }
         }
+    }
+}
+
+// Moving the tab by hand: an octave up or down, and the fingering up or
+// down the neck; back to how it was.
+component TabAdjust inherits HorizontalLayout {
+    in property <bool> enabled;
+    spacing: 4px;
+    horizontal-stretch: 0;
+    Text {
+        horizontal-stretch: 0;
+        text: "Octave";
+        color: Theme.text-dim;
+        font-size: Theme.font-small;
+        vertical-alignment: center;
+    }
+    IconButton {
+        y: (parent.height - self.height) / 2;
+        size: 30px;
+        icon-size: 14px;
+        icon: Icons.minus;
+        enabled: root.enabled && Tabs.octave > -3;
+        tip: "Show it an octave lower";
+        clicked => { Tabs.shift-octave(-1); }
+    }
+    Text {
+        width: 22px;
+        text: Tabs.octave > 0 ? "+" + Tabs.octave : Tabs.octave < 0 ? "−" + abs(Tabs.octave) : "0";
+        color: Tabs.octave != 0 ? Theme.accent : Theme.text-faint;
+        font-size: Theme.font-small;
+        font-weight: Theme.regular;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    IconButton {
+        y: (parent.height - self.height) / 2;
+        size: 30px;
+        icon-size: 14px;
+        icon: Icons.plus;
+        enabled: root.enabled && Tabs.octave < 3;
+        tip: "Show it an octave higher";
+        clicked => { Tabs.shift-octave(1); }
+    }
+    Rectangle { width: 10px; }
+    Text {
+        horizontal-stretch: 0;
+        text: "Neck";
+        color: Theme.text-dim;
+        font-size: Theme.font-small;
+        vertical-alignment: center;
+    }
+    IconButton {
+        y: (parent.height - self.height) / 2;
+        size: 30px;
+        icon-size: 14px;
+        icon: Icons.chevron-left;
+        enabled: root.enabled && Tabs.can-down;
+        tip: "Move the shapes down the neck, towards the nut";
+        clicked => { Tabs.nudge(-1); }
+    }
+    Text {
+        width: 22px;
+        text: Tabs.position > 0 ? "+" + Tabs.position : Tabs.position < 0 ? "−" + abs(Tabs.position) : "0";
+        color: Tabs.position != 0 ? Theme.accent : Theme.text-faint;
+        font-size: Theme.font-small;
+        font-weight: Theme.regular;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    IconButton {
+        y: (parent.height - self.height) / 2;
+        size: 30px;
+        icon-size: 14px;
+        icon: Icons.chevron-right;
+        enabled: root.enabled && Tabs.can-up;
+        tip: "Move the shapes up the neck, to higher frets";
+        clicked => { Tabs.nudge(1); }
+    }
+    IconButton {
+        y: (parent.height - self.height) / 2;
+        size: 30px;
+        icon-size: 14px;
+        icon: Icons.refresh-line;
+        enabled: root.enabled && (Tabs.octave != 0 || Tabs.position != 0);
+        tip: "Back to how it fits best";
+        clicked => { Tabs.reset-adjust(); }
     }
 }
 
@@ -672,6 +779,15 @@ export component TabsSheet inherits Sheet {
             tip: "Another instrument or tuning";
             picked(i) => { Tabs.set-tuning(i); }
         }
+        if !root.compact: Rectangle { width: 8px; }
+        if !root.compact: TabAdjust {
+            enabled: !Tabs.busy && Tabs.lines.length > 0;
+        }
+    }
+    if root.compact: TabAdjust {
+        height: 34px;
+        alignment: center;
+        enabled: !Tabs.busy && Tabs.lines.length > 0;
     }
     Rectangle {
         vertical-stretch: 1;

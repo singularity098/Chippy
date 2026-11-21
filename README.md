@@ -83,13 +83,19 @@ info, PSF tags, vgmstream stream names).
   MIDI is greyed out for tracks whose notes can't be found.
 * **Lyrics** (`L`, or the speech-bubble button by the volume): from an
   `.lrc` file beside the track (timed: the line being sung is marked and
-  kept in view, and a click jumps to a line), the file's tags, a karaoke
-  MIDI file, or a `.txt` file beside it.
+  kept in view, a faint `[1:23]` beside each line says when it is sung,
+  and a click jumps to a line), the file's tags, a karaoke MIDI file, or a
+  `.txt` file beside it.
 * **Guitar tab** (`T`, or the guitar button): the playing track's notes laid
   out for guitar (standard, drop D, half step down), 7-string guitar (B
   standard, drop A), bass or ukulele, a part (channel) at a time, starting
   with the lead; the notes are spaced to fit the window without touching,
   with a playhead that follows the song; *Copy* gives the tab as text.
+  *Octave* shows the part an octave higher or lower; *Neck* nudges its
+  shapes up or down the neck, a step at a time: the lowest-fretted notes of
+  each passage move to a lower string, played higher up (or the highest to
+  a higher string), to find a more comfortable way to play a riff. Both are
+  remembered for each track and part until Chippy closes, never saved.
 * Lyrics and the tab slide up over the player, the transport still below
   them, and slide back down with the arrow, a drag or `Esc`. Their buttons
   are greyed out when a track has no lyrics, or its notes can't be found.

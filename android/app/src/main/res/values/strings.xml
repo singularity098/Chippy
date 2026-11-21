@@ -80,6 +80,13 @@
     <string name="tab_busy">Working out the notes…</string>
     <string name="tab_previous_part">The previous part</string>
     <string name="tab_next_part">The next part</string>
+    <string name="tab_octave">Octave</string>
+    <string name="tab_octave_down">Show it an octave lower</string>
+    <string name="tab_octave_up">Show it an octave higher</string>
+    <string name="tab_neck">Neck</string>
+    <string name="tab_neck_down">Move the shapes down the neck</string>
+    <string name="tab_neck_up">Move the shapes up the neck</string>
+    <string name="tab_reset">Back to how it fits best</string>
     <string name="put_away">Put away</string>
     <string name="no_lyrics">No lyrics found for this track</string>
     <string name="no_notes">The notes of this track can\'t be found</string>

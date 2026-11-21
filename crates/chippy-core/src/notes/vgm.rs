@@ -7,6 +7,7 @@
 
 use anyhow::{bail, Result};
 
+use super::chips::{self, Chip};
 use super::{hz_to_key, Drums, Part, Transcription, Voice};
 use crate::vfs::Location;
 
@@ -83,7 +84,7 @@ impl Ym2612 {
 }
 
 #[derive(Default)]
-struct Sn76489 {
+pub(crate) struct Sn76489 {
     clock: f64,
     period: [u16; 3],
     /// Attenuation per channel (15 is silent); the 4th is noise.
@@ -92,11 +93,11 @@ struct Sn76489 {
     noise: u8,
     latched: usize,
     latched_volume: bool,
-    voices: [Voice; 3],
+    pub voices: [Voice; 3],
 }
 
 impl Sn76489 {
-    fn new(clock: f64) -> Self {
+    pub fn new(clock: f64) -> Self {
         Sn76489 {
             clock,
             atten: [15; 4],
@@ -114,7 +115,7 @@ impl Sn76489 {
         (40 + (15 - atten.min(15)) as u32 * 87 / 15) as u8
     }
 
-    fn write(&mut self, t: f64, data: u8, drums: &mut Drums) {
+    pub fn write(&mut self, t: f64, data: u8, drums: &mut Drums) {
         let ch;
         if data & 0x80 != 0 {
             self.latched = ((data >> 5) & 3) as usize;
@@ -188,6 +189,49 @@ struct Chips {
     ym: Ym2612,
     psg: Sn76489,
     drums: Drums,
+    /// The other chips a VGM can log, made when first written to.
+    others: Vec<(u8, Box<dyn Chip>)>,
+}
+
+/// The chips other than the YM2612 and SN76489 a VGM command writes to:
+/// (command, header offset of the chip's clock, default clock, maker).
+type Maker = fn(f64) -> Box<dyn Chip>;
+const OTHERS: &[(u8, usize, f64, Maker)] = &[
+    (0x51, 0x10, 3_579_545.0, |c| Box::new(chips::Opll::new(c))),
+    (0x54, 0x30, 3_579_545.0, |c| Box::new(chips::Opm::new(c))),
+    (0x5A, 0x50, 3_579_545.0, |c| Box::new(chips::Opl::new(c / 72.0, 1))),
+    (0x5E, 0x5C, 14_318_180.0, |c| Box::new(chips::Opl::new(c / 288.0, 2))),
+    (0xA0, 0x74, 1_789_772.5, |c| Box::new(chips::Ay::new("AY", c))),
+    (0xB3, 0x80, 4_194_304.0, |_| Box::new(chips::Dmg::new())),
+    (0xB9, 0xA4, 3_579_545.0, |c| Box::new(chips::Huc::new(c))),
+    (0xBB, 0xB0, 1_789_772.0, |c| Box::new(chips::Pokey::new("POKEY", c))),
+];
+
+impl Chips {
+    fn other(&mut self, d: &[u8], cmd: u8, t: f64, addr: u16, data: u8) {
+        let i = match self.others.iter().position(|(c, _)| *c == cmd) {
+            Some(i) => i,
+            None => {
+                let Some(&(_, at, default, make)) = OTHERS.iter().find(|o| o.0 == cmd) else {
+                    return;
+                };
+                // Clocks past the end of an older, shorter header read as 0.
+                let header_end = if u32_at(d, 8) >= 0x150 && u32_at(d, 0x34) != 0 {
+                    0x34 + u32_at(d, 0x34) as usize
+                } else {
+                    0x40
+                };
+                let clock = if at + 4 <= header_end {
+                    (u32_at(d, at) & 0x3FFF_FFFF) as f64
+                } else {
+                    0.0
+                };
+                self.others.push((cmd, make(if clock > 0.0 { clock } else { default })));
+                self.others.len() - 1
+            }
+        };
+        self.others[i].1.write(t, addr, data);
+    }
 }
 
 fn u32_at(d: &[u8], at: usize) -> u32 {
@@ -238,6 +282,21 @@ fn run_vgm(d: &[u8], chips: &mut Chips, max_ms: f64) -> Result<f64> {
                 chips.ym.write(t, (op - 0x52) as usize, arg(1), arg(2));
                 3
             }
+            0x51 | 0x54 | 0x5A | 0xB3 | 0xB9 | 0xBB => {
+                chips.other(d, op, t, arg(1) as u16, arg(2));
+                3
+            }
+            0x5E | 0x5F => {
+                chips.other(d, 0x5E, t, (op as u16 - 0x5E) << 8 | arg(1) as u16, arg(2));
+                3
+            }
+            // The AY-3-8910 (bit 7 of the register: a second chip, skipped).
+            0xA0 => {
+                if arg(1) & 0x80 == 0 {
+                    chips.other(d, op, t, arg(1) as u16, arg(2));
+                }
+                3
+            }
             0x61 => {
                 samples += u16::from_le_bytes([arg(1), arg(2)]) as u64;
                 3
@@ -266,7 +325,7 @@ fn run_vgm(d: &[u8], chips: &mut Chips, max_ms: f64) -> Result<f64> {
             0x93 => 11,
             0x94 => 2,
             0x30..=0x3F | 0x4F => 2,
-            0x40..=0x4E | 0x51 | 0x54..=0x5F | 0xA0..=0xBF => 3,
+            0x40..=0x4E | 0x55..=0x59 | 0x5B..=0x5D | 0xA1..=0xB2 | 0xB4..=0xB8 | 0xBA | 0xBC..=0xBF => 3,
             0xC0..=0xDF => 4,
             0xE0..=0xFF => 5,
             _ => 1,
@@ -319,6 +378,7 @@ pub fn transcribe(loc: &Location, max_ms: Option<u64>) -> Result<Transcription> 
         ym: Ym2612::default(),
         psg: Sn76489::new(3_579_545.0),
         drums: Drums::default(),
+        others: Vec::new(),
     };
     let max = max_ms.map_or(f64::INFINITY, |m| m as f64);
     let gym = crate::formats::extension(&loc.name()) == "gym";
@@ -327,38 +387,46 @@ pub fn transcribe(loc: &Location, max_ms: Option<u64>) -> Result<Transcription> 
     } else {
         run_vgm(&data, &mut chips, max)?
     };
-    let Chips { ym, psg, drums } = chips;
-    let fm_used = ym.clock > 0.0;
+    let Chips {
+        ym,
+        psg,
+        drums,
+        others,
+    } = chips;
     let mut parts = Vec::new();
     for (i, v) in ym.voices.into_iter().enumerate() {
-        parts.push(Part {
-            name: format!("FM {}", i + 1),
-            drums: false,
-            program: 81,
-            notes: v.finish(end),
-        });
+        parts.push(Part::new(format!("FM {}", i + 1), 81, v.finish(end)));
     }
+    let fm_used = parts.iter().any(|p| !p.notes.is_empty());
     for (i, v) in psg.voices.into_iter().enumerate() {
-        parts.push(Part {
-            name: format!("PSG {}", i + 1),
-            drums: false,
-            program: 80,
-            notes: v.finish(end),
-        });
+        parts.push(Part::new(format!("PSG {}", i + 1), 80, v.finish(end)));
     }
-    parts.push(Part {
-        name: "Drums (PSG noise)".into(),
-        drums: true,
-        program: 0,
-        notes: drums.finish(),
-    });
+    parts.push(Part::drums("Drums (PSG noise)", drums.finish()));
+    let sega = parts.iter().any(|p| !p.notes.is_empty());
+    let names: Vec<&str> = others
+        .iter()
+        .map(|(cmd, _)| match cmd {
+            0x51 => "YM2413",
+            0x54 => "YM2151",
+            0x5A => "YM3812",
+            0x5E => "YMF262",
+            0xA0 => "AY-3-8910",
+            0xB3 => "Game Boy",
+            0xB9 => "HuC6280",
+            _ => "POKEY",
+        })
+        .collect();
+    for (_, c) in others {
+        parts.extend(c.finish(end));
+    }
     let mut t = Transcription {
-        system: if fm_used {
-            "Sega Genesis / Mega Drive"
+        system: if !names.is_empty() && !sega {
+            format!("VGM ({})", names.join(", "))
+        } else if fm_used || !names.is_empty() {
+            "Sega Genesis / Mega Drive".into()
         } else {
-            "Sega"
-        }
-        .into(),
+            "Sega".into()
+        },
         parts,
         ..Default::default()
     };
@@ -390,7 +458,21 @@ mod tests {
             ym: Ym2612::default(),
             psg: Sn76489::new(3_579_545.0),
             drums: Drums::default(),
+            others: Vec::new(),
         }
+    }
+
+    #[test]
+    fn reads_other_chips() {
+        // A YM2151 note: A4 for 22050 samples.
+        let d = vgm(&[0x54, 0x28, 0x4A, 0x54, 0x08, 0x78, 0x61, 0x22, 0x56, 0x54, 0x08, 0x00]);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.vgm");
+        std::fs::write(&path, d).unwrap();
+        let t = transcribe(&crate::vfs::Location::Fs(path), None).unwrap();
+        assert_eq!(t.system, "VGM (YM2151)");
+        let notes = &t.parts.iter().find(|p| !p.notes.is_empty()).unwrap().notes;
+        assert_eq!((notes[0].key, notes[0].dur_ms.round()), (69, 500.0));
     }
 
     #[test]

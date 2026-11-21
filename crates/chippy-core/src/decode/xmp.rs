@@ -113,6 +113,97 @@ impl Decoder for XmpDecoder {
     }
 }
 
+/// A module's sample, as mono floats.
+pub(crate) struct ModSample {
+    pub name: String,
+    pub pcm: Vec<f32>,
+    pub loop_start: Option<usize>,
+}
+
+/// What [`scan`] found besides the frames.
+pub(crate) struct Scanned {
+    /// Indexed by sample number; `None` for empty ones.
+    pub samples: Vec<Option<ModSample>>,
+    pub instrument_names: Vec<String>,
+    pub end_ms: f64,
+}
+
+fn latin(p: *const c_char) -> String {
+    if p.is_null() {
+        return String::new();
+    }
+    let b = unsafe { CStr::from_ptr(p) }.to_bytes();
+    b.iter().map(|&c| c as char).collect::<String>().trim().to_string()
+}
+
+/// Plays a module through once (silently, a frame at a time) up to
+/// `max_ms`, handing `f` each frame: (ms, (order position, row), each
+/// channel's state). Then gives its samples and instrument names.
+pub(crate) fn scan(
+    loc: &Location,
+    max_ms: Option<u64>,
+    mut f: impl FnMut(f64, (i32, i32), &[ffi::Chan]),
+) -> Result<Scanned> {
+    // The rate only sets how much each frame mixes: low is quicker.
+    let ctx = Ctx::open(loc, 8_000)?;
+    let mut chans = vec![ffi::Chan::default(); 64];
+    let max = max_ms.map_or(f64::INFINITY, |m| m as f64);
+    let mut end_ms = 0.0;
+    // A song that never ends (some jump back on themselves without
+    // libxmp seeing a loop) stops after three hours.
+    for _ in 0..(3 * 60 * 60 * 50 * 4) {
+        let (mut t, mut pos, mut row) = (0, 0, 0);
+        let n = unsafe {
+            ffi::cxmp_scan(ctx.c, &mut t, &mut pos, &mut row, chans.as_mut_ptr(), chans.len() as c_int)
+        };
+        if n < 0 || t as f64 > max {
+            break;
+        }
+        end_ms = t as f64;
+        f(t as f64, (pos, row), &chans[..n as usize]);
+    }
+    let count = unsafe { ffi::cxmp_num_samples(ctx.c) }.max(0);
+    let samples = (0..count)
+        .map(|i| {
+            let (mut name, mut data) = (std::ptr::null(), std::ptr::null());
+            let (mut len, mut lps, mut lpe, mut flags) = (0, 0, 0, 0);
+            let ok = unsafe {
+                ffi::cxmp_sample(ctx.c, i, &mut name, &mut data, &mut len, &mut lps, &mut lpe, &mut flags)
+            };
+            if ok == 0 || data.is_null() {
+                return None;
+            }
+            let len = len as usize;
+            let step = if flags & ffi::SAMPLE_STEREO != 0 { 2 } else { 1 };
+            let pcm: Vec<f32> = if flags & ffi::SAMPLE_16BIT != 0 {
+                let d = unsafe { std::slice::from_raw_parts(data as *const i16, len * step) };
+                d.iter().step_by(step).map(|&s| s as f32 / 32768.0).collect()
+            } else {
+                let d = unsafe { std::slice::from_raw_parts(data as *const i8, len * step) };
+                d.iter().step_by(step).map(|&s| s as f32 / 128.0).collect()
+            };
+            let looped = flags & ffi::SAMPLE_LOOP != 0 && lpe > lps && (lpe as usize) <= len;
+            let mut pcm = pcm;
+            if looped {
+                pcm.truncate(lpe as usize);
+            }
+            Some(ModSample {
+                name: latin(name),
+                pcm,
+                loop_start: looped.then_some(lps.max(0) as usize),
+            })
+        })
+        .collect();
+    let instrument_names = (0..unsafe { ffi::cxmp_num_instruments(ctx.c) }.max(0))
+        .map(|i| latin(unsafe { ffi::cxmp_instrument_name(ctx.c, i) }))
+        .collect();
+    Ok(Scanned {
+        samples,
+        instrument_names,
+        end_ms,
+    })
+}
+
 pub fn meta(loc: &Location) -> Result<TrackMeta> {
     let ctx = Ctx::open(loc, 0)?;
     let (title, format, comment, length, chn) = ctx.info();

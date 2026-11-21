@@ -225,12 +225,7 @@ pub fn transcribe(loc: &Location, track: u32, max_ms: Option<u64>) -> Result<Tra
             part("Pulse 1", 80, p1.finish(end)),
             part("Pulse 2", 80, p2.finish(end)),
             part("Triangle", 33, tri.finish(end)),
-            Part {
-                name: "Drums (noise, samples)".into(),
-                drums: true,
-                program: 0,
-                notes: drums.finish(),
-            },
+            Part::drums("Drums (noise, samples)", drums.finish()),
         ],
         ..Default::default()
     };
@@ -246,12 +241,7 @@ pub fn transcribe(loc: &Location, track: u32, max_ms: Option<u64>) -> Result<Tra
 }
 
 fn part(name: &str, program: u8, notes: Vec<super::Note>) -> Part {
-    Part {
-        name: name.into(),
-        drums: false,
-        program,
-        notes,
-    }
+    Part::new(name, program, notes)
 }
 
 #[cfg(test)]

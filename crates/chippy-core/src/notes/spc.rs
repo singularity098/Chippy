@@ -10,7 +10,7 @@
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 
-use super::{brr, Drums, Part, Transcription, Voice};
+use super::{brr, instrument, Drums, Part, Transcription, Voice};
 use crate::decode::gme::capture;
 use crate::vfs::Location;
 
@@ -24,22 +24,25 @@ const KOFF: usize = 0x5C;
 const NON: usize = 0x3D;
 const DIR: usize = 0x5D;
 
-/// Keys for unpitched samples, in order of first use (General MIDI drums).
-const DRUM_KEYS: [u8; 12] = [36, 38, 42, 46, 49, 45, 48, 51, 39, 37, 41, 56];
-
-/// One of the tune's instrument samples.
-#[derive(Clone, Debug)]
+/// One of the tune's instrument samples (SNES), or a module's.
+#[derive(Clone, Debug, Default)]
 pub struct SampleInfo {
-    /// Its number in the sample directory (the voices' SRCN).
+    /// Its number in the sample directory (the voices' SRCN), or the
+    /// module's sample number.
     pub srcn: u8,
+    /// The module's name for it ("" on the SNES).
+    pub name: String,
     pub start: u16,
     /// Length in samples, up to the end or the loop.
     pub len: usize,
     pub looped: bool,
-    /// The measured pitch at 32 kHz, `None` if unpitched (played as drums).
+    /// The measured pitch (at 32 kHz on the SNES), `None` if unpitched
+    /// (played as drums).
     pub hz: Option<f64>,
     /// How sure that measure is, 0 to 1.
     pub clarity: f64,
+    /// The General MIDI program chosen for it, if pitched.
+    pub program: Option<u8>,
     /// The drum key it was given, if unpitched.
     pub drum_key: Option<u8>,
     /// How many notes play it.
@@ -63,41 +66,77 @@ fn parse(data: &[u8]) -> Result<Spc> {
     })
 }
 
+/// A sample as decoded and measured, with what was seen of its use.
+struct Sample {
+    info: SampleInfo,
+    features: instrument::Features,
+    /// The envelope (ADSR1, ADSR2, GAIN) of the voice that first played it.
+    adsr: Option<(u8, u8, u8)>,
+    /// The keys it was played at.
+    keys: Vec<u8>,
+}
+
 /// The samples the tune plays, measured once each.
 struct Samples<'a> {
     ram: &'a [u8],
     by_entry: HashMap<(u8, u8), usize>,
-    list: Vec<SampleInfo>,
-    drums: usize,
+    list: Vec<Sample>,
 }
 
 impl Samples<'_> {
-    /// The sample `srcn` in the directory at page `dir`.
-    fn get(&mut self, dir: u8, srcn: u8) -> &mut SampleInfo {
-        let i = *self.by_entry.entry((dir, srcn)).or_insert_with(|| {
+    /// The sample `srcn` in the directory at page `dir` (its index).
+    fn get(&mut self, dir: u8, srcn: u8) -> usize {
+        *self.by_entry.entry((dir, srcn)).or_insert_with(|| {
             let e = (dir as usize) * 0x100 + srcn as usize * 4;
             let word =
                 |a: usize| u16::from_le_bytes([self.ram[a & 0xFFFF], self.ram[(a + 1) & 0xFFFF]]);
             let (start, loop_addr) = (word(e), word(e + 2));
             let s = brr::decode(self.ram, start, loop_addr);
             let p = brr::pitch(&s);
-            let drum_key = p.is_none().then(|| {
-                self.drums += 1;
-                DRUM_KEYS[(self.drums - 1) % DRUM_KEYS.len()]
-            });
-            self.list.push(SampleInfo {
-                srcn,
-                start,
-                len: s.pcm.len(),
-                looped: s.loop_start.is_some(),
-                hz: p.as_ref().map(|p| p.hz),
-                clarity: p.as_ref().map_or(0.0, |p| p.clarity),
-                drum_key,
-                uses: 0,
+            let hz = p.as_ref().map(|p| p.hz);
+            let features = instrument::measure(&s.pcm, s.loop_start, brr::RATE, hz);
+            self.list.push(Sample {
+                info: SampleInfo {
+                    srcn,
+                    start,
+                    len: s.pcm.len(),
+                    looped: s.loop_start.is_some(),
+                    hz,
+                    clarity: p.as_ref().map_or(0.0, |p| p.clarity),
+                    ..Default::default()
+                },
+                features,
+                adsr: None,
+                keys: Vec::new(),
             });
             self.list.len() - 1
-        });
-        &mut self.list[i]
+        })
+    }
+}
+
+/// Decides each sample's instrument, from what it sounds like, how the
+/// voices' envelopes shape it, and where it is played.
+fn classify(list: &mut [Sample]) {
+    for s in list {
+        let own = s.features.envelope;
+        if let (Some((a1, a2, g)), Some(own)) = (s.adsr, own) {
+            let env = instrument::snes_envelope(a1, a2, g);
+            // A one-shot sample stops when it ends, whatever the envelope.
+            s.features.envelope = Some(if s.info.looped {
+                env
+            } else {
+                instrument::Envelope {
+                    attack_ms: env.attack_ms.max(own.attack_ms),
+                    sustained: env.sustained && own.sustained,
+                    decay_ms: env.decay_ms.min(own.decay_ms),
+                }
+            });
+        }
+        let median = instrument::median(&mut s.keys);
+        match instrument::classify("", &s.features, s.info.hz.is_some(), median) {
+            instrument::Kind::Melodic(p) => s.info.program = Some(p),
+            instrument::Kind::Drum(k) => s.info.drum_key = Some(k),
+        }
     }
 }
 
@@ -109,12 +148,15 @@ pub fn transcribe(loc: &Location, max_ms: Option<u64>) -> Result<Transcription> 
         ram: &spc.ram,
         by_entry: HashMap::new(),
         list: Vec::new(),
-        drums: 0,
     };
     let mut voices: [Voice; 8] = Default::default();
-    // The sample each voice was keyed on with, while it sounds.
+    // The sample each voice was keyed on with, and its root key, while it
+    // sounds.
     let mut playing: [Option<f64>; 8] = [None; 8];
-    let mut drums = Drums::default();
+    // Each voice's key-ons: (ms, sample).
+    let mut uses: [Vec<(f64, usize)>; 8] = Default::default();
+    // Unpitched hits: (ms, sample, or None for the DSP's noise).
+    let mut hits: Vec<(f64, Option<usize>)> = Vec::new();
     let mut last_t = 0.0;
 
     let cap = capture(loc, 0, RATE, max_ms, 512, |frame, writes| {
@@ -134,20 +176,29 @@ pub fn transcribe(loc: &Location, max_ms: Option<u64>) -> Result<Transcription> 
             match addr {
                 KON => {
                     for v in (0..8).filter(|v| data & (1 << v) != 0) {
-                        let s = samples.get(regs[DIR], regs[v * 16 + 4]);
-                        s.uses += 1;
+                        let i = samples.get(regs[DIR], regs[v * 16 + 4]);
+                        let s = &mut samples.list[i];
+                        s.info.uses += 1;
+                        s.adsr.get_or_insert((
+                            regs[v * 16 + 5],
+                            regs[v * 16 + 6],
+                            regs[v * 16 + 7],
+                        ));
                         let rate = rate_of(&regs, v);
                         let noise = regs[NON] & (1 << v) != 0;
-                        match (s.hz, s.drum_key) {
-                            (Some(hz), _) if !noise && rate > 0.0 => {
+                        match s.info.hz {
+                            Some(hz) if !noise && rate > 0.0 => {
                                 let base = super::hz_to_key(hz);
-                                voices[v].attack(t, key_of(base, rate), 100);
+                                let key = key_of(base, rate);
+                                s.keys.push(key.round().clamp(0.0, 127.0) as u8);
+                                voices[v].attack(t, key, 100);
                                 playing[v] = Some(base);
+                                uses[v].push((t, i));
                             }
-                            (_, key) => {
+                            _ => {
                                 voices[v].release(t);
                                 playing[v] = None;
-                                drums.hit(t, if noise { 42 } else { key.unwrap_or(38) }, 100);
+                                hits.push((t, (!noise).then_some(i)));
                             }
                         }
                     }
@@ -172,30 +223,40 @@ pub fn transcribe(loc: &Location, max_ms: Option<u64>) -> Result<Transcription> 
         }
     })?;
     let end = (cap.frames as f64 * 1000.0 / RATE as f64).max(last_t);
+    classify(&mut samples.list);
+    let list = &samples.list;
     let mut parts: Vec<Part> = voices
         .into_iter()
+        .zip(uses)
         .enumerate()
-        .map(|(i, v)| Part {
-            name: format!("Voice {}", i + 1),
-            drums: false,
-            program: 0,
-            notes: v.finish(end),
+        .map(|(i, (v, uses))| {
+            let progs: Vec<(f64, u8)> = uses
+                .iter()
+                .map(|&(t, s)| (t, list[s].info.program.unwrap_or(0)))
+                .collect();
+            let mut p = Part::new(format!("Voice {}", i + 1), 0, v.finish(end)).with_programs(&progs);
+            p.name = format!("Voice {} · {}", i + 1, super::gm::program_name(p.program));
+            p
         })
         .collect();
-    parts.push(Part {
-        name: "Drums (unpitched samples)".into(),
-        drums: true,
-        program: 0,
-        notes: drums.finish(),
-    });
-    let mut list = samples.list;
+    let mut drums = Drums::default();
+    for (t, s) in hits {
+        let key = match s {
+            Some(s) => list[s].info.drum_key.unwrap_or(38),
+            None => 42,
+        };
+        drums.hit(t, key, 100);
+    }
+    parts.push(Part::drums("Drums (unpitched samples)", drums.finish()));
+    let mut list: Vec<SampleInfo> = samples.list.into_iter().map(|s| s.info).collect();
     list.sort_by_key(|s| s.srcn);
     Ok(Transcription {
         system: cap.system,
         parts,
         notes: vec![
             "SNES pitches depend on each sample's measured root note: a part \
-             playing an octave (or a fifth) off means its sample was misjudged."
+             playing an octave (or a fifth) off means its sample was misjudged. \
+             Instruments are guessed from how each sample sounds."
                 .into(),
         ],
         samples: list,
@@ -310,7 +371,8 @@ mod tests {
 
         let sine = &t.samples[0];
         assert!((sine.hz.unwrap() - 500.0).abs() < 1.0, "{:?}", sine.hz);
-        assert_eq!(t.samples[1].drum_key, Some(36));
+        assert_eq!(t.samples[0].program, Some(80), "a looped sine wave: a synth");
+        assert!(t.samples[1].drum_key.is_some());
 
         let v = &t.parts[0].notes;
         let got: Vec<_> = v

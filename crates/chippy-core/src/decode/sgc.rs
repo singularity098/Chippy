@@ -281,6 +281,8 @@ pub struct SgcEngine {
     pending: Vec<i16>,
     pending_pos: usize,
     dc: [f32; 2],
+    /// The init routine's PSG writes.
+    init_writes: Vec<(u64, u8, u8)>,
 }
 
 // Plain data, owned by the decoder.
@@ -316,6 +318,7 @@ impl SgcEngine {
             pending: Vec::new(),
             pending_pos: 0,
             dc: [0.0; 2],
+            init_writes: Vec::new(),
         };
         e.reset()?;
         Ok(e)
@@ -348,7 +351,8 @@ impl SgcEngine {
         // Init gets a few frames' time; its PSG writes apply at once.
         self.cpu.registers().set_a(self.song);
         self.call(self.h.init, self.frame_cycles * 20);
-        for (_, port, v) in std::mem::take(&mut self.bus.writes) {
+        self.init_writes = std::mem::take(&mut self.bus.writes);
+        for (_, port, v) in self.init_writes.clone() {
             self.apply(port, v);
         }
         Ok(())
@@ -451,6 +455,38 @@ pub fn open(loc: &Location, sub: Option<u32>, opts: &DecodeOptions) -> Result<Ti
     Ok(Timed::new(engine, opts.default_length_ms, opts.fade_ms))
 }
 
+/// Runs song `sub` for `ms` without making sound, handing `f` each PSG
+/// write: (ms into the song, port, value). Returns the system's name.
+pub(crate) fn capture(
+    loc: &Location,
+    sub: Option<u32>,
+    ms: u64,
+    mut f: impl FnMut(f64, u8, u8),
+) -> Result<&'static str> {
+    let data = loc.read()?.to_vec();
+    let h = parse(&data)?;
+    let song = sub.map(|s| s as u8).unwrap_or(h.first_song);
+    let mut e = SgcEngine::new(data, song, 44_100)?;
+    let system = if e.h.system == 1 {
+        "Sega Game Gear"
+    } else {
+        "Sega Master System"
+    };
+    let frame_ms = 1000.0 / if e.h.pal { 50.0 } else { 60.0 };
+    for (_, port, v) in std::mem::take(&mut e.init_writes) {
+        f(0.0, port, v);
+    }
+    let frames = (ms as f64 / frame_ms).ceil() as u64;
+    for i in 0..frames {
+        e.call(e.h.play, e.frame_cycles);
+        let t0 = i as f64 * frame_ms;
+        for (cycle, port, v) in std::mem::take(&mut e.bus.writes) {
+            f(t0 + cycle as f64 * 1000.0 / e.clock as f64, port, v);
+        }
+    }
+    Ok(system)
+}
+
 pub fn track_list(loc: &Location, opts: &DecodeOptions) -> Result<Vec<SubTrack>> {
     let h = parse(&loc.read()?)?;
     Ok((0..h.songs as u32)
@@ -512,6 +548,20 @@ mod tests {
         ]);
         h.extend(code);
         h
+    }
+
+    #[test]
+    fn finds_its_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("t.sgc");
+        std::fs::write(&p, tone_sgc()).unwrap();
+        let t = crate::notes::transcribe(&Location::Fs(p), None, Some(2000)).unwrap();
+        assert_eq!(t.system, "Sega Game Gear");
+        // One held A4 (the play routine rewrites it every frame).
+        assert_eq!(t.parts.len(), 1);
+        let n = &t.parts[0].notes;
+        assert_eq!(n.len(), 1, "{n:?}");
+        assert_eq!(n[0].key, 69);
     }
 
     #[test]

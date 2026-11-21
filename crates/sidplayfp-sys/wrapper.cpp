@@ -94,6 +94,12 @@ int csid_start(csid *s, unsigned song, uint32_t rate, char *err, size_t errlen) 
     return 0;
 }
 
+// The registers last written to SID chip `sid` (0-based): 32 bytes.
+// Returns 0 if there is no such chip.
+int csid_regs(csid *s, unsigned sid, uint8_t *out) {
+    return s->player.getSidStatus(sid, out) ? 1 : 0;
+}
+
 // Fills `buf` with `frames` stereo frames; returns the frames made.
 uint32_t csid_play(csid *s, int16_t *buf, uint32_t frames) {
     return s->player.play(buf, frames * 2) / 2;

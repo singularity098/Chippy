@@ -227,6 +227,52 @@ pub fn open(loc: &Location, sub: Option<u32>, opts: &DecodeOptions) -> Result<Ti
     ))
 }
 
+/// Plays song `sub` silently for `max_ms` (or its length), handing `f` the
+/// registers of each SID chip every 8 milliseconds: (ms, chip,
+/// registers, the chips' clock in Hz). Returns the length played.
+pub(crate) fn capture(
+    loc: &Location,
+    sub: Option<u32>,
+    max_ms: Option<u64>,
+    mut f: impl FnMut(f64, usize, &[u8; 32], f64),
+) -> Result<u64> {
+    const RATE: u32 = 22_050;
+    // 8 ms: each call must cover at least the ~5 ms the emulator runs in
+    // one go, or its buffers overflow. Players change the registers once
+    // per 20 ms frame, so nothing is missed.
+    const STEP: usize = 176;
+    let mut tune = Tune::open(loc)?;
+    let song = song_of(&tune, sub).min(tune.songs());
+    let ms = max_ms.unwrap_or_else(|| {
+        let (l, f) = timing(loc, &tune, song, &DecodeOptions::default());
+        l + f
+    });
+    tune.start(song, RATE)?;
+    let chips = unsafe { ffi::csid_sid_chips(tune.p) }.clamp(1, 3);
+    // 2 is NTSC; PAL otherwise (and the player's default).
+    let clock = if unsafe { ffi::csid_clock(tune.p) } == 2 {
+        1_022_727.0
+    } else {
+        985_248.0
+    };
+    let mut buf = vec![0i16; STEP * 2];
+    let mut regs = [0u8; 32];
+    let steps = ms as usize * RATE as usize / 1000 / STEP;
+    for i in 0..steps {
+        let n = unsafe { ffi::csid_play(tune.p, buf.as_mut_ptr(), STEP as u32) };
+        if n == 0 {
+            break;
+        }
+        let t = (i + 1) as f64 * STEP as f64 * 1000.0 / RATE as f64;
+        for c in 0..chips {
+            if unsafe { ffi::csid_regs(tune.p, c, regs.as_mut_ptr()) } != 0 {
+                f(t, c as usize, &regs, clock);
+            }
+        }
+    }
+    Ok(ms)
+}
+
 pub fn track_list(loc: &Location, opts: &DecodeOptions) -> Result<Vec<SubTrack>> {
     let tune = Tune::open(loc)?;
     let title = cstr(unsafe { ffi::csid_info(tune.p, 0) });

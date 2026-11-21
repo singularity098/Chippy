@@ -24,7 +24,7 @@ fn main() -> anyhow::Result<()> {
         let first: Vec<String> = p.notes.iter().take(12).map(|n| key_name(n.key)).collect();
         let end = p.notes.last().map_or(0.0, |n| n.start_ms + n.dur_ms) / 1000.0;
         println!(
-            "  {:<26} {:>5} notes to {end:>5.1}s  {}-{}  {} ...",
+            "  {:<34} {:>5} notes to {end:>5.1}s  {}-{}  {} ...",
             p.name,
             p.notes.len(),
             key_name(lo),
@@ -40,17 +40,19 @@ fn main() -> anyhow::Result<()> {
                     let k = 69.0 + 12.0 * (hz / 440.0).log2();
                     let r = k.round();
                     format!(
-                        "{hz:8.1} Hz = {} {:+3.0} cents (clarity {:.2})",
+                        "{hz:8.1} Hz = {} {:+3.0} cents (clarity {:.2}) {}",
                         key_name(r as u8),
                         (k - r) * 100.0,
-                        s.clarity
+                        s.clarity,
+                        notes::gm::program_name(s.program.unwrap_or(0))
                     )
                 }
-                (None, k) => format!("unpitched: drum {}", k.unwrap_or(0)),
+                (None, k) => format!("unpitched: {}", notes::gm::drum_name(k.unwrap_or(0))),
             };
             println!(
-                "    #{:<3} ${:04X} {:>6} samples{} {:>4} uses  {what}",
+                "    #{:<3} {:<22} ${:04X} {:>6} samples{} {:>4} uses  {what}",
                 s.srcn,
+                s.name,
                 s.start,
                 s.len,
                 if s.looped { " looped" } else { "       " },

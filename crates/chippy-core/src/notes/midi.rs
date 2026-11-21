@@ -1,6 +1,6 @@
-//! Standard MIDI files from a [`Transcription`]: one track per part, at a
-//! fixed 120 BPM so that times stay as they were played (tempo isn't
-//! worked out yet).
+//! Standard MIDI files from a [`Transcription`]: one track per part (with
+//! its instrument, and changes of instrument), at a fixed 120 BPM so that
+//! times stay as they were played (tempo isn't worked out).
 
 use super::Transcription;
 
@@ -79,6 +79,10 @@ pub fn write(t: &Transcription, title: &str) -> Vec<u8> {
         let mut ev = vec![(0, 0, text(0x03, &p.name))];
         if !p.drums {
             ev.push((0, 1, vec![0xC0 | ch, p.program & 0x7F]));
+            for &(t, prog) in &p.programs {
+                let tick = (t * TICKS_PER_MS).round().max(0.0) as u32;
+                ev.push((tick, 1, vec![0xC0 | ch, prog & 0x7F]));
+            }
         }
         for n in &p.notes {
             let on = (n.start_ms * TICKS_PER_MS).round() as u32;
@@ -107,8 +111,8 @@ mod tests {
         let t = Transcription {
             parts: vec![Part {
                 name: "Lead".into(),
-                drums: false,
                 program: 80,
+                programs: vec![(500.0, 81)],
                 notes: vec![
                     Note {
                         start_ms: 0.0,
@@ -125,6 +129,7 @@ mod tests {
                         legato: false,
                     },
                 ],
+                ..Default::default()
             }],
             ..Default::default()
         };
@@ -133,6 +138,12 @@ mod tests {
         let mut cur = std::io::Cursor::new(bytes);
         let m = rustysynth::MidiFile::new(&mut cur).unwrap();
         assert!((m.get_length() - 0.75).abs() < 0.01, "{}", m.get_length());
+        // And Chippy's own reader: the notes, and the change of instrument.
+        let back = super::super::smf::read(&write(&t, "Test")).unwrap();
+        let p = &back.parts[0];
+        assert_eq!(p.notes.len(), 2);
+        assert_eq!((p.program, p.programs.len()), (80, 1));
+        assert!((p.notes[1].start_ms - 500.0).abs() < 1.0);
     }
 
     #[test]

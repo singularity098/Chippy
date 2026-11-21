@@ -8,6 +8,7 @@ pub mod art;
 pub mod decode;
 pub mod formats;
 pub mod meta;
+pub mod notes;
 pub mod playlist;
 pub mod psf;
 pub mod settings;

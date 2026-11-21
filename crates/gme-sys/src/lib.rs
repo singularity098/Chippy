@@ -57,4 +57,13 @@ extern "C" {
     pub fn gme_type_system(t: gme_type_t) -> *const c_char;
     pub fn gme_identify_extension(path_or_ext: *const c_char) -> gme_type_t;
     pub fn gme_load_m3u_data(emu: *mut Music_Emu, data: *const c_void, size: c_long) -> gme_err_t;
+
+    /// Installs (or with `None`, removes) this thread's hook for sound-chip
+    /// register writes, see `hooks/config.h`. `kind` is 0 for an APU write
+    /// (NES, Game Boy, PC Engine, KSS, SAP), 1 when the play routine is
+    /// called, 2 for an S-DSP write (SPC, with `time` in SPC clocks).
+    pub fn chippy_gme_set_hook(f: Option<chippy_gme_hook_fn>, user: *mut c_void);
 }
+
+pub type chippy_gme_hook_fn =
+    unsafe extern "C" fn(user: *mut c_void, kind: c_int, time: c_long, addr: c_int, data: c_int);

@@ -44,6 +44,9 @@ export global Now {
     in property <bool> midi;
     in property <string> soundfont;
     callback cycle-soundfont(int);
+    // The playing track's lyrics, and a guitar tab of its notes.
+    callback show-lyrics;
+    callback show-tabs;
 }
 
 // Bars rising from the bottom in the theme's paint, with peak caps.
@@ -334,8 +337,24 @@ export component BottomBar inherits Rectangle {
 
         // ---- repeat, volume
         HorizontalLayout {
-            width: root.narrow ? 220px : 280px;
+            width: root.narrow ? 300px : 360px;
             spacing: 8px;
+            IconButton {
+                y: (parent.height - self.height) / 2;
+                icon: Icons.lyrics-line;
+                icon-size: 18px;
+                enabled: Now.has-track;
+                tip: "Lyrics (L)";
+                clicked => { Now.show-lyrics(); }
+            }
+            IconButton {
+                y: (parent.height - self.height) / 2;
+                icon: Icons.guitar-line;
+                icon-size: 18px;
+                enabled: Now.has-track;
+                tip: "Guitar tab (T)";
+                clicked => { Now.show-tabs(); }
+            }
             IconButton {
                 y: (parent.height - self.height) / 2;
                 icon: Now.repeat == 2 ? Icons.repeat-one-line : Icons.repeat-line;

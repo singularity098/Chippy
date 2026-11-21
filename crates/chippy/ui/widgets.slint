@@ -163,8 +163,10 @@ export component Toggle inherits Rectangle {
 export component Chip inherits Rectangle {
     in property <string> text;
     in property <bool> selected;
+    in property <bool> enabled: true;
     in property <string> tip;
     callback clicked;
+    opacity: root.enabled ? 1 : 0.35;
     height: 38px;
     preferred-width: label.preferred-width + 28px;
     horizontal-stretch: 0;
@@ -183,7 +185,11 @@ export component Chip inherits Rectangle {
         vertical-alignment: center;
         overflow: elide;
     }
-    touch := TouchArea { clicked => { root.clicked(); } }
+    touch := TouchArea {
+        enabled: root.enabled || root.tip != "";
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { if root.enabled { root.clicked(); } }
+    }
     Tip { text: root.tip; hover: touch.has-hover; pressed: touch.pressed; }
 }
 

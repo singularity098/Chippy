@@ -571,8 +571,15 @@ impl Core {
 
     fn export_state(&self) -> ExportState {
         let s = &self.settings;
-        let format = Format::from_index(s.export_format);
+        let format = self.export_format();
+        let (ok, total) = self.midi_count();
         ExportState {
+            midi_ok: ok > 0,
+            midi_note: if ok > 0 && ok < total {
+                format!("Only {ok} of the {total} tracks can be: the others are left out.")
+            } else {
+                String::new()
+            },
             what: self.export.what.clone(),
             format: match format {
                 Format::Wav => ExportFormat::Wav,
@@ -586,9 +593,7 @@ impl Core {
                 Format::Flac => "Lossless and compressed, 16-bit.",
                 Format::Mp3 => "Lossy; plays everywhere.",
                 Format::Opus => "Lossy; best quality for its size.",
-                Format::Midi => {
-                    "The notes, for guitar tabs and sheet music (NES, SNES and Genesis tunes)."
-                }
+                Format::Midi => "The notes, for tabs and sheet music, with instruments guessed.",
             }
             .into(),
             bitrate: match format {
@@ -1702,7 +1707,30 @@ impl Core {
         self.dirty.export = true;
     }
 
+    /// How many of the rows to export can be MIDI, of how many.
+    fn midi_count(&self) -> (usize, usize) {
+        let rows = &self.export.rows;
+        let ok = rows
+            .iter()
+            .filter_map(|&i| self.queue.items.get(i))
+            .filter(|item| export::midi_possible(&item.track))
+            .count();
+        (ok, rows.len())
+    }
+
+    /// The format to export to: the one chosen, unless that is MIDI and
+    /// none of the tracks' notes can be found.
+    fn export_format(&self) -> Format {
+        match Format::from_index(self.settings.export_format) {
+            Format::Midi if self.midi_count().0 == 0 => Format::Flac,
+            f => f,
+        }
+    }
+
     pub fn set_export_format(&mut self, f: ExportFormat) {
+        if f == ExportFormat::Midi && self.midi_count().0 == 0 {
+            return;
+        }
         self.settings.export_format = f as u32;
         self.mark_dirty();
         self.dirty.export = true;
@@ -1737,11 +1765,13 @@ impl Core {
             return;
         }
         let opts = self.decode_options();
+        let format = self.export_format();
         let tracks: Vec<(TrackRef, TrackMeta)> = self
             .export
             .rows
             .iter()
             .filter_map(|&i| self.queue.items.get(i))
+            .filter(|item| format != Format::Midi || export::midi_possible(&item.track))
             .map(|item| {
                 let m = item
                     .meta
@@ -1762,7 +1792,6 @@ impl Core {
                 false,
             );
         }
-        let format = Format::from_index(self.settings.export_format);
         let kbps = match format {
             Format::Opus => self.settings.export_opus_kbps,
             _ => self.settings.export_mp3_kbps,

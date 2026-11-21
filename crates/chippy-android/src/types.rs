@@ -197,6 +197,10 @@ pub struct ExportState {
     /// "“Title”" or "12 tracks": what the dialog would export.
     pub what: String,
     pub format: ExportFormat,
+    /// Some track's notes can be found (else MIDI is greyed out).
+    pub midi_ok: bool,
+    /// "Only 3 of the 12 tracks can be…" when only some can.
+    pub midi_note: String,
     /// "Lossless and compressed, 16-bit."
     pub format_detail: String,
     /// kbps, for MP3 and Opus.

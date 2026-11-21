@@ -9,7 +9,7 @@ mod icons;
 mod media;
 
 // The playback engine, shared with the Android app.
-pub(crate) use chippy_engine::{art, audio, background_thread, export, player, spectrum};
+pub(crate) use chippy_engine::{art, audio, background_thread, export, player, spectrum, tabs};
 
 slint::include_modules!();
 

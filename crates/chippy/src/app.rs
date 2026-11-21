@@ -29,8 +29,8 @@ use crate::media::{Media, Playback, Request};
 use crate::player::{Cmd, Event, Player};
 use crate::spectrum::{Spectrum, FFT_LEN};
 use crate::{
-    Browser, ColumnItem, Crumb, Export, FileItem, Info, MainWindow, MusicDir, Now, PlRow, Playlist,
-    Prefs, Theme,
+    Browser, ColumnItem, Crumb, Export, FileItem, Info, Lyrics, MainWindow, MusicDir, Now, PlRow,
+    Playlist, Prefs, Tabs, Theme,
 };
 
 mod tools;
@@ -143,6 +143,8 @@ pub struct App {
     export: ExportState,
     export_tx: Sender<crate::export::Progress>,
     export_rx: Receiver<crate::export::Progress>,
+    lyrics: tools::LyricsState,
+    tabs: tools::TabsState,
 }
 
 /// A SoundFont finished loading (or failed to).
@@ -248,6 +250,8 @@ impl App {
             pick_rx,
             picker_open: false,
             export: ExportState::default(),
+            lyrics: Default::default(),
+            tabs: Default::default(),
             export_tx,
             export_rx,
         };
@@ -453,6 +457,16 @@ impl App {
         on!(app, ex, on_cancel, |a| a.cancel_export());
         on!(app, ex, on_close, |a| a.close_export());
         on!(app, n, on_cycle_soundfont, |a, d: i32| a.cycle_soundfont(d));
+        on!(app, n, on_show_lyrics, |a| a.show_lyrics());
+        on!(app, n, on_show_tabs, |a| a.show_tabs());
+        let ly = ui.global::<Lyrics>();
+        on!(app, ly, on_close, |a| a.close_lyrics());
+        on!(app, ly, on_seek_line, |a, i: i32| a.seek_lyrics_line(i));
+        let tb = ui.global::<Tabs>();
+        on!(app, tb, on_close, |a| a.close_tabs());
+        on!(app, tb, on_step_part, |a, d: i32| a.step_tab_part(d));
+        on!(app, tb, on_step_tuning, |a, d: i32| a.step_tab_tuning(d));
+        on!(app, tb, on_seek_line, |a, i: i32| a.seek_tab_line(i));
         on!(app, s, on_set_theme, |a, i: i32| {
             let names: Vec<String> = a
                 .ui()
@@ -2425,6 +2439,7 @@ impl App {
             self.next(true);
             return true;
         }
+        self.sheets_tick(pos_ms);
         let ui = self.ui();
         let n = ui.global::<Now>();
         if self.state != State::Stopped && self.started {

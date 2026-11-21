@@ -22,10 +22,10 @@ import { Browser, BrowserPanel } from "browser.slint";
 import { Playlist, PlaylistPanel } from "playlist.slint";
 import { Now, ArtPanel, BottomBar } from "nowplaying.slint";
 import { Prefs, SettingsPanel } from "settings.slint";
-import { Info, Export, InfoDialog, ExportDialog } from "dialogs.slint";
+import { Info, Export, Lyrics, Tabs, TabCell, TabLine, InfoDialog, ExportDialog, LyricsDialog, TabsDialog } from "dialogs.slint";
 import { PhoneTopBar, PhonePlayer, QueuePage } from "phone.slint";
 
-export { Theme, IconArt, Browser, Playlist, Now, Prefs, Info, Export, FileItem, PlRow, ColumnItem, Crumb, InfoField, MusicDir }
+export { Theme, IconArt, Browser, Playlist, Now, Prefs, Info, Export, Lyrics, Tabs, TabCell, TabLine, FileItem, PlRow, ColumnItem, Crumb, InfoField, MusicDir }
 
 // A window edge that brings in a sidebar: follows the finger and snaps
 // open or closed, opens on a tap, and shows a tab while the mouse is over it.
@@ -324,6 +324,8 @@ export component MainWindow inherits Window {
             if e.text == "s" { Now.toggle-shuffle(); return accept; }
             if e.text == "r" { Now.cycle-repeat(); return accept; }
             if e.text == "m" { Now.toggle-mute(); return accept; }
+            if e.text == "l" { Now.show-lyrics(); return accept; }
+            if e.text == "t" { Now.show-tabs(); return accept; }
             if e.text == "[" { Now.cycle-soundfont(-1); return accept; }
             if e.text == "]" { Now.cycle-soundfont(1); return accept; }
             if e.text == "b" || e.text == Key.Tab { root.open-left(); return accept; }
@@ -593,6 +595,18 @@ export component MainWindow inherits Window {
         height: root.height;
     }
     if Export.shown: ExportDialog {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+    }
+    if Lyrics.shown: LyricsDialog {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+    }
+    if Tabs.shown: TabsDialog {
         x: 0;
         y: 0;
         width: root.width;

@@ -50,6 +50,7 @@ fun ExportDialog(store: Store, state: ExportState?, onPickFolder: () -> Unit, on
                 val formats = listOf(
                     ExportFormat.WAV to "WAV", ExportFormat.FLAC to "FLAC",
                     ExportFormat.MP3 to "MP3", ExportFormat.OPUS to "Opus",
+                    ExportFormat.MIDI to "MIDI",
                 )
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     formats.forEachIndexed { i, (f, label) ->

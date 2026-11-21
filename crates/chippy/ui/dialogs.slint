@@ -20,7 +20,7 @@ export global Export {
     in property <bool> shown;
     // "24 tracks" or the one track's title.
     in property <string> what;
-    // 0 WAV, 1 FLAC, 2 MP3, 3 Opus.
+    // 0 WAV, 1 FLAC, 2 MP3, 3 Opus, 4 MIDI.
     in property <int> format;
     in property <string> format-detail;
     // kbps, for MP3 and Opus.
@@ -188,14 +188,14 @@ export component ExportDialog inherits Modal {
             HorizontalLayout {
                 spacing: 6px;
                 alignment: end;
-                for name[i] in ["WAV", "FLAC", "MP3", "Opus"]: Chip {
+                for name[i] in ["WAV", "FLAC", "MP3", "Opus", "MIDI"]: Chip {
                     text: name;
                     selected: i == Export.format;
                     clicked => { if !Export.running { Export.set-format(i); } }
                 }
             }
         }
-        if Export.format >= 2: SettingRow {
+        if Export.format == 2 || Export.format == 3: SettingRow {
             label: "Bitrate";
             detail: Export.format == 2 ? "Constant bitrate." : "Variable bitrate; 128 kbps is transparent for most music.";
             Stepper {
@@ -217,7 +217,9 @@ export component ExportDialog inherits Modal {
             }
         }
         Text {
-            text: "One file per track, named by track number and title, with its tags. Looping chiptunes end as they do when played: at their length, with the fade.";
+            text: Export.format == 4
+                ? "One file per track, named by track number and title. The notes are worked out from what the tune does to the sound chip (NES, SNES and Genesis tunes), one MIDI track per chip channel, over the track's length. MIDI files are copied as they are."
+                : "One file per track, named by track number and title, with its tags. Looping chiptunes end as they do when played: at their length, with the fade.";
             color: Theme.text-faint;
             font-size: Theme.font-small;
             wrap: word-wrap;

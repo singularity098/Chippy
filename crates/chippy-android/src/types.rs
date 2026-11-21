@@ -189,6 +189,7 @@ pub enum ExportFormat {
     Flac,
     Mp3,
     Opus,
+    Midi,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]

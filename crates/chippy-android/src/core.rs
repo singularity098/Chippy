@@ -579,12 +579,16 @@ impl Core {
                 Format::Flac => ExportFormat::Flac,
                 Format::Mp3 => ExportFormat::Mp3,
                 Format::Opus => ExportFormat::Opus,
+                Format::Midi => ExportFormat::Midi,
             },
             format_detail: match format {
                 Format::Wav => "Uncompressed, 16-bit.",
                 Format::Flac => "Lossless and compressed, 16-bit.",
                 Format::Mp3 => "Lossy; plays everywhere.",
                 Format::Opus => "Lossy; best quality for its size.",
+                Format::Midi => {
+                    "The notes, for guitar tabs and sheet music (NES, SNES and Genesis tunes)."
+                }
             }
             .into(),
             bitrate: match format {

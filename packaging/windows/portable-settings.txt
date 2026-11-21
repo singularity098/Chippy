@@ -1,0 +1,7 @@
+Chippy keeps its settings, playlist and window layout in this folder,
+because it is beside chippy.exe. That makes this copy portable: move the
+whole Chippy folder (to a USB stick, say) and they go with it, and
+deleting the folder removes every trace of Chippy.
+
+Delete this chippy-settings folder to keep the settings in your Windows
+profile instead (%APPDATA%\chippy), as the installed Chippy does.

@@ -1,6 +1,12 @@
 //! Chippy on the desktop: the command line, then the window.
 
+// No console window behind Chippy's on Windows (--help and --version print
+// to the one they were typed in, if any).
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 fn main() -> anyhow::Result<()> {
+    #[cfg(windows)]
+    attach_console();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let mut opts = chippy::StartOptions::default();
@@ -27,4 +33,18 @@ fn main() -> anyhow::Result<()> {
         }
     }
     chippy::run(opts)
+}
+
+/// A GUI program on Windows has no console of its own: borrow the one it
+/// was started from, if any, so --help, --version and the log reach it.
+#[cfg(windows)]
+fn attach_console() {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn AttachConsole(process: u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
 }

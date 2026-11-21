@@ -77,6 +77,7 @@ fn main() {
         panic!("third_party/lazyusf2 is missing: run `git submodule update --init --recursive`");
     }
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=shim/zlib.h");
     let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     // The x86-64 recompiler is several times faster than the interpreter;
@@ -106,6 +107,10 @@ fn main() {
         .opt_level(2)
         .warnings(false)
         .flag_if_supported("-fno-strict-aliasing");
+    if os == "windows" {
+        // No zlib headers there; lazyusf2 only needs adler32 from it.
+        b.include(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("shim"));
+    }
     for s in SOURCES {
         b.file(root.join(s));
     }

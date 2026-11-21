@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Builds the codec libraries vgmstream uses (FFmpeg, mpg123, libvorbis and
 # libogg) as static libraries, the way vgmstream's own CMake builds them for
-# its static releases: for Android, and for the Linux release binary (so it
-# runs whatever FFmpeg the system has, or none).
+# its static releases: for Android, for the Linux release binary (so it
+# runs whatever FFmpeg the system has, or none), and for Windows,
+# cross-compiled with MinGW-w64.
 #
 #   packaging/build-codecs.sh [TARGET] [PREFIX]
 #
-# TARGET is an Android ABI (arm64-v8a, the default, or x86_64) or `linux`
-# (this machine); PREFIX defaults to build/codecs/<TARGET>. Needs cmake,
+# TARGET is an Android ABI (arm64-v8a, the default, or x86_64), `linux`
+# (this machine) or `windows` (x86_64, with the x86_64-w64-mingw32 GCC; use
+# its posix-threads variant); PREFIX defaults to build/codecs/<TARGET>. Needs cmake,
 # make, git and pkg-config; for Android, ANDROID_NDK_HOME (or
-# ANDROID_NDK_ROOT). Point CHIPPY_CODECS at PREFIX when building Chippy.
+# ANDROID_NDK_ROOT); for Windows, the mingw-w64 package. Point CHIPPY_CODECS at PREFIX when building Chippy.
 set -euo pipefail
 
 ABI="${1:-arm64-v8a}"
@@ -26,9 +28,10 @@ case "$ABI" in
   arm64-v8a) TRIPLE=aarch64-linux-android; FFARCH=aarch64 ;;
   x86_64) TRIPLE=x86_64-linux-android; FFARCH=x86_64 ;;
   linux) ;;
+  windows) MINGW=x86_64-w64-mingw32 ;;
   *) echo "unsupported target $ABI" >&2; exit 1 ;;
 esac
-if [ "$ABI" != linux ]; then
+if [ "$ABI" != linux ] && [ "$ABI" != windows ]; then
   NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
   [ -d "$NDK" ] || { echo "set ANDROID_NDK_HOME to the NDK" >&2; exit 1; }
   TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
@@ -58,7 +61,13 @@ fetch() { # dir url ref
 cmake_build() { # name srcdir args...
   local name="$1" src="$2"; shift 2
   local cross=()
-  if [ "$ABI" != linux ]; then
+  if [ "$ABI" = windows ]; then
+    cross=(-DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=x86_64
+      -DCMAKE_C_COMPILER="$MINGW-gcc" -DCMAKE_CXX_COMPILER="$MINGW-g++"
+      -DCMAKE_RC_COMPILER="$MINGW-windres"
+      -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER
+      -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY)
+  elif [ "$ABI" != linux ]; then
     cross=(-DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake"
       -DANDROID_ABI="$ABI" -DANDROID_PLATFORM="android-$API")
   fi
@@ -92,6 +101,10 @@ mkdir -p "$BUILD/ffmpeg"
   if [ "$ABI" = linux ]; then
     # Nothing from the system: the binary must not need it at run time.
     platform=(--disable-autodetect --disable-x86asm)
+  elif [ "$ABI" = windows ]; then
+    platform=(--target-os=mingw32 --arch=x86_64 --enable-cross-compile
+      --cross-prefix="$MINGW-" --disable-autodetect --disable-x86asm
+      --disable-w32threads --enable-pthreads)
   else
     platform=(--target-os=android --arch="$FFARCH" --enable-cross-compile
       --cc="$TC/bin/$TRIPLE$API-clang" --cxx="$TC/bin/$TRIPLE$API-clang++"

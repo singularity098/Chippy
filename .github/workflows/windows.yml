@@ -1,0 +1,171 @@
+name: Windows
+
+# Builds Chippy for Windows (x86_64) on every push: an installer
+# (Inno Setup) and a portable zip, kept as workflow artifacts on the run's
+# page; a v* tag also attaches both to the GitHub release.
+#
+# chippy.exe is cross-compiled on Linux with MinGW-w64, which builds the
+# emulators' C and C++ much as on Linux; the codec libraries (FFmpeg,
+# mpg123, libvorbis, libogg) and the C++ runtime are linked into it, so it
+# needs only DLLs every Windows has. The installer is then made, installed,
+# run and uninstalled on a Windows runner.
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      file_version: ${{ steps.version.outputs.file_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config mingw-w64
+          # The POSIX-threads compilers: the emulators' C++ uses std::thread.
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-mingw
+      - name: Cache the codec libraries
+        uses: actions/cache@v4
+        with:
+          path: build/codecs/windows
+          key: windows-codecs-ubuntu-24.04-${{ hashFiles('packaging/build-codecs.sh') }}
+      - name: Codec libraries
+        run: |
+          if [ ! -f build/codecs/windows/lib/libavcodec.a ]; then
+            packaging/build-codecs.sh windows build/codecs/windows
+          fi
+          echo "CHIPPY_CODECS=$PWD/build/codecs/windows" >> "$GITHUB_ENV"
+          # The opus crate: build libopus from its bundled source, statically.
+          echo "LIBOPUS_NO_PKG=1" >> "$GITHUB_ENV"
+          echo "LIBOPUS_STATIC=1" >> "$GITHUB_ENV"
+      - name: Build
+        # femtovg (OpenGL) draws the window: Skia has no prebuilt library
+        # for MinGW.
+        run: cargo build --release --locked -p chippy --target x86_64-pc-windows-gnu --no-default-features
+      - name: Check the DLLs it needs
+        # MinGW's own runtime DLLs are not on users' machines: they must be
+        # linked in (crates/chippy/build.rs), as must the codecs.
+        run: |
+          x86_64-w64-mingw32-objdump -p target/x86_64-pc-windows-gnu/release/chippy.exe \
+            | sed -n 's/.*DLL Name: //p' | sort -u | tee needed.txt
+          if grep -Ei '^(lib|av|sw|mpg123|vorbis|ogg|opus)' needed.txt; then
+            echo "::error::chippy.exe needs DLLs that are not part of Windows (above)"
+            exit 1
+          fi
+      - name: Version
+        id: version
+        run: |
+          crate="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$crate-$(git rev-parse --short HEAD)"
+          fi
+          file_version="${version%%-*}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "file_version=$file_version" >> "$GITHUB_OUTPUT"
+      - name: Package
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          mkdir -p dist/files
+          cp target/x86_64-pc-windows-gnu/release/chippy.exe dist/files/
+          x86_64-w64-mingw32-strip dist/files/chippy.exe
+          cp README.md LICENSE dist/files/
+          # The portable zip: a chippy-settings folder beside chippy.exe
+          # keeps the settings there instead of in the user's profile.
+          name="chippy-$version-windows-x86_64-portable"
+          mkdir -p "dist/$name/chippy-settings"
+          cp dist/files/* "dist/$name/"
+          sed 's/$/\r/' packaging/windows/portable-settings.txt > "dist/$name/chippy-settings/README.txt"
+          (cd dist && zip -r -9 "$name.zip" "$name")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-files
+          path: dist/files/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chippy-${{ steps.version.outputs.version }}-windows-x86_64-portable
+          path: dist/chippy-${{ steps.version.outputs.version }}-windows-x86_64-portable.zip
+          compression-level: 0
+
+  installer:
+    needs: build
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-files
+          path: dist/files
+      - name: Installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc `
+            "/DAppVersion=${{ needs.build.outputs.version }}" `
+            "/DFileVersion=${{ needs.build.outputs.file_version }}" `
+            "/DSourceDir=$PWD\dist\files" `
+            "/DOutputDir=$PWD\dist" `
+            packaging\windows\chippy.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install, run and uninstall
+        # For the current user, silently, as winget would.
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist\chippy-*-setup.exe | Select-Object -First 1
+          $p = Start-Process $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER','/TASKS=openwith' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "setup failed: $($p.ExitCode)" }
+          $app = "$env:LOCALAPPDATA\Programs\Chippy"
+          $exe = "$app\chippy.exe"
+          if (-not (Test-Path $exe)) { throw "chippy.exe was not installed to $app" }
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Chippy.lnk")) { throw "no Start menu shortcut" }
+          $p = Start-Process $exe -ArgumentList '--version' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "chippy --version failed: $($p.ExitCode)" }
+          if (-not (Get-ItemProperty 'HKCU:\Software\Classes\.nsf\OpenWithProgids' -Name 'Chippy.Music' -ErrorAction SilentlyContinue)) { throw "not listed under Open with for .nsf" }
+          # Settings as Chippy would leave them: a silent uninstall keeps them.
+          New-Item -ItemType Directory -Force "$env:APPDATA\chippy\config" | Out-Null
+          Set-Content "$env:APPDATA\chippy\config\settings.json" '{}'
+          $p = Start-Process "$app\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "uninstall failed: $($p.ExitCode)" }
+          # The uninstaller finishes removing itself in the background.
+          for ($i = 0; $i -lt 30 -and (Test-Path $app); $i++) { Start-Sleep 1 }
+          if (Test-Path $app) { throw "$app is still there after uninstalling" }
+          if (Get-ItemProperty 'HKCU:\Software\Classes\.nsf\OpenWithProgids' -Name 'Chippy.Music' -ErrorAction SilentlyContinue) { throw "Open with entry left behind" }
+          if (-not (Test-Path "$env:APPDATA\chippy\config\settings.json")) { throw "a silent uninstall deleted the settings" }
+          Write-Host "installed, ran and uninstalled cleanly"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chippy-${{ needs.build.outputs.version }}-windows-x86_64-setup
+          path: dist/chippy-*-setup.exe
+          compression-level: 0
+      - uses: actions/download-artifact@v4
+        if: github.ref_type == 'tag'
+        with:
+          name: chippy-${{ needs.build.outputs.version }}-windows-x86_64-portable
+          path: dist
+      - name: Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/chippy-*-setup.exe
+            dist/chippy-*-portable.zip

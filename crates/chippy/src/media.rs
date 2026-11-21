@@ -1,5 +1,6 @@
 //! The system's media controls: media keys, and the player widgets of the
-//! desktop (MPRIS on Linux, Now Playing on macOS). Their requests come in
+//! desktop (MPRIS on Linux, Now Playing on macOS, the media overlay on
+//! Windows). Their requests come in
 //! on a channel the clock reads; what plays is told back to them. (The
 //! Android app has its own media session, in Kotlin.)
 
@@ -57,6 +58,10 @@ mod desktop {
         /// The cover, written to a file for the desktop's player widgets.
         cover: Option<std::path::PathBuf>,
         covers_written: u64,
+        /// Windows ties the controls to a window: they are attached once it
+        /// is on screen, with this end of the channel.
+        #[cfg(windows)]
+        pending: Option<Sender<Request>>,
     }
 
     fn translate(e: MediaControlEvent) -> Option<Request> {
@@ -85,9 +90,12 @@ mod desktop {
         /// bus, say) the player works as before.
         pub fn connect() -> Media {
             let (tx, rx) = crossbeam_channel::unbounded();
-            let controls = Self::attach(tx)
+            #[cfg(not(windows))]
+            let controls = Self::attach(tx, None)
                 .map_err(|e| log::info!("no system media controls: {e}"))
                 .ok();
+            #[cfg(windows)]
+            let controls = None;
             Media {
                 controls,
                 requests: rx,
@@ -95,10 +103,27 @@ mod desktop {
                 playback: None,
                 cover: None,
                 covers_written: 0,
+                #[cfg(windows)]
+                pending: Some(tx),
             }
         }
 
-        fn attach(tx: Sender<Request>) -> Result<MediaControls, String> {
+        /// Windows: connects to the media controls for the window, once it
+        /// has one (the first call; later ones do nothing).
+        #[cfg(windows)]
+        pub fn attach_window(&mut self, hwnd: *mut std::ffi::c_void) {
+            let Some(tx) = self.pending.take() else {
+                return;
+            };
+            self.controls = Self::attach(tx, Some(hwnd))
+                .map_err(|e| log::info!("no system media controls: {e}"))
+                .ok();
+        }
+
+        fn attach(
+            tx: Sender<Request>,
+            hwnd: Option<*mut std::ffi::c_void>,
+        ) -> Result<MediaControls, String> {
             // Souvlaki's D-Bus thread panics when there is no session bus.
             #[cfg(target_os = "linux")]
             if !session_bus_present() {
@@ -110,7 +135,7 @@ mod desktop {
             let config = PlatformConfig {
                 display_name: "Chippy",
                 dbus_name: &dbus_name,
-                hwnd: None,
+                hwnd,
             };
             let mut c = MediaControls::new(config).map_err(|e| format!("{e:?}"))?;
             c.attach(move |e| {

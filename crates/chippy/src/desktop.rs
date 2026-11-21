@@ -1,8 +1,10 @@
-//! Fitting in on Linux desktops: which window system to use, and the
-//! desktop entry that lets a Wayland compositor show Chippy's icon.
+//! Fitting in on the desktop: which window system to use, the desktop entry
+//! that lets a Wayland compositor show Chippy's icon, and the window's icon
+//! on Windows.
 
 /// The id the window gives the window manager (Wayland app id, X11
 /// WM_CLASS); desktop entries and taskbars match it to `chippy.desktop`.
+#[cfg_attr(windows, allow(dead_code))]
 pub const APP_ID: &str = "chippy";
 
 /// Picks the winit backend: through XWayland on a Wayland desktop, unless
@@ -13,6 +15,9 @@ pub fn select_backend(native_wayland: bool) {
         Ok("0") | Ok("false") => false,
         _ => native_wayland,
     };
+    // Only Linux desktops have a choice to make.
+    #[cfg(not(all(unix, not(target_os = "macos"), not(target_os = "android"))))]
+    let _ = native_wayland;
     #[allow(unused_mut)]
     let mut selector = slint::BackendSelector::new()
         .backend_name("winit".into())
@@ -47,7 +52,22 @@ fn window_attributes(
         let a = wayland::WindowAttributesExtWayland::with_name(a, APP_ID, APP_ID);
         x11::WindowAttributesExtX11::with_name(a, APP_ID, "Chippy")
     }
-    #[cfg(not(all(unix, not(target_os = "macos"), not(target_os = "android"))))]
+    // The icon built into chippy.exe (by build.rs), for the title bar,
+    // Alt+Tab and the taskbar.
+    #[cfg(windows)]
+    {
+        use slint::winit_030::winit::platform::windows::{
+            IconExtWindows, WindowAttributesExtWindows,
+        };
+        use slint::winit_030::winit::window::Icon;
+        let big = Icon::from_resource(1, None).ok();
+        let small = Icon::from_resource(1, Some((16, 16).into())).ok();
+        a.with_window_icon(small).with_taskbar_icon(big)
+    }
+    #[cfg(not(any(
+        windows,
+        all(unix, not(target_os = "macos"), not(target_os = "android"))
+    )))]
     a
 }
 

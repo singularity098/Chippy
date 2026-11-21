@@ -31,13 +31,14 @@ fn main() {
         .define("MGBA_STANDALONE", None)
         .define("HAVE_STRDUP", None)
         .define("HAVE_STRNDUP", None)
-        .define("HAVE_LOCALE", None)
         .flag_if_supported("-std=gnu11")
         .flag_if_supported("-fno-strict-aliasing")
         .warnings(false)
         .opt_level(3)
         .files(&files);
+    // locale_t is POSIX; Windows has neither it nor uselocale.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        b.define("HAVE_LOCALE", None);
         b.define("HAVE_SETLOCALE", None);
     }
     b.compile("mgba_gsf");

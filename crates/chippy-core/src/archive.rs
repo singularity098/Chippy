@@ -313,7 +313,9 @@ mod rar {
     use super::{clean, ArchiveEntry};
     use anyhow::{bail, Result};
     use archive_sys as ffi;
-    use std::ffi::{CStr, CString};
+    use std::ffi::CStr;
+    #[cfg(not(windows))]
+    use std::ffi::CString;
     use std::path::Path;
 
     struct Reader(*mut ffi::archive);
@@ -336,12 +338,23 @@ mod rar {
                 use std::os::unix::ffi::OsStrExt;
                 CString::new(path.as_os_str().as_bytes())?
             };
-            #[cfg(not(unix))]
+            // UTF-16: the narrow call would take the path in the ANSI code
+            // page, and miss any folder named outside it.
+            #[cfg(windows)]
+            let name: Vec<u16> = {
+                use std::os::windows::ffi::OsStrExt;
+                path.as_os_str().encode_wide().chain([0]).collect()
+            };
+            #[cfg(not(any(unix, windows)))]
             let name = CString::new(path.to_string_lossy().as_bytes())?;
+            #[cfg(windows)]
+            let open = ffi::archive_read_open_filename_w;
+            #[cfg(not(windows))]
+            let open = ffi::archive_read_open_filename;
             unsafe {
                 ffi::archive_read_support_format_rar(a);
                 ffi::archive_read_support_format_rar5(a);
-                if ffi::archive_read_open_filename(a, name.as_ptr(), 1 << 16) != ffi::ARCHIVE_OK {
+                if open(a, name.as_ptr(), 1 << 16) != ffi::ARCHIVE_OK {
                     bail!("cannot read {}: {}", path.display(), r.error());
                 }
             }

@@ -114,12 +114,15 @@ info, PSF tags, vgmstream stream names).
   the length and fade of chiptunes that loop forever, vgmstream loop count,
   emulation options, the theme (Carlita's eleven), fullscreen, artwork
   preference and spectrum bar count. Everything applies at once and is kept
-  in `~/.config/chippy/settings.json`. Each start begins in the music folder
+  in `~/.config/chippy/settings.json` (on Windows
+  `%APPDATA%\chippy\config\settings.json`, or the `chippy-settings` folder
+  beside `chippy.exe` in the portable zip). Each start begins in the music folder
   with an empty playlist.
 * **MIDI**: choose a folder of SF2 SoundFonts in Settings. The SoundFont in
   use can change while a song plays (the list in Settings, the arrows beside
   the title in the bottom bar, or `[` and `]`); the song crossfades to it.
-* **Media keys** and the desktop's player controls work (MPRIS on Linux).
+* **Media keys** and the desktop's player controls work (MPRIS on Linux,
+  the media overlay on Windows).
 * **Touch**: panels follow a swipe, lists scroll with a finger (on a
   desktop's touch screen too, while a mouse still drags rows), everything is
   finger-sized, and *Open with a single tap* in Settings replaces
@@ -159,6 +162,24 @@ GitHub Actions builds the `chippy` binary for Linux (x86_64 and aarch64)
 on every push (as a workflow artifact) and attaches it to a release for
 every `v*` tag. It needs ALSA, fontconfig and xkbcommon at run time, which
 desktop distributions have.
+
+For **Windows** (10 or 11, x86_64) every push builds an installer and a
+portable zip (`.github/workflows/windows.yml`), attached to releases too:
+
+* **Installer** (`chippy-…-setup.exe`): installs for you alone by default,
+  with no administrator prompt (into `%LOCALAPPDATA%\Programs\Chippy`), or
+  for everyone on the PC. It adds a Start menu entry, optionally a desktop
+  one, and lists Chippy under *Open with* for chiptunes, modules and other
+  music without changing your default player. A new version installs over
+  the old one. Uninstall it from *Settings → Apps*: it then asks whether to
+  delete your settings too (no, by default; a silent uninstall keeps them).
+* **Portable zip**: unzip anywhere and run `chippy.exe`. Settings stay in
+  the `chippy-settings` folder beside it, so deleting the folder removes
+  everything (delete just `chippy-settings` to keep them in your profile
+  instead).
+
+Neither is code-signed yet, so Windows SmartScreen warns the first time:
+*More info → Run anyway*.
 
 An Android APK (arm64, Android 8 or newer) is built on every push too
 (`.github/workflows/android.yml`): download it from the run's *Artifacts*
@@ -217,6 +238,28 @@ sudo apt install cmake clang pkg-config libasound2-dev libxkbcommon-dev libfontc
 cargo run --release
 ```
 
+### Windows
+
+The Windows build is cross-compiled from Linux with MinGW-w64, as the
+workflow does (its POSIX-threads compilers, for the emulators' C++):
+
+```bash
+sudo apt install cmake pkg-config mingw-w64
+sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+rustup target add x86_64-pc-windows-gnu
+packaging/build-codecs.sh windows
+CHIPPY_CODECS=$PWD/build/codecs/windows LIBOPUS_STATIC=1 LIBOPUS_NO_PKG=1 \
+  cargo build --release --target x86_64-pc-windows-gnu --no-default-features
+```
+
+`chippy.exe` is in `target/x86_64-pc-windows-gnu/release/`; it needs no
+DLLs beyond Windows' own. `--no-default-features` draws with femtovg, as
+Skia has no prebuilt library for MinGW. The installer is made with
+[Inno Setup](https://jrsoftware.org/isinfo.php) 6.3 or newer, on Windows:
+`iscc /DAppVersion=0.1.0 /DSourceDir=<folder with chippy.exe, README.md and
+LICENSE> packaging\windows\chippy.iss`.
+
 ### Android
 
 The app is two halves: the Rust engine (`crates/chippy-android`, built as a
@@ -243,7 +286,8 @@ drives the engine on the desktop as the app does.
 
 ### Downloads
 
-Every push builds one Linux package (`.github/workflows/release.yml`) and
+Every push builds one Linux package (`.github/workflows/release.yml`), a
+Windows installer and portable zip (`.github/workflows/windows.yml`) and
 one Android APK (`.github/workflows/android.yml`); download them from the
 run's *Artifacts* on the Actions tab. The Linux binary has FFmpeg, mpg123
 and libvorbis built in (`packaging/build-codecs.sh linux`, then
@@ -299,6 +343,6 @@ GPL-3.0-or-later. The vendored libraries keep their own licences: Game Music
 Emu is LGPL-2.1, lazyusf2, vio2sf, Mednafen and libsidplayfp are GPL-2.0+,
 the Audio Overload SDK is BSD with MAME-licensed parts, mGBA is MPL-2.0,
 libxmp is MIT, libarchive is BSD, vgmstream is ISC-style. The Linux
-package and the APK also carry mpg123 (LGPL-2.1), libvorbis and libogg
+and Windows packages and the APK also carry mpg123 (LGPL-2.1), libvorbis and libogg
 (BSD) and FFmpeg (built under the GPL). The Jost font
 is under the SIL Open Font Licence (`assets/fonts/OFL.txt`).

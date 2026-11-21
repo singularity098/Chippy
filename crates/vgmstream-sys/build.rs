@@ -103,6 +103,9 @@ fn build_static(root: &Path, deps: &Path) {
         .define("CMAKE_PREFIX_PATH", deps)
         .define("MPG123_DIR", deps)
         .define("CMAKE_FIND_ROOT_PATH_MODE_PACKAGE", "BOTH");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        windows_ffmpeg(&mut cfg, deps);
+    }
     let dst = build(cfg);
     println!(
         "cargo:rustc-link-search=native={}",
@@ -126,4 +129,33 @@ fn build_static(root: &Path, deps: &Path) {
         println!("cargo:rustc-link-lib=static={l}");
     }
     println!("cargo:rustc-link-lib=m");
+}
+
+/// vgmstream's CMake takes Windows to mean MSVC with its own prebuilt
+/// DLLs: it skips pkg-config and would compile against its bundled (older)
+/// FFmpeg headers. Handing it the FFmpeg built into `deps`, with the
+/// versions it checks, makes it use that one, as on the other targets. (Its
+/// bundled mpg123 and Vorbis headers are used everywhere, and match.)
+fn windows_ffmpeg(cfg: &mut cmake::Config, deps: &Path) {
+    let lib = deps.join("lib");
+    let mut libs = Vec::new();
+    for (var, name) in [
+        ("AVCODEC", "avcodec"),
+        ("AVFORMAT", "avformat"),
+        ("AVUTIL", "avutil"),
+        ("SWRESAMPLE", "swresample"),
+    ] {
+        let pc = lib.join(format!("pkgconfig/lib{name}.pc"));
+        let text = std::fs::read_to_string(&pc)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", pc.display()));
+        let version = text
+            .lines()
+            .find_map(|l| l.strip_prefix("Version:"))
+            .unwrap_or_else(|| panic!("no Version in {}", pc.display()))
+            .trim();
+        cfg.define(format!("{var}_VERSION"), version);
+        libs.push(lib.join(format!("lib{name}.a")).display().to_string());
+    }
+    cfg.define("FFMPEG_LIBRARIES", libs.join(";"))
+        .define("FFMPEG_INCLUDE_DIRS", deps.join("include"));
 }

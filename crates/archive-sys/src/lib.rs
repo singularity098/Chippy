@@ -26,6 +26,13 @@ extern "C" {
         filename: *const c_char,
         block_size: usize,
     ) -> c_int;
+    /// The path as UTF-16, for Windows paths outside the ANSI code page.
+    #[cfg(windows)]
+    pub fn archive_read_open_filename_w(
+        a: *mut archive,
+        filename: *const u16,
+        block_size: usize,
+    ) -> c_int;
     pub fn archive_read_open_memory(a: *mut archive, buf: *const c_void, size: usize) -> c_int;
     pub fn archive_read_next_header(a: *mut archive, entry: *mut *mut archive_entry) -> c_int;
     pub fn archive_read_data(a: *mut archive, buf: *mut c_void, size: usize) -> isize;

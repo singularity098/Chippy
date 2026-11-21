@@ -42,6 +42,9 @@ fn main() {
         println!("cargo:rustc-link-lib=c++");
     } else if target.contains("android") {
         println!("cargo:rustc-link-lib=c++_shared");
+    } else if target.contains("windows-gnu") {
+        // Linked statically by .cargo/config.toml: Windows has no
+        // libstdc++ DLL.
     } else if !target.contains("msvc") {
         println!("cargo:rustc-link-lib=stdc++");
     }

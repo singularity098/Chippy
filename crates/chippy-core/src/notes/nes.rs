@@ -57,9 +57,9 @@ impl Apu {
                 }
             }
             0x15 => {
-                for c in 0..4 {
+                for (c, len) in self.len.iter_mut().enumerate().take(4) {
                     if data & (1 << c) == 0 {
-                        self.len[c] = 0;
+                        *len = 0;
                     }
                 }
             }

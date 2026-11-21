@@ -1,6 +1,6 @@
 //! Chippy's playback engine, free of any UI toolkit: the sound output, the
-//! player thread that decodes ahead of it, the spectrum, album art, and
-//! exporting. The desktop app (`crates/chippy`, Slint) and the Android
+//! player thread that decodes ahead of it, the spectrum, album art,
+//! exporting, and the guitar tab view. The desktop app (`crates/chippy`, Slint) and the Android
 //! library (`crates/chippy-android`, Jetpack Compose through UniFFI) both
 //! drive it.
 
@@ -9,6 +9,7 @@ pub mod audio;
 pub mod export;
 pub mod player;
 pub mod spectrum;
+pub mod tabs;
 
 /// Lowers the calling thread's priority, for work in the background
 /// (reading tags, which can mean running a whole track through its

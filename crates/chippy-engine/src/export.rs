@@ -1,7 +1,8 @@
 //! Exporting tracks to audio files: WAV, FLAC, MP3 or Opus, one file per
 //! track, tagged. Tracks are decoded exactly as they play (looping
 //! chiptunes end at their length, with the fade), on a thread of their own.
-//! Or to MIDI: the notes, for the chiptunes whose notes can be found.
+//! Or to MIDI: the notes, for the formats whose notes can be found (see
+//! `chippy_core::notes`).
 
 use anyhow::{anyhow, bail, Context, Result};
 use chippy_core::decode::{open_decoder, DecodeOptions, Decoder};
@@ -312,8 +313,13 @@ fn export_audio(
     Ok(())
 }
 
-/// The notes of a chiptune (NES, SNES, Genesis) as a MIDI file, over the
-/// length it plays for; a MIDI file is copied as it is.
+/// Whether a track's notes can be exported as MIDI.
+pub fn midi_possible(track: &TrackRef) -> bool {
+    notes::supported(&track.loc.name())
+}
+
+/// The notes of a tune as a MIDI file, over the length it plays for; a
+/// MIDI file is copied as it is.
 fn write_midi(track: &TrackRef, meta: &TrackMeta, path: &Path) -> Result<()> {
     let bytes = match track.loc.extension().as_str() {
         "mid" | "midi" | "kar" | "smf" => track.loc.read()?.to_vec(),

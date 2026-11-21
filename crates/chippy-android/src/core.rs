@@ -21,6 +21,7 @@ use chippy_engine::audio::Output;
 use chippy_engine::export::{self, Format, Progress};
 use chippy_engine::player::{Cmd, Event, Player};
 use chippy_engine::spectrum::{Spectrum, FFT_LEN};
+use chippy_engine::tabs::TabView;
 
 use crate::paths::{self, file_name, found_in, human_size, pretty};
 use crate::types::*;
@@ -48,6 +49,7 @@ pub struct Dirty {
     pub now: bool,
     pub settings: bool,
     pub export: bool,
+    pub tabs: bool,
 }
 
 /// What is waiting to be sent to the UI.
@@ -58,6 +60,7 @@ pub struct Outbox {
     pub now: Option<NowState>,
     pub settings: Option<SettingsState>,
     pub export: Option<ExportState>,
+    pub tabs: Option<TabsState>,
     /// Some(None): the track has no art.
     pub art: Option<Option<Vec<u8>>>,
     pub events: Vec<UiEvent>,
@@ -149,6 +152,10 @@ pub struct Core {
     font_rx: Receiver<FontLoaded>,
     soundfont_status: String,
 
+    // ---- guitar tab
+    tabs_shown: bool,
+    tabs: TabView,
+
     // ---- export
     export: ExportJob,
     export_tx: Sender<Progress>,
@@ -229,6 +236,8 @@ impl Core {
             font_tx,
             font_rx,
             soundfont_status: String::new(),
+            tabs_shown: false,
+            tabs: TabView::default(),
             export: ExportJob::default(),
             export_tx,
             export_rx,
@@ -239,6 +248,7 @@ impl Core {
                 now: true,
                 settings: true,
                 export: true,
+                tabs: false,
             },
             art_out: Some(None),
             events: Vec::new(),
@@ -280,6 +290,9 @@ impl Core {
         }
         if std::mem::take(&mut self.dirty.settings) {
             out.settings = Some(self.settings_state());
+        }
+        if std::mem::take(&mut self.dirty.tabs) {
+            out.tabs = Some(self.tabs_state());
         }
         if std::mem::take(&mut self.dirty.export) {
             out.export = Some(self.export_state());
@@ -571,8 +584,15 @@ impl Core {
 
     fn export_state(&self) -> ExportState {
         let s = &self.settings;
-        let format = Format::from_index(s.export_format);
+        let format = self.export_format();
+        let (ok, total) = self.midi_count();
         ExportState {
+            midi_ok: ok > 0,
+            midi_note: if ok > 0 && ok < total {
+                format!("Only {ok} of the {total} tracks can be: the others are left out.")
+            } else {
+                String::new()
+            },
             what: self.export.what.clone(),
             format: match format {
                 Format::Wav => ExportFormat::Wav,
@@ -586,9 +606,7 @@ impl Core {
                 Format::Flac => "Lossless and compressed, 16-bit.",
                 Format::Mp3 => "Lossy; plays everywhere.",
                 Format::Opus => "Lossy; best quality for its size.",
-                Format::Midi => {
-                    "The notes, for guitar tabs and sheet music (NES, SNES and Genesis tunes)."
-                }
+                Format::Midi => "The notes, for tabs and sheet music, with instruments guessed.",
             }
             .into(),
             bitrate: match format {
@@ -599,6 +617,145 @@ impl Core {
             running: self.export.cancel.is_some(),
             progress: self.export.progress,
             status: self.export.status.clone(),
+        }
+    }
+
+    // ---------------------------------------------------- lyrics and tabs
+
+    /// The playing track, its title and its length.
+    fn sheet_track(&self) -> Option<(TrackRef, String, Option<u64>)> {
+        let i = self.queue.current?;
+        let item = self.queue.items.get(i)?;
+        let title = item
+            .meta
+            .as_ref()
+            .map(|m| m.title.clone())
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| item.track.loc.name());
+        let length = item.meta.as_ref().and_then(|m| m.length_ms);
+        Some((item.track.clone(), title, length))
+    }
+
+    pub fn lyrics(&mut self) -> Option<LyricsInfo> {
+        let (track, title, _) = self.sheet_track()?;
+        Some(match chippy_core::lyrics::find(&track) {
+            Some(l) => LyricsInfo {
+                title,
+                source: format!(
+                    "From {}{}",
+                    l.source,
+                    if l.synced { " · timed" } else { "" }
+                ),
+                synced: l.synced,
+                lines: l
+                    .lines
+                    .into_iter()
+                    .map(|x| LyricLine {
+                        ms: x.ms.map_or(-1, |m| m as i64),
+                        text: x.text,
+                    })
+                    .collect(),
+                message: String::new(),
+            },
+            None => {
+                let name = track.loc.name();
+                let (stem, _) = formats::split_name(&name);
+                LyricsInfo {
+                    title,
+                    source: String::new(),
+                    synced: false,
+                    lines: Vec::new(),
+                    message: format!(
+                        "No lyrics found for this track. Put them in a file beside it, \
+                         “{stem}.lrc” (timed, so they follow the song) or “{stem}.txt”; \
+                         lyrics in the file's own tags are found too."
+                    ),
+                }
+            }
+        })
+    }
+
+    pub fn open_tabs(&mut self) {
+        if self.sheet_track().is_none() {
+            self.toast("Play something first", true);
+            return;
+        }
+        self.tabs_shown = true;
+        self.load_tabs();
+    }
+
+    fn load_tabs(&mut self) {
+        if let Some((track, _, length)) = self.sheet_track() {
+            self.tabs.load(&track, length);
+        }
+        self.dirty.tabs = true;
+    }
+
+    pub fn close_tabs(&mut self) {
+        self.tabs_shown = false;
+        self.tabs.clear();
+        self.dirty.tabs = true;
+    }
+
+    pub fn set_tab_part(&mut self, i: usize) {
+        self.tabs.set_part(i);
+        self.dirty.tabs = true;
+    }
+
+    pub fn set_tab_tuning(&mut self, i: usize) {
+        self.tabs.set_tuning(i);
+        self.dirty.tabs = true;
+    }
+
+    /// Takes in a finished tab, and follows the playlist to the next
+    /// track; true while one is being worked out.
+    fn tabs_tick(&mut self) -> bool {
+        if !self.tabs_shown {
+            return false;
+        }
+        let playing = self
+            .queue
+            .current
+            .and_then(|i| self.queue.items.get(i))
+            .map(|i| i.track.clone());
+        if playing.is_some() && playing != self.tabs.track {
+            self.load_tabs();
+        }
+        if self.tabs.poll() {
+            self.dirty.tabs = true;
+        }
+        self.tabs.busy()
+    }
+
+    fn tabs_state(&self) -> TabsState {
+        let v = &self.tabs;
+        let title = self.sheet_track().map(|t| t.1).unwrap_or_default();
+        TabsState {
+            shown: self.tabs_shown,
+            busy: v.busy(),
+            message: v.message(),
+            parts: v.part_names(),
+            part: v.part_index() as u32,
+            tunings: TabView::tuning_names(),
+            tuning: v.tuning_index() as u32,
+            strings: v.strings(),
+            lines: v
+                .lines()
+                .iter()
+                .map(|l| TabLine {
+                    start_ms: l.start_ms as u64,
+                    end_ms: l.end_ms as u64,
+                    label: l.label.clone(),
+                    notes: l
+                        .cells
+                        .iter()
+                        .map(|&(x, string, fret)| TabNote { x, string, fret })
+                        .collect(),
+                })
+                .collect(),
+            detail: v.detail(),
+            text: v.text(&title),
+            title,
         }
     }
 
@@ -1702,7 +1859,30 @@ impl Core {
         self.dirty.export = true;
     }
 
+    /// How many of the rows to export can be MIDI, of how many.
+    fn midi_count(&self) -> (usize, usize) {
+        let rows = &self.export.rows;
+        let ok = rows
+            .iter()
+            .filter_map(|&i| self.queue.items.get(i))
+            .filter(|item| export::midi_possible(&item.track))
+            .count();
+        (ok, rows.len())
+    }
+
+    /// The format to export to: the one chosen, unless that is MIDI and
+    /// none of the tracks' notes can be found.
+    fn export_format(&self) -> Format {
+        match Format::from_index(self.settings.export_format) {
+            Format::Midi if self.midi_count().0 == 0 => Format::Flac,
+            f => f,
+        }
+    }
+
     pub fn set_export_format(&mut self, f: ExportFormat) {
+        if f == ExportFormat::Midi && self.midi_count().0 == 0 {
+            return;
+        }
         self.settings.export_format = f as u32;
         self.mark_dirty();
         self.dirty.export = true;
@@ -1737,11 +1917,13 @@ impl Core {
             return;
         }
         let opts = self.decode_options();
+        let format = self.export_format();
         let tracks: Vec<(TrackRef, TrackMeta)> = self
             .export
             .rows
             .iter()
             .filter_map(|&i| self.queue.items.get(i))
+            .filter(|item| format != Format::Midi || export::midi_possible(&item.track))
             .map(|item| {
                 let m = item
                     .meta
@@ -1762,7 +1944,6 @@ impl Core {
                 false,
             );
         }
-        let format = Format::from_index(self.settings.export_format);
         let kbps = match format {
             Format::Opus => self.settings.export_opus_kbps,
             _ => self.settings.export_mp3_kbps,
@@ -2032,7 +2213,9 @@ impl Core {
         if session_due {
             self.save_session();
         }
+        let tabs_busy = self.tabs_tick();
         self.state == State::Playing
+            || tabs_busy
             || self.searching
             || self.search_due.is_some()
             || self.export.cancel.is_some()

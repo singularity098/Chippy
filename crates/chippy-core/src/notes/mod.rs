@@ -17,9 +17,17 @@ use anyhow::{bail, Result};
 use crate::vfs::Location;
 
 mod brr;
+mod chips;
+pub mod gm;
+pub mod instrument;
 pub mod midi;
+mod module;
 mod nes;
+mod sgc;
+mod sid;
+pub mod smf;
 mod spc;
+pub mod tab;
 mod vgm;
 
 pub use spc::SampleInfo;
@@ -37,14 +45,63 @@ pub struct Note {
 }
 
 /// One line of music: a chip channel, or the drums.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Part {
     pub name: String,
     /// Unpitched: keys are General MIDI percussion.
     pub drums: bool,
     /// A General MIDI program to play the part with.
     pub program: u8,
+    /// Changes of program later on (ms, program), in time order: a channel
+    /// that switches samples switches instrument.
+    pub programs: Vec<(f64, u8)>,
     pub notes: Vec<Note>,
+}
+
+impl Part {
+    pub fn new(name: impl Into<String>, program: u8, notes: Vec<Note>) -> Part {
+        Part {
+            name: name.into(),
+            program,
+            notes,
+            ..Default::default()
+        }
+    }
+
+    pub fn drums(name: impl Into<String>, notes: Vec<Note>) -> Part {
+        Part {
+            name: name.into(),
+            drums: true,
+            notes,
+            ..Default::default()
+        }
+    }
+
+    /// Sets the programs from the instrument each note started with
+    /// ((ms, program) in time order): the first is the part's own, and each
+    /// change after it a program change.
+    pub fn with_programs(mut self, uses: &[(f64, u8)]) -> Part {
+        self.programs.clear();
+        let mut cur = None;
+        for &(t, p) in uses {
+            match cur {
+                None => self.program = p,
+                Some(c) if c != p => self.programs.push((t, p)),
+                _ => {}
+            }
+            cur = Some(p);
+        }
+        self
+    }
+
+    /// The program sounding at `ms`.
+    pub fn program_at(&self, ms: f64) -> u8 {
+        self.programs
+            .iter()
+            .take_while(|(t, _)| *t <= ms)
+            .last()
+            .map_or(self.program, |&(_, p)| p)
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -62,14 +119,60 @@ pub struct Transcription {
 pub fn transcribe(loc: &Location, sub: Option<u32>, max_ms: Option<u64>) -> Result<Transcription> {
     let name = loc.name();
     let ext = crate::formats::extension(&name);
+    let track = sub.unwrap_or(0);
     let mut t = match ext.as_str() {
-        "nsf" | "nsfe" => nes::transcribe(loc, sub.unwrap_or(0), max_ms)?,
+        "nsf" | "nsfe" => nes::transcribe(loc, track, max_ms)?,
         "spc" => spc::transcribe(loc, max_ms)?,
         "vgm" | "vgz" | "gym" => vgm::transcribe(loc, max_ms)?,
-        _ => bail!("can't find the notes in .{ext} files yet"),
+        "gbs" | "hes" | "kss" | "sap" => chips::transcribe_gme(loc, &ext, track, max_ms)?,
+        "sgc" => sgc::transcribe(loc, sub, max_ms)?,
+        e if crate::formats::SID.contains(&e) => sid::transcribe(loc, sub, max_ms)?,
+        e if crate::formats::MODULES.contains(&e) => module::transcribe(loc, max_ms)?,
+        e if crate::formats::MIDI.contains(&e) => {
+            let mut t = smf::read(&loc.read()?)?;
+            if let Some(max) = max_ms {
+                t.cut(max as f64);
+            }
+            t
+        }
+        _ => bail!("can't find the notes in .{ext} files"),
     };
     t.parts.retain(|p| !p.notes.is_empty());
     Ok(t)
+}
+
+/// Whether [`transcribe`] can find the notes of a file with this name.
+pub fn supported(name: &str) -> bool {
+    let ext = crate::formats::extension(name);
+    let e = ext.as_str();
+    matches!(
+        e,
+        "nsf" | "nsfe" | "spc" | "vgm" | "vgz" | "gym" | "gbs" | "hes" | "kss" | "sap" | "sgc"
+    ) || crate::formats::SID.contains(&e)
+        || crate::formats::MODULES.contains(&e)
+        || crate::formats::MIDI.contains(&e)
+}
+
+impl Transcription {
+    /// Drops what starts after `ms`, and ends what is still sounding there.
+    pub fn cut(&mut self, ms: f64) {
+        for p in &mut self.parts {
+            p.notes.retain(|n| n.start_ms < ms);
+            for n in &mut p.notes {
+                n.dur_ms = n.dur_ms.min(ms - n.start_ms);
+            }
+            p.programs.retain(|(t, _)| *t < ms);
+        }
+    }
+
+    /// When the last note ends, ms.
+    pub fn end_ms(&self) -> f64 {
+        self.parts
+            .iter()
+            .flat_map(|p| p.notes.iter())
+            .map(|n| n.start_ms + n.dur_ms)
+            .fold(0.0, f64::max)
+    }
 }
 
 /// The note nearest a frequency, as a fractional MIDI note number.

@@ -14,6 +14,7 @@ import io.github.singularity098.chippy.core.Listener
 import io.github.singularity098.chippy.core.NowState
 import io.github.singularity098.chippy.core.PlaylistState
 import io.github.singularity098.chippy.core.SettingsState
+import io.github.singularity098.chippy.core.TabsState
 import io.github.singularity098.chippy.core.UiEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -59,6 +60,8 @@ class Store(private val context: Context) : Listener {
     val settings: StateFlow<SettingsState?> = _settings
     private val _export = MutableStateFlow<ExportState?>(null)
     val export: StateFlow<ExportState?> = _export
+    private val _tabs = MutableStateFlow<TabsState?>(null)
+    val tabs: StateFlow<TabsState?> = _tabs
     private val _cover = MutableStateFlow<Cover?>(null)
     val cover: StateFlow<Cover?> = _cover
     val events = MutableSharedFlow<UiEvent>(extraBufferCapacity = 32)
@@ -135,6 +138,10 @@ class Store(private val context: Context) : Listener {
 
     override fun export(state: ExportState) {
         _export.value = state
+    }
+
+    override fun tabs(state: TabsState) {
+        _tabs.value = state
     }
 
     override fun art(data: ByteArray?) {

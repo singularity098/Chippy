@@ -7,6 +7,7 @@ pub mod archive;
 pub mod art;
 pub mod decode;
 pub mod formats;
+pub mod lyrics;
 pub mod meta;
 pub mod notes;
 pub mod playlist;

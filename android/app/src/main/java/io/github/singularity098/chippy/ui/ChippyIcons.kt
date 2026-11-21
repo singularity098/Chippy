@@ -132,6 +132,20 @@ object ChippyIcons {
             weight = 1.8f,
         )
     }
+    val Lyrics: ImageVector by lazy {
+        icon(
+            "Lyrics",
+            line = "M 5 4.5 L 19 4.5 A 2 2 0 0 1 21 6.5 L 21 14.5 A 2 2 0 0 1 19 16.5 L 10.5 16.5 L 6.5 20 L 6.5 16.5 L 5 16.5 A 2 2 0 0 1 3 14.5 L 3 6.5 A 2 2 0 0 1 5 4.5 Z M 7 8.8 L 17 8.8 M 7 12.2 L 13.5 12.2",
+            weight = 1.8f,
+        )
+    }
+    val Guitar: ImageVector by lazy {
+        icon(
+            "Guitar",
+            line = "M 13.2 10.8 L 19.2 4.8 M 17.6 3.2 L 20.8 6.4 M 10.3 9.4 A 2.8 2.8 0 0 1 14.6 13.7 A 3.6 3.6 0 0 1 12.3 19.7 A 4.6 4.6 0 0 1 4.3 11.7 A 3.6 3.6 0 0 1 10.3 9.4 Z M 9.4 14.6 A 1.1 1.1 0 1 1 9.39 14.6 Z M 7 17 L 9 19",
+            weight = 1.8f,
+        )
+    }
     val Info: ImageVector by lazy {
         icon(
             "Info",

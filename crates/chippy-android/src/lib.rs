@@ -33,6 +33,7 @@ pub trait Listener: Send + Sync {
     fn now(&self, state: NowState);
     fn settings(&self, state: SettingsState);
     fn export(&self, state: ExportState);
+    fn tabs(&self, state: TabsState);
     /// The current track's picture as stored (JPEG, PNG...); None when it
     /// has none.
     fn art(&self, data: Option<Vec<u8>>);
@@ -278,6 +279,31 @@ impl Engine {
         self.act(|c| c.cancel_export());
     }
 
+    // ---------------------------------------------------- lyrics and tabs
+
+    /// The playing track's lyrics (None: nothing is playing).
+    pub fn lyrics(&self) -> Option<LyricsInfo> {
+        self.act(|c| c.lyrics())
+    }
+
+    /// Shows the guitar tab of the playing track (and of each track after
+    /// it), sent through [`Listener::tabs`] as it is worked out.
+    pub fn open_tabs(&self) {
+        self.act(|c| c.open_tabs());
+    }
+
+    pub fn close_tabs(&self) {
+        self.act(|c| c.close_tabs());
+    }
+
+    pub fn set_tab_part(&self, index: u32) {
+        self.act(|c| c.set_tab_part(index as usize));
+    }
+
+    pub fn set_tab_tuning(&self, index: u32) {
+        self.act(|c| c.set_tab_tuning(index as usize));
+    }
+
     // ---------------------------------------------------------- lifecycle
 
     /// Saves the settings and the session now (the app is leaving the
@@ -330,6 +356,9 @@ fn deliver(l: &dyn Listener, out: core::Outbox) {
     }
     if let Some(s) = out.export {
         l.export(s);
+    }
+    if let Some(s) = out.tabs {
+        l.tabs(s);
     }
     if let Some(a) = out.art {
         l.art(a);

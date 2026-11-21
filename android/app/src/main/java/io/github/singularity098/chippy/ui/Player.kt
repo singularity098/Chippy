@@ -88,6 +88,8 @@ fun PlayerScreen(
     onOpenBrowser: () -> Unit,
     onOpenPlaylist: () -> Unit,
     onOpenSettings: () -> Unit,
+    onLyrics: () -> Unit = {},
+    onTabs: () -> Unit = {},
 ) {
     val cover by store.cover.collectAsStateWithLifecycle()
     val playing = now?.state == PlayState.PLAYING
@@ -122,6 +124,12 @@ fun PlayerScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onLyrics, enabled = now?.hasTrack == true) {
+                        Icon(ChippyIcons.Lyrics, stringResource(R.string.lyrics))
+                    }
+                    IconButton(onClick = onTabs, enabled = now?.hasTrack == true) {
+                        Icon(ChippyIcons.Guitar, stringResource(R.string.guitar_tab))
+                    }
                     IconButton(onClick = onOpenPlaylist) {
                         Icon(ChippyIcons.Queue, stringResource(R.string.playlist))
                     }

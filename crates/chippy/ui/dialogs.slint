@@ -1,10 +1,11 @@
-// Modal dialogs over the whole window: a track's properties, and exporting
-// the playlist to audio files.
+// Modal dialogs over the whole window: a track's properties, exporting the
+// playlist to audio files, and the playing track's lyrics and guitar tab.
 import { Fling } from "fling.slint";
 import { Theme } from "theme.slint";
 import { IconButton, BigButton, Chip, SettingRow, Stepper } from "widgets.slint";
 import { Icon, Icons } from "icons.slint";
 import { InfoField } from "types.slint";
+import { Now } from "nowplaying.slint";
 import { ScrollView } from "std-widgets.slint";
 
 export global Info {
@@ -16,12 +17,74 @@ export global Info {
     callback close;
 }
 
+// A line of tab: where it starts (for its label) and its notes.
+export struct TabCell {
+    // Across the line, 0..1.
+    x: float,
+    // 0 is the lowest string.
+    string: int,
+    fret: string,
+}
+
+export struct TabLine {
+    start: string,
+    cells: [TabCell],
+}
+
+export global Lyrics {
+    in property <bool> shown;
+    in property <string> title;
+    // "From Song.lrc", "From the file's tags".
+    in property <string> source;
+    in property <[string]> lines;
+    // The lines are timed: the current one is marked and kept in view.
+    in property <bool> synced;
+    in property <int> current: -1;
+    // Shown instead of lines when there are none.
+    in property <string> message;
+    in property <string> all-text;
+    callback close;
+    // Jumps to a timed line.
+    callback seek-line(int);
+}
+
+export global Tabs {
+    in property <bool> shown;
+    in property <string> title;
+    // Working out the notes.
+    in property <bool> busy;
+    // Shown instead of the tab (why there is none).
+    in property <string> message;
+    // The part shown, of how many, and its name.
+    in property <string> part-name;
+    in property <int> part;
+    in property <int> parts;
+    in property <string> tuning-name;
+    // String names, lowest first.
+    in property <[string]> strings;
+    in property <[TabLine]> lines;
+    in property <int> current: -1;
+    // Where playback is across the current line, 0..1.
+    in property <float> playhead;
+    // "Moved down an octave to fit."
+    in property <string> detail;
+    in property <string> all-text;
+    callback close;
+    callback step-part(int);
+    callback step-tuning(int);
+    callback seek-line(int);
+}
+
 export global Export {
     in property <bool> shown;
     // "24 tracks" or the one track's title.
     in property <string> what;
     // 0 WAV, 1 FLAC, 2 MP3, 3 Opus, 4 MIDI.
     in property <int> format;
+    // Some track's notes can be found (else MIDI is greyed out).
+    in property <bool> midi-ok: true;
+    // "MIDI: 3 of 12 tracks" and the like, when only some can.
+    in property <string> midi-note;
     in property <string> format-detail;
     // kbps, for MP3 and Opus.
     in property <int> bitrate;
@@ -191,6 +254,8 @@ export component ExportDialog inherits Modal {
                 for name[i] in ["WAV", "FLAC", "MP3", "Opus", "MIDI"]: Chip {
                     text: name;
                     selected: i == Export.format;
+                    enabled: i != 4 || Export.midi-ok;
+                    tip: i == 4 && !Export.midi-ok ? "The notes of these tracks can't be found" : "";
                     clicked => { if !Export.running { Export.set-format(i); } }
                 }
             }
@@ -218,7 +283,7 @@ export component ExportDialog inherits Modal {
         }
         Text {
             text: Export.format == 4
-                ? "One file per track, named by track number and title. The notes are worked out from what the tune does to the sound chip (NES, SNES and Genesis tunes), one MIDI track per chip channel, over the track's length. MIDI files are copied as they are."
+                ? "One file per track, named by track number and title. The notes are worked out from what the tune does to its sound chip, or from a module's patterns, one MIDI track per channel, with instruments guessed from the samples. MIDI files are copied as they are." + (Export.midi-note == "" ? "" : " " + Export.midi-note)
                 : "One file per track, named by track number and title, with its tags. Looping chiptunes end as they do when played: at their length, with the fade.";
             color: Theme.text-faint;
             font-size: Theme.font-small;
@@ -265,6 +330,305 @@ export component ExportDialog inherits Modal {
             primary: true;
             enabled: !Export.running && Export.folder != "";
             clicked => { Export.start(); }
+        }
+    }
+}
+
+// Lyrics, and guitar tab, stay open while the track plays: Space still
+// pauses and plays.
+component PlayerKeys inherits FocusScope {
+    in property <bool> closable: true;
+    callback close;
+    init => { self.focus(); }
+    key-pressed(e) => {
+        if e.text == Key.Escape { root.close(); return accept; }
+        if e.text == " " { Now.play-pause(); return accept; }
+        reject
+    }
+}
+
+// The previous / next buttons around a choice.
+component Choice inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> text;
+    in property <string> tip;
+    in property <bool> enabled: true;
+    callback step(int);
+    spacing: 4px;
+    Text {
+        text: root.label;
+        color: Theme.text-dim;
+        font-size: Theme.font-small;
+        vertical-alignment: center;
+    }
+    IconButton {
+        y: (parent.height - self.height) / 2;
+        size: 30px;
+        icon-size: 14px;
+        icon: Icons.chevron-left;
+        enabled: root.enabled;
+        tip: root.tip;
+        clicked => { root.step(-1); }
+    }
+    Text {
+        text: root.text;
+        color: Theme.accent;
+        font-weight: Theme.regular;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+        min-width: 80px;
+        horizontal-stretch: 1;
+        overflow: elide;
+    }
+    IconButton {
+        y: (parent.height - self.height) / 2;
+        size: 30px;
+        icon-size: 14px;
+        icon: Icons.chevron-right;
+        enabled: root.enabled;
+        tip: root.tip;
+        clicked => { root.step(1); }
+    }
+}
+
+export component LyricsDialog inherits Modal {
+    heading: Lyrics.title;
+    icon: Icons.lyrics-line;
+    card-width: 640px;
+    card-height: 680px;
+    close => { Lyrics.close(); }
+    property <length> line-h: 44px;
+    // Keeps the line being sung a third of the way down. (Followed through
+    // the line number: a binding on the scroll's own size would loop.)
+    property <int> cur: Lyrics.current;
+    changed cur => {
+        if Lyrics.synced && root.cur >= 0 {
+            scroll.viewport-y = -max(0, min(root.cur * root.line-h - scroll.visible-height / 3, Lyrics.lines.length * root.line-h - scroll.visible-height));
+        }
+    }
+    PlayerKeys { width: 0; height: 0; close => { Lyrics.close(); } }
+    Rectangle {
+        vertical-stretch: 1;
+        scroll := ScrollView {
+            animate viewport-y { duration: 280ms; easing: ease-out; }
+            VerticalLayout {
+                for line[i] in Lyrics.lines: Rectangle {
+                    height: root.line-h;
+                    property <bool> now: Lyrics.synced && i == Lyrics.current;
+                    border-radius: 8px;
+                    background: touch.has-hover && Lyrics.synced ? Theme.surface-2 : transparent;
+                    Text {
+                        x: 12px;
+                        width: parent.width - 24px;
+                        text: line;
+                        wrap: word-wrap;
+                        overflow: elide;
+                        vertical-alignment: center;
+                        font-size: parent.now ? Theme.font-large : Theme.font;
+                        font-weight: parent.now ? Theme.regular : Theme.light;
+                        color: parent.now ? Theme.paint : (Lyrics.synced && i < Lyrics.current ? Theme.text-faint : Theme.text);
+                        animate font-size, color { duration: 180ms; }
+                    }
+                    touch := TouchArea {
+                        enabled: Lyrics.synced;
+                        mouse-cursor: Lyrics.synced ? pointer : default;
+                        clicked => { Lyrics.seek-line(i); }
+                    }
+                }
+            }
+        }
+        if Lyrics.lines.length == 0: Text {
+            x: 24px;
+            width: parent.width - 48px;
+            height: parent.height;
+            text: Lyrics.message;
+            color: Theme.text-dim;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        Text {
+            text: Lyrics.source;
+            color: Theme.text-faint;
+            font-size: Theme.font-small;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        copier := TextInput {
+            width: 0px;
+            height: 0px;
+            opacity: 0;
+            read-only: true;
+            text: Lyrics.all-text;
+        }
+        if Lyrics.lines.length > 0: BigButton {
+            text: "Copy";
+            tip: "Copy the lyrics as text";
+            clicked => { copier.select-all(); copier.copy(); copier.clear-selection(); }
+        }
+        BigButton {
+            text: "Close";
+            primary: true;
+            clicked => { Lyrics.close(); }
+        }
+    }
+}
+
+export component TabsDialog inherits Modal {
+    heading: Tabs.title;
+    icon: Icons.guitar-line;
+    card-width: 900px;
+    card-height: 720px;
+    close => { Tabs.close(); }
+    property <length> gap: 15px;
+    property <length> line-height: (Tabs.strings.length - 1) * root.gap + 40px;
+    property <length> label-width: 26px;
+    property <int> cur: Tabs.current;
+    changed cur => {
+        if root.cur >= 0 {
+            scroll.viewport-y = -max(0, min(root.cur * root.line-height - scroll.visible-height / 4, Tabs.lines.length * root.line-height - scroll.visible-height));
+        }
+    }
+    PlayerKeys { width: 0; height: 0; close => { Tabs.close(); } }
+    HorizontalLayout {
+        spacing: 16px;
+        height: 34px;
+        Choice {
+            horizontal-stretch: 3;
+            label: "Part";
+            text: Tabs.part-name;
+            tip: "Show another part (channel)";
+            enabled: Tabs.parts > 1 && !Tabs.busy;
+            step(d) => { Tabs.step-part(d); }
+        }
+        Choice {
+            horizontal-stretch: 2;
+            label: "For";
+            text: Tabs.tuning-name;
+            tip: "Another instrument or tuning";
+            enabled: !Tabs.busy && Tabs.parts > 0;
+            step(d) => { Tabs.step-tuning(d); }
+        }
+    }
+    Rectangle {
+        vertical-stretch: 1;
+        scroll := ScrollView {
+            visible: !Tabs.busy;
+            animate viewport-y { duration: 350ms; easing: ease-in-out; }
+            VerticalLayout {
+                for line[li] in Tabs.lines: row := Rectangle {
+                    height: root.line-height;
+                    property <bool> now: li == Tabs.current;
+                    property <length> top: 20px;
+                    property <length> left: root.label-width + 6px;
+                    property <length> span: self.width - self.left - 18px;
+                    border-radius: 8px;
+                    background: self.now ? Theme.surface-2 : transparent;
+                    Text {
+                        x: row.left;
+                        y: 2px;
+                        text: line.start;
+                        color: row.now ? Theme.paint : Theme.text-faint;
+                        font-size: Theme.font-small - 1px;
+                    }
+                    // The strings, highest on top, with their names.
+                    for name[si] in Tabs.strings: Rectangle {
+                        property <length> sy: row.top + (Tabs.strings.length - 1 - si) * root.gap;
+                        Text {
+                            x: 4px;
+                            y: parent.sy - self.height / 2;
+                            width: root.label-width;
+                            text: name;
+                            color: Theme.text-faint;
+                            font-size: Theme.font-small - 1px;
+                            horizontal-alignment: center;
+                        }
+                        Rectangle {
+                            x: row.left;
+                            y: parent.sy;
+                            width: row.span + 10px;
+                            height: 1px;
+                            background: Theme.border-strong;
+                        }
+                    }
+                    Rectangle {
+                        x: row.left;
+                        y: row.top;
+                        width: 2px;
+                        height: (Tabs.strings.length - 1) * root.gap + 1px;
+                        background: Theme.border-strong;
+                    }
+                    for c in line.cells: Rectangle {
+                        x: row.left + 6px + c.x * row.span - self.width / 2;
+                        y: row.top + (Tabs.strings.length - 1 - c.string) * root.gap - self.height / 2;
+                        width: fret.preferred-width + 6px;
+                        height: 15px;
+                        background: row.now ? Theme.surface-2 : Theme.popup;
+                        fret := Text {
+                            text: c.fret;
+                            color: Theme.text;
+                            font-size: Theme.font-small;
+                            font-weight: Theme.regular;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                    if row.now: Rectangle {
+                        x: row.left + 6px + Tabs.playhead * row.span - 1px;
+                        y: row.top - 8px;
+                        width: 2px;
+                        height: (Tabs.strings.length - 1) * root.gap + 16px;
+                        background: Theme.paint;
+                        border-radius: 1px;
+                    }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { Tabs.seek-line(li); }
+                    }
+                }
+            }
+        }
+        if Tabs.busy || Tabs.lines.length == 0: Text {
+            x: 24px;
+            width: parent.width - 48px;
+            height: parent.height;
+            text: Tabs.busy ? "Working out the notes…" : Tabs.message;
+            color: Theme.text-dim;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        Text {
+            text: Tabs.detail;
+            color: Theme.text-faint;
+            font-size: Theme.font-small;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            wrap: word-wrap;
+        }
+        copier := TextInput {
+            width: 0px;
+            height: 0px;
+            opacity: 0;
+            read-only: true;
+            text: Tabs.all-text;
+        }
+        if Tabs.lines.length > 0: BigButton {
+            text: "Copy";
+            tip: "Copy the tab as text";
+            clicked => { copier.select-all(); copier.copy(); copier.clear-selection(); }
+        }
+        BigButton {
+            text: "Close";
+            primary: true;
+            clicked => { Tabs.close(); }
         }
     }
 }

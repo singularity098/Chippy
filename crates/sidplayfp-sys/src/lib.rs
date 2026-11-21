@@ -19,4 +19,7 @@ extern "C" {
     pub fn csid_start(s: *mut csid, song: u32, rate: u32, err: *mut c_char, errlen: usize)
         -> c_int;
     pub fn csid_play(s: *mut csid, buf: *mut i16, frames: u32) -> u32;
+    /// The registers last written to SID chip `sid`: fills 32 bytes;
+    /// returns 0 if there is no such chip.
+    pub fn csid_regs(s: *mut csid, sid: u32, out: *mut u8) -> c_int;
 }

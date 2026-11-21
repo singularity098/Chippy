@@ -11,7 +11,26 @@ use chippy_core::vfs::{self, EntryKind, TrackRef};
 
 use super::{ss, App};
 use crate::export::{self, Format, Progress};
-use crate::{Export, Info, InfoField};
+use crate::tabs::TabView;
+use crate::{Export, Info, InfoField, Lyrics, TabCell, TabLine, Tabs};
+use chippy_core::lyrics;
+
+/// The lyrics dialog's state: the track whose lyrics are shown.
+#[derive(Default)]
+pub struct LyricsState {
+    pub track: Option<TrackRef>,
+    pub lyrics: Option<lyrics::Lyrics>,
+    pub line: i32,
+}
+
+/// The guitar tab dialog's state.
+#[derive(Default)]
+pub struct TabsState {
+    pub shown: bool,
+    pub view: TabView,
+    pub line: i32,
+    pub playhead: f32,
+}
 
 /// What a file picker running on its own thread came back with.
 #[cfg_attr(target_os = "android", allow(dead_code))]
@@ -276,11 +295,38 @@ impl App {
         e.set_shown(true);
     }
 
+    /// How many of the rows to export can be MIDI, of how many.
+    fn midi_count(&self) -> (usize, usize) {
+        let rows = &self.export.rows;
+        let ok = rows
+            .iter()
+            .filter_map(|&i| self.queue.items.get(i))
+            .filter(|item| export::midi_possible(&item.track))
+            .count();
+        (ok, rows.len())
+    }
+
+    /// The format to export to: the one chosen, unless that is MIDI and
+    /// none of the tracks' notes can be found.
+    fn export_format(&self) -> Format {
+        match Format::from_index(self.settings.export_format) {
+            Format::Midi if self.midi_count().0 == 0 => Format::Flac,
+            f => f,
+        }
+    }
+
     pub(super) fn sync_export(&self) {
         let ui = self.ui();
         let e = ui.global::<Export>();
         let s = &self.settings;
-        let format = Format::from_index(s.export_format);
+        let (ok, total) = self.midi_count();
+        e.set_midi_ok(ok > 0);
+        e.set_midi_note(ss(if ok > 0 && ok < total {
+            format!("Only {ok} of the {total} tracks can be: the others are left out.")
+        } else {
+            String::new()
+        }));
+        let format = self.export_format();
         e.set_format(match format {
             Format::Wav => 0,
             Format::Flac => 1,
@@ -293,7 +339,7 @@ impl App {
             Format::Flac => "Lossless and compressed, 16-bit.",
             Format::Mp3 => "Lossy; plays everywhere.",
             Format::Opus => "Lossy; best quality for its size.",
-            Format::Midi => "Notes, for tabs and sheet music.",
+            Format::Midi => "The notes, for tabs and sheet music.",
         }));
         e.set_bitrate(match format {
             Format::Opus => s.export_opus_kbps,
@@ -307,6 +353,9 @@ impl App {
     }
 
     pub(super) fn set_export_format(&mut self, i: i32) {
+        if i == 4 && self.midi_count().0 == 0 {
+            return;
+        }
         self.settings.export_format = i.clamp(0, 4) as u32;
         self.mark_dirty();
         self.sync_export();
@@ -341,11 +390,13 @@ impl App {
             return;
         }
         let opts = self.decode_options();
+        let format = self.export_format();
         let tracks: Vec<(TrackRef, TrackMeta)> = self
             .export
             .rows
             .iter()
             .filter_map(|&i| self.queue.items.get(i))
+            .filter(|item| format != Format::Midi || export::midi_possible(&item.track))
             .map(|item| {
                 let m = item
                     .meta
@@ -366,7 +417,6 @@ impl App {
                 false,
             );
         }
-        let format = Format::from_index(self.settings.export_format);
         let kbps = match format {
             Format::Opus => self.settings.export_opus_kbps,
             _ => self.settings.export_mp3_kbps,
@@ -455,6 +505,238 @@ impl App {
                 if !shown {
                     self.toast(&msg, !failed.is_empty());
                 }
+            }
+        }
+    }
+}
+
+impl App {
+    // ---------------------------------------------------- lyrics and tabs
+
+    /// The playing (or chosen) track, its title and its length.
+    fn sheet_track(&self) -> Option<(TrackRef, String, Option<u64>)> {
+        let i = self.queue.current?;
+        let item = self.queue.items.get(i)?;
+        let title = item
+            .meta
+            .as_ref()
+            .map(|m| m.title.clone())
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| item.track.loc.name());
+        let length = item
+            .meta
+            .as_ref()
+            .and_then(|m| m.length_ms)
+            .or(self.duration_ms);
+        Some((item.track.clone(), title, length))
+    }
+
+    pub(super) fn show_lyrics(&mut self) {
+        let ui = self.ui();
+        let l = ui.global::<Lyrics>();
+        if l.get_shown() {
+            return self.close_lyrics();
+        }
+        if self.sheet_track().is_none() {
+            self.toast("Play something first", true);
+            return;
+        }
+        self.load_lyrics();
+        l.set_shown(true);
+    }
+
+    fn load_lyrics(&mut self) {
+        let Some((track, title, _)) = self.sheet_track() else {
+            return;
+        };
+        let found = lyrics::find(&track);
+        let ui = self.ui();
+        let l = ui.global::<Lyrics>();
+        l.set_title(ss(format!("Lyrics: {title}")));
+        match &found {
+            Some(ly) => {
+                let lines: Vec<SharedString> = ly.lines.iter().map(|x| ss(&x.text)).collect();
+                l.set_lines(ModelRc::new(VecModel::from(lines)));
+                l.set_synced(ly.synced);
+                l.set_source(ss(format!(
+                    "From {}{}",
+                    ly.source,
+                    if ly.synced { " · timed" } else { "" }
+                )));
+                l.set_all_text(ss(ly.text()));
+                l.set_message(SharedString::new());
+            }
+            None => {
+                l.set_lines(ModelRc::default());
+                l.set_synced(false);
+                l.set_source(SharedString::new());
+                l.set_all_text(SharedString::new());
+                let name = track.loc.name();
+                let (stem, _) = chippy_core::formats::split_name(&name);
+                l.set_message(ss(format!(
+                    "No lyrics found for this track.\n\nPut them in a file beside it, \
+                     “{stem}.lrc” (timed, so they follow the song) or “{stem}.txt”; \
+                     lyrics in the file's own tags are found too."
+                )));
+            }
+        }
+        l.set_current(-1);
+        self.lyrics = LyricsState {
+            track: Some(track),
+            lyrics: found,
+            line: -1,
+        };
+    }
+
+    pub(super) fn close_lyrics(&mut self) {
+        self.lyrics = LyricsState::default();
+        let ui = self.ui();
+        ui.global::<Lyrics>().set_shown(false);
+        ui.invoke_focus_main();
+    }
+
+    pub(super) fn seek_lyrics_line(&mut self, i: i32) {
+        let ms = self
+            .lyrics
+            .lyrics
+            .as_ref()
+            .and_then(|l| l.lines.get(i.max(0) as usize))
+            .and_then(|l| l.ms);
+        if let Some(ms) = ms {
+            self.seek(ms);
+        }
+    }
+
+    pub(super) fn show_tabs(&mut self) {
+        let ui = self.ui();
+        if self.tabs.shown {
+            return self.close_tabs();
+        }
+        if self.sheet_track().is_none() {
+            self.toast("Play something first", true);
+            return;
+        }
+        self.tabs.shown = true;
+        self.load_tabs();
+        ui.global::<Tabs>().set_shown(true);
+    }
+
+    fn load_tabs(&mut self) {
+        let Some((track, title, length)) = self.sheet_track() else {
+            return;
+        };
+        self.tabs.view.load(&track, length);
+        self.tabs.line = -1;
+        self.ui()
+            .global::<Tabs>()
+            .set_title(ss(format!("Guitar tab: {title}")));
+        self.sync_tabs();
+    }
+
+    pub(super) fn close_tabs(&mut self) {
+        self.tabs.shown = false;
+        self.tabs.view.clear();
+        let ui = self.ui();
+        ui.global::<Tabs>().set_shown(false);
+        ui.invoke_focus_main();
+    }
+
+    pub(super) fn step_tab_part(&mut self, d: i32) {
+        self.tabs.view.step_part(d);
+        self.tabs.line = -1;
+        self.sync_tabs();
+    }
+
+    pub(super) fn step_tab_tuning(&mut self, d: i32) {
+        self.tabs.view.step_tuning(d);
+        self.tabs.line = -1;
+        self.sync_tabs();
+    }
+
+    pub(super) fn seek_tab_line(&mut self, i: i32) {
+        if let Some(l) = self.tabs.view.lines().get(i.max(0) as usize) {
+            self.seek(l.start_ms as u64);
+        }
+    }
+
+    /// Sends the whole tab view to the dialog.
+    fn sync_tabs(&mut self) {
+        let ui = self.ui();
+        let t = ui.global::<Tabs>();
+        let v = &self.tabs.view;
+        t.set_busy(v.busy());
+        t.set_message(ss(v.message()));
+        t.set_parts(v.part_count() as i32);
+        t.set_part(v.part_index() as i32);
+        t.set_part_name(ss(v.part_name()));
+        t.set_tuning_name(ss(v.tuning_name()));
+        let strings: Vec<SharedString> = v.strings().iter().map(ss).collect();
+        t.set_strings(ModelRc::new(VecModel::from(strings)));
+        let lines: Vec<TabLine> = v
+            .lines()
+            .iter()
+            .map(|l| TabLine {
+                start: ss(&l.label),
+                cells: ModelRc::new(VecModel::from(
+                    l.cells
+                        .iter()
+                        .map(|&(x, string, fret)| TabCell {
+                            x,
+                            string: string as i32,
+                            fret: ss(fret.to_string()),
+                        })
+                        .collect::<Vec<_>>(),
+                )),
+            })
+            .collect();
+        t.set_lines(ModelRc::new(VecModel::from(lines)));
+        t.set_detail(ss(v.detail()));
+        let title = t.get_title().to_string();
+        t.set_all_text(ss(v.text(title.trim_start_matches("Guitar tab: "))));
+        t.set_current(-1);
+        self.tabs.line = -1;
+    }
+
+    /// Follows playback in the open lyrics and tab, and follows the
+    /// playlist to the next track.
+    pub(super) fn sheets_tick(&mut self, pos_ms: u64) {
+        let playing = self.current_track().cloned();
+        if self.lyrics.track.is_some() {
+            if playing.is_some() && playing != self.lyrics.track {
+                self.load_lyrics();
+            }
+            let line = self
+                .lyrics
+                .lyrics
+                .as_ref()
+                .and_then(|l| l.line_at(pos_ms))
+                .map_or(-1, |i| i as i32);
+            if line != self.lyrics.line {
+                self.lyrics.line = line;
+                self.ui().global::<Lyrics>().set_current(line);
+            }
+        }
+        if self.tabs.shown {
+            if playing.is_some() && playing != self.tabs.view.track {
+                self.load_tabs();
+            }
+            if self.tabs.view.poll() {
+                self.sync_tabs();
+            }
+            let (line, x) = self
+                .tabs
+                .view
+                .position(pos_ms)
+                .map_or((-1, 0.0), |(i, x)| (i as i32, x));
+            let ui = self.ui();
+            let t = ui.global::<Tabs>();
+            if line != self.tabs.line {
+                self.tabs.line = line;
+                t.set_current(line);
+            }
+            if (x - self.tabs.playhead).abs() > 0.0005 {
+                self.tabs.playhead = x;
+                t.set_playhead(x);
             }
         }
     }

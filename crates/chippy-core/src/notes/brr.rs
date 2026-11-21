@@ -60,96 +60,12 @@ pub fn decode(ram: &[u8], start: u16, loop_addr: u16) -> Sample {
     Sample { pcm, loop_start }
 }
 
+pub const RATE: f64 = 32_000.0;
+
 /// The pitch a sample plays at when the DSP plays it at 32 kHz (pitch
-/// register $1000), with how sure the measure is (0 to 1).
-pub struct Pitch {
-    pub hz: f64,
-    pub clarity: f64,
-}
-
-const RATE: f64 = 32_000.0;
-
-/// Measures a sample's fundamental frequency (with YIN). Unpitched sounds
-/// (drums, noise) give `None`.
-pub fn pitch(s: &Sample) -> Option<Pitch> {
-    // What sounds while a note is held: the loop, repeated; or, for a
-    // one-shot sample, what follows its attack.
-    let sig: Vec<f32> = match s.loop_start {
-        Some(ls) if s.pcm.len() - ls >= 8 => {
-            let lp = &s.pcm[ls..];
-            let mut v = s.pcm.clone();
-            while v.len() < 8192 + s.pcm.len() {
-                v.extend_from_slice(lp);
-            }
-            v.split_off(s.pcm.len())
-        }
-        _ => {
-            let skip = s.pcm.len() / 10;
-            s.pcm[skip..].to_vec()
-        }
-    };
-    let max_lag = (RATE / 25.0) as usize;
-    let min_lag = (RATE / 4000.0) as usize;
-    let max_lag = max_lag.min(sig.len() / 2);
-    if max_lag <= min_lag + 2 {
-        return None;
-    }
-    let window = (sig.len() - max_lag).min(4096);
-    let energy: f32 = sig[..window].iter().map(|x| x * x).sum::<f32>() / window as f32;
-    if energy < 1e-7 {
-        return None;
-    }
-    // Cumulative mean normalised difference.
-    let mut d = vec![1.0f64; max_lag + 1];
-    let mut running = 0.0f64;
-    for (lag, dv) in d.iter_mut().enumerate().skip(1) {
-        let sum: f64 = (0..window)
-            .map(|i| {
-                let x = (sig[i] - sig[i + lag]) as f64;
-                x * x
-            })
-            .sum();
-        running += sum;
-        *dv = if running > 0.0 {
-            sum * lag as f64 / running
-        } else {
-            1.0
-        };
-    }
-    // The first dip under the threshold, else the deepest.
-    let mut best = None;
-    let mut lag = min_lag;
-    while lag < max_lag {
-        if d[lag] < 0.2 {
-            while lag + 1 < max_lag && d[lag + 1] < d[lag] {
-                lag += 1;
-            }
-            best = Some(lag);
-            break;
-        }
-        lag += 1;
-    }
-    let lag = best.unwrap_or_else(|| {
-        (min_lag..max_lag)
-            .min_by(|&a, &b| d[a].total_cmp(&d[b]))
-            .unwrap()
-    });
-    let clarity = 1.0 - d[lag];
-    if clarity < 0.6 {
-        return None;
-    }
-    // Between samples: fit a parabola through the dip.
-    let (a, b, c) = (d[lag - 1], d[lag], d[lag + 1]);
-    let den = a - 2.0 * b + c;
-    let frac = if den.abs() > 1e-12 {
-        (0.5 * (a - c) / den).clamp(-0.5, 0.5)
-    } else {
-        0.0
-    };
-    Some(Pitch {
-        hz: RATE / (lag as f64 + frac),
-        clarity,
-    })
+/// register $1000); `None` if it has no clear pitch (drums, noise).
+pub fn pitch(s: &Sample) -> Option<super::instrument::Pitch> {
+    super::instrument::pitch(&s.pcm, s.loop_start, RATE)
 }
 
 #[cfg(test)]

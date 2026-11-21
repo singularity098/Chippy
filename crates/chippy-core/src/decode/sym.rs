@@ -266,6 +266,26 @@ fn tagged(loc: &Location) -> Result<lofty::file::TaggedFile> {
     })
 }
 
+/// The lyrics in a file's tags (ID3 USLT, Vorbis LYRICS or
+/// UNSYNCEDLYRICS, MP4 ©lyr...), as stored.
+pub fn lyrics(loc: &Location) -> Option<String> {
+    use lofty::prelude::*;
+    use lofty::tag::ItemKey;
+    let f = tagged(loc).ok()?;
+    f.tags().iter().find_map(|tag| {
+        [
+            ItemKey::Lyrics,
+            ItemKey::Unknown("UNSYNCEDLYRICS".into()),
+            ItemKey::Unknown("UNSYNCED LYRICS".into()),
+            ItemKey::Unknown("SYNCEDLYRICS".into()),
+        ]
+        .iter()
+        .find_map(|k| tag.get_string(k))
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string)
+    })
+}
+
 pub fn meta(loc: &Location) -> Result<TrackMeta> {
     lofty_meta(loc).or_else(|e| symphonia_meta(loc).map_err(|_| e))
 }

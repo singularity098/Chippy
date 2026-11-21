@@ -134,6 +134,10 @@ pub struct NowState {
     pub midi: bool,
     /// The SoundFont in use (MIDI), without its extension.
     pub soundfont: String,
+    /// The track has lyrics to show.
+    pub has_lyrics: bool,
+    /// The track's notes can be found, for a guitar tab.
+    pub has_notes: bool,
     pub volume: f32,
     pub muted: bool,
     /// Where playback is, as this state was sent (for the media session).
@@ -248,6 +252,15 @@ pub struct TabLine {
     /// "1:04".
     pub label: String,
     pub notes: Vec<TabNote>,
+    /// Where the playhead is when, in time order: straight between them.
+    pub marks: Vec<TabMark>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TabMark {
+    pub ms: u64,
+    /// Across the line, 0..1.
+    pub x: f32,
 }
 
 /// The guitar tab of the playing track.

@@ -86,9 +86,13 @@ info, PSF tags, vgmstream stream names).
   kept in view, and a click jumps to a line), the file's tags, a karaoke
   MIDI file, or a `.txt` file beside it.
 * **Guitar tab** (`T`, or the guitar button): the playing track's notes laid
-  out for guitar (standard, drop D, half step down), bass or ukulele, a part
-  (channel) at a time, with a playhead that follows the song; *Copy* gives
-  the tab as text.
+  out for guitar (standard, drop D, half step down), 7-string guitar (B
+  standard, drop A), bass or ukulele, a part (channel) at a time, starting
+  with the lead; the notes are spaced to fit the window without touching,
+  with a playhead that follows the song; *Copy* gives the tab as text.
+* Lyrics and the tab slide up over the player, the transport still below
+  them, and slide back down with the arrow, a drag or `Esc`. Their buttons
+  are greyed out when a track has no lyrics, or its notes can't be found.
 * **Open a file** with the button in the title bar (`Ctrl+O`), or drop
   files on the window: the first plays, the rest join the playlist.
 * **Album art** on the right: an embedded picture, or `cover.jpg`,
@@ -172,7 +176,9 @@ its folder; a long press adds it to the playlist instead. The field above
 the listing filters the folder, or searches everything below it (*Below*).
 In the playlist, swipe a track away to remove it; its menu shows it in the
 browser, its properties, or exports it. The buttons beside the playlist's
-at the top of the player show the playing track's lyrics and guitar tab.
+at the top of the player show the playing track's lyrics and guitar tab
+(greyed out when there are none), over the player with a small transport
+below them.
 
 At the first start Chippy asks for *All files access*, as the file browser
 reads folders anywhere in shared storage (it starts in *Internal storage*;

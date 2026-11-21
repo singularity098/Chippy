@@ -124,11 +124,21 @@ fun PlayerScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = onLyrics, enabled = now?.hasTrack == true) {
-                        Icon(ChippyIcons.Lyrics, stringResource(R.string.lyrics))
+                    // Greyed out when the track has no lyrics, or its notes
+                    // can't be found.
+                    val lyricsOk = now?.hasTrack == true && now.hasLyrics
+                    IconButton(onClick = onLyrics, enabled = lyricsOk) {
+                        Icon(
+                            ChippyIcons.Lyrics,
+                            stringResource(if (lyricsOk || now?.hasTrack != true) R.string.lyrics else R.string.no_lyrics),
+                        )
                     }
-                    IconButton(onClick = onTabs, enabled = now?.hasTrack == true) {
-                        Icon(ChippyIcons.Guitar, stringResource(R.string.guitar_tab))
+                    val notesOk = now?.hasTrack == true && now.hasNotes
+                    IconButton(onClick = onTabs, enabled = notesOk) {
+                        Icon(
+                            ChippyIcons.Guitar,
+                            stringResource(if (notesOk || now?.hasTrack != true) R.string.guitar_tab else R.string.no_notes),
+                        )
                     }
                     IconButton(onClick = onOpenPlaylist) {
                         Icon(ChippyIcons.Queue, stringResource(R.string.playlist))

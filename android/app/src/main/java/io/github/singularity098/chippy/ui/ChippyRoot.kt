@@ -2,6 +2,7 @@ package io.github.singularity098.chippy.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -35,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.singularity098.chippy.Store
 import io.github.singularity098.chippy.core.LyricsInfo
+import io.github.singularity098.chippy.core.TabsState
 import io.github.singularity098.chippy.core.TrackInfo
 import io.github.singularity098.chippy.core.UiEvent
 import kotlinx.coroutines.launch
@@ -85,6 +87,26 @@ fun ChippyRoot(store: Store, host: Host) {
 
         BackHandler(enabled = page == Page.Player) { host.moveToBack() }
 
+        // The lyrics or the guitar tab, slid up over the player (one at a
+        // time); back, the arrow or a drag down puts it away.
+        val tabsShown = tabs?.shown == true
+        val sheetOpen = tabsShown || lyrics != null
+        fun closeSheet() {
+            if (tabsShown) store.send { closeTabs() }
+            lyrics = null
+        }
+        BackHandler(enabled = sheetOpen) { closeSheet() }
+        // What the panel showed, kept while it slides away.
+        var lastLyrics by remember { mutableStateOf<LyricsInfo?>(null) }
+        var lastTabs by remember { mutableStateOf<TabsState?>(null) }
+        if (tabsShown) {
+            lastTabs = tabs
+            lastLyrics = null
+        } else if (lyrics != null) {
+            lastLyrics = lyrics
+            lastTabs = null
+        }
+
         Scaffold(
             snackbarHost = { SnackbarHost(snackbar) },
             containerColor = ChippyBackground,
@@ -113,8 +135,14 @@ fun ChippyRoot(store: Store, host: Host) {
                             onOpenBrowser = { page = Page.Browser },
                             onOpenPlaylist = { page = Page.Playlist },
                             onOpenSettings = { page = Page.Settings },
-                            onLyrics = { scope.launch { lyrics = store.ask { lyrics() } } },
-                            onTabs = { store.send { openTabs() } },
+                            onLyrics = {
+                                if (tabsShown) store.send { closeTabs() }
+                                scope.launch { lyrics = store.ask { lyrics() } }
+                            },
+                            onTabs = {
+                                lyrics = null
+                                store.send { openTabs() }
+                            },
                         )
                         Page.Browser -> BrowserScreen(store, browser, onClose = { page = Page.Player })
                         Page.Playlist -> PlaylistScreen(
@@ -138,6 +166,15 @@ fun ChippyRoot(store: Store, host: Host) {
                     }
                 }
             }
+            // Over the pages, but out of their sideways swipes.
+            AnimatedVisibility(
+                visible = sheetOpen,
+                enter = slideInVertically(tween(280)) { it },
+                exit = slideOutVertically(tween(280)) { it },
+            ) {
+                lastTabs?.let { TabsSheet(store, it, onClose = ::closeSheet) }
+                    ?: lastLyrics?.let { LyricsSheet(store, it, onClose = ::closeSheet) }
+            }
         }
 
         if (showExport) {
@@ -148,8 +185,6 @@ fun ChippyRoot(store: Store, host: Host) {
         LaunchedEffect(now?.title, now?.location) {
             if (lyrics != null) lyrics = store.ask { lyrics() }
         }
-        lyrics?.let { LyricsSheet(store, it, onClose = { lyrics = null }) }
-        tabs?.takeIf { it.shown }?.let { TabsSheet(store, it, onClose = { store.send { closeTabs() } }) }
     }
 }
 

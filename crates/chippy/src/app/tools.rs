@@ -11,8 +11,8 @@ use chippy_core::vfs::{self, EntryKind, TrackRef};
 
 use super::{ss, App};
 use crate::export::{self, Format, Progress};
-use crate::tabs::TabView;
-use crate::{Export, Info, InfoField, Lyrics, TabCell, TabLine, Tabs};
+use crate::tabs::{Available, TabView};
+use crate::{Export, Info, InfoField, Lyrics, Now, TabCell, TabLine, Tabs};
 use chippy_core::lyrics;
 
 /// The lyrics dialog's state: the track whose lyrics are shown.
@@ -28,6 +28,8 @@ pub struct LyricsState {
 pub struct TabsState {
     pub shown: bool,
     pub view: TabView,
+    /// Whether the playing track has lyrics and notes to show.
+    pub avail: Available,
     pub line: i32,
     pub playhead: f32,
 }
@@ -541,6 +543,9 @@ impl App {
             self.toast("Play something first", true);
             return;
         }
+        if self.tabs.shown {
+            self.close_tabs();
+        }
         self.load_lyrics();
         l.set_shown(true);
     }
@@ -608,7 +613,6 @@ impl App {
     }
 
     pub(super) fn show_tabs(&mut self) {
-        let ui = self.ui();
         if self.tabs.shown {
             return self.close_tabs();
         }
@@ -616,9 +620,12 @@ impl App {
             self.toast("Play something first", true);
             return;
         }
+        if self.lyrics.track.is_some() {
+            self.close_lyrics();
+        }
         self.tabs.shown = true;
         self.load_tabs();
-        ui.global::<Tabs>().set_shown(true);
+        self.ui().global::<Tabs>().set_shown(true);
     }
 
     fn load_tabs(&mut self) {
@@ -633,9 +640,9 @@ impl App {
         self.sync_tabs();
     }
 
+    /// Puts the tab away; what was worked out is kept, to come back to.
     pub(super) fn close_tabs(&mut self) {
         self.tabs.shown = false;
-        self.tabs.view.clear();
         let ui = self.ui();
         ui.global::<Tabs>().set_shown(false);
         ui.invoke_focus_main();
@@ -647,10 +654,23 @@ impl App {
         self.sync_tabs();
     }
 
-    pub(super) fn step_tab_tuning(&mut self, d: i32) {
-        self.tabs.view.step_tuning(d);
+    pub(super) fn set_tab_part(&mut self, i: i32) {
+        self.tabs.view.set_part(i.max(0) as usize);
         self.tabs.line = -1;
         self.sync_tabs();
+    }
+
+    pub(super) fn set_tab_tuning(&mut self, i: i32) {
+        self.tabs.view.set_tuning(i.max(0) as usize);
+        self.tabs.line = -1;
+        self.sync_tabs();
+    }
+
+    pub(super) fn set_tab_width(&mut self, digits: i32) {
+        if self.tabs.view.set_width(digits as f32) {
+            self.tabs.line = -1;
+            self.sync_tabs();
+        }
     }
 
     pub(super) fn seek_tab_line(&mut self, i: i32) {
@@ -666,10 +686,12 @@ impl App {
         let v = &self.tabs.view;
         t.set_busy(v.busy());
         t.set_message(ss(v.message()));
-        t.set_parts(v.part_count() as i32);
+        let parts: Vec<SharedString> = v.part_names().iter().map(ss).collect();
+        t.set_part_names(ModelRc::new(VecModel::from(parts)));
         t.set_part(v.part_index() as i32);
-        t.set_part_name(ss(v.part_name()));
-        t.set_tuning_name(ss(v.tuning_name()));
+        let tunings: Vec<SharedString> = TabView::tuning_names().iter().map(ss).collect();
+        t.set_tunings(ModelRc::new(VecModel::from(tunings)));
+        t.set_tuning(v.tuning_index() as i32);
         let strings: Vec<SharedString> = v.strings().iter().map(ss).collect();
         t.set_strings(ModelRc::new(VecModel::from(strings)));
         let lines: Vec<TabLine> = v
@@ -701,6 +723,19 @@ impl App {
     /// playlist to the next track.
     pub(super) fn sheets_tick(&mut self, pos_ms: u64) {
         let playing = self.current_track().cloned();
+        // Whether there are lyrics and notes, for the buttons.
+        let a = &mut self.tabs.avail;
+        if a.check(playing.as_ref()) | a.poll() || self.tabs.view.failed() {
+            let (lyrics, notes) = (a.lyrics(), a.notes(&self.tabs.view));
+            let ui = self.ui();
+            let n = ui.global::<Now>();
+            if n.get_has_lyrics() != lyrics {
+                n.set_has_lyrics(lyrics);
+            }
+            if n.get_has_notes() != notes {
+                n.set_has_notes(notes);
+            }
+        }
         if self.lyrics.track.is_some() {
             if playing.is_some() && playing != self.lyrics.track {
                 self.load_lyrics();

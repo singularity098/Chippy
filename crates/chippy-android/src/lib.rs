@@ -304,6 +304,12 @@ impl Engine {
         self.act(|c| c.set_tab_tuning(index as usize));
     }
 
+    /// How many fret numbers (a digit and its padding) fit across a line
+    /// of the tab as shown: the lines are laid out to that width.
+    pub fn set_tab_width(&self, digits: f32) {
+        self.act(|c| c.set_tab_width(digits));
+    }
+
     // ---------------------------------------------------------- lifecycle
 
     /// Saves the settings and the session now (the app is leaving the

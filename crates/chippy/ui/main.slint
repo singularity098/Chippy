@@ -22,7 +22,7 @@ import { Browser, BrowserPanel } from "browser.slint";
 import { Playlist, PlaylistPanel } from "playlist.slint";
 import { Now, ArtPanel, BottomBar } from "nowplaying.slint";
 import { Prefs, SettingsPanel } from "settings.slint";
-import { Info, Export, Lyrics, Tabs, TabCell, TabLine, InfoDialog, ExportDialog, LyricsDialog, TabsDialog } from "dialogs.slint";
+import { Info, Export, Lyrics, Tabs, TabCell, TabLine, InfoDialog, ExportDialog, LyricsSheet, TabsSheet } from "dialogs.slint";
 import { PhoneTopBar, PhonePlayer, QueuePage } from "phone.slint";
 
 export { Theme, IconArt, Browser, Playlist, Now, Prefs, Info, Export, Lyrics, Tabs, TabCell, TabLine, FileItem, PlRow, ColumnItem, Crumb, InfoField, MusicDir }
@@ -277,6 +277,8 @@ export component MainWindow inherits Window {
     public function back() -> bool {
         if Export.shown { Export.close(); return true; }
         if Info.shown { Info.close(); return true; }
+        if Tabs.shown { Tabs.close(); return true; }
+        if Lyrics.shown { Lyrics.close(); return true; }
         if root.left-pos > 0 { root.close-left(); return true; }
         if root.right-pos > 0 { root.close-right(); return true; }
         if root.queue-open { root.queue-open = false; return true; }
@@ -355,6 +357,29 @@ export component MainWindow inherits Window {
                 width: min(parent.height - 36px - 80px, (root.width - 2 * root.gutter) * 0.42);
             }
         }
+    }
+
+    // The lyrics and the guitar tab slide up over the player, the bottom
+    // bar (and so the transport) still below them.
+    property <length> sheet-height: root.phone ? root.height - root.top-inset : root.mid-height;
+    property <length> sheet-inset: root.phone ? 0 : root.gutter;
+    LyricsSheet {
+        x: root.sheet-inset;
+        width: root.width - 2 * root.sheet-inset;
+        height: root.sheet-height;
+        y: Lyrics.shown ? root.top-inset : root.height;
+        visible: self.y < root.height;
+        animate y { duration: Theme.slide; easing: ease-out; }
+        compact: root.phone;
+    }
+    TabsSheet {
+        x: root.sheet-inset;
+        width: root.width - 2 * root.sheet-inset;
+        height: root.sheet-height;
+        y: Tabs.shown ? root.top-inset : root.height;
+        visible: self.y < root.height;
+        animate y { duration: Theme.slide; easing: ease-out; }
+        compact: root.phone;
     }
 
     if !root.phone: BottomBar {
@@ -595,18 +620,6 @@ export component MainWindow inherits Window {
         height: root.height;
     }
     if Export.shown: ExportDialog {
-        x: 0;
-        y: 0;
-        width: root.width;
-        height: root.height;
-    }
-    if Lyrics.shown: LyricsDialog {
-        x: 0;
-        y: 0;
-        width: root.width;
-        height: root.height;
-    }
-    if Tabs.shown: TabsDialog {
         x: 0;
         y: 0;
         width: root.width;

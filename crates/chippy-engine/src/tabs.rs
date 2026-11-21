@@ -19,7 +19,12 @@ pub struct Line {
     pub label: String,
     /// (x 0..1, string (0 lowest), fret).
     pub cells: Vec<(f32, u8, u8)>,
+    /// (ms, x 0..1): where the playhead is when; straight between them.
+    pub marks: Vec<(f64, f32)>,
 }
+
+/// How wide a line is taken to be until the view says (in digits).
+pub const DEFAULT_WIDTH: f32 = 72.0;
 
 pub struct TabView {
     /// The track shown (or being worked out).
@@ -37,6 +42,8 @@ pub struct TabView {
     tab: Option<tab::Tab>,
     lines: Vec<Line>,
     length_ms: f64,
+    /// How many digits (fret numbers) fit across a line.
+    width: f32,
 }
 
 impl Default for TabView {
@@ -55,22 +62,62 @@ impl Default for TabView {
             tab: None,
             lines: Vec::new(),
             length_ms: 0.0,
+            width: DEFAULT_WIDTH,
         }
     }
 }
 
-/// The part to show first: a guitar if there is one, else the busiest
-/// part (usually the melody or the bass).
+/// The part to show first: a guitar if there is one, else the lead: the
+/// busiest of the parts above the bass, preferring higher ones when about
+/// as busy (on a chip, the first square channel usually carries the tune;
+/// the triangle the bass).
 fn first_part(t: &Transcription, parts: &[usize]) -> usize {
     let busiest = |guitar: bool| {
         parts
             .iter()
             .enumerate()
-            .filter(|(_, &i)| !guitar || gm::is_guitar(t.parts[i].program))
+            // A guitar, that is, not a bass (which GM counts among them).
+            .filter(|(_, &i)| {
+                let p = &t.parts[i];
+                !guitar || (gm::is_guitar(p.program) && !is_bass(p))
+            })
             .max_by_key(|(_, &i)| t.parts[i].notes.len())
             .map(|(k, _)| k)
     };
-    busiest(true).or_else(|| busiest(false)).unwrap_or(0)
+    if let Some(k) = busiest(true) {
+        return k;
+    }
+    let named = |p: &Part, words: &[&str]| {
+        let n = p.name.to_lowercase();
+        words.iter().any(|w| n.contains(w))
+    };
+    let leads: Vec<(usize, &Part)> = parts
+        .iter()
+        .enumerate()
+        .map(|(k, &i)| (k, &t.parts[i]))
+        .filter(|(_, p)| !is_bass(p) && !named(p, &["bass", "triangle", "noise", "dpcm", "dmc"]))
+        .collect();
+    if let Some((k, _)) = leads
+        .iter()
+        .find(|(_, p)| named(p, &["lead", "melody", "vocal", "voice"]) && !p.notes.is_empty())
+    {
+        return *k;
+    }
+    let most = leads.iter().map(|(_, p)| p.notes.len()).max().unwrap_or(0);
+    // Of the parts at least half as busy as the busiest, the highest; ties
+    // to the first (Square 1 before Square 2).
+    leads
+        .iter()
+        .filter(|(_, p)| p.notes.len() * 2 >= most)
+        .max_by_key(|(k, p)| (median_key(p), std::cmp::Reverse(*k)))
+        .map(|(k, _)| *k)
+        .or_else(|| busiest(false))
+        .unwrap_or(0)
+}
+
+/// A part low enough, or named so, to be played on a bass.
+fn is_bass(p: &Part) -> bool {
+    median_key(p) < 45 || (32..=39).contains(&p.program)
 }
 
 fn median_key(p: &Part) -> u8 {
@@ -232,6 +279,27 @@ impl TabView {
         }
     }
 
+    /// Sets how many digits (fret numbers with their padding) fit across a
+    /// line; true if the lines changed.
+    pub fn set_width(&mut self, digits: f32) -> bool {
+        let digits = digits.round().max(12.0);
+        if (digits - self.width).abs() < 0.5 {
+            return false;
+        }
+        self.width = digits;
+        self.layout();
+        true
+    }
+
+    /// The track's notes were looked for and none can be shown.
+    pub fn failed(&self) -> bool {
+        match &self.found {
+            Some(Err(_)) => true,
+            Some(Ok(_)) => self.parts.is_empty(),
+            None => false,
+        }
+    }
+
     pub fn step_tuning(&mut self, d: i32) {
         let n = tab::TUNINGS.len() as i32;
         self.set_tuning((self.tuning as i32 + d).rem_euclid(n) as usize);
@@ -251,32 +319,31 @@ impl TabView {
         let Some(p) = self.current_part() else { return };
         let tuning = if self.tuning_chosen {
             self.tuning
-        } else {
+        } else if is_bass(p) {
             // Low parts on a bass, the rest on a guitar.
-            let bass = median_key(p) < 45 || (32..=39).contains(&p.program);
-            if bass {
-                3
-            } else {
-                0
-            }
+            tab::tuning_named("Bass (4 strings)").unwrap_or(0)
+        } else {
+            0
         };
         let tab = tab::arrange(&p.notes, &tab::TUNINGS[tuning]);
         self.tuning = tuning;
-        let row_ms = tab::row_length_ms(&tab);
-        self.lines = tab::rows(&tab, row_ms, self.length_ms)
+        self.tab = Some(tab);
+        self.layout();
+    }
+
+    /// Cuts the tab into lines as wide as the view.
+    fn layout(&mut self) {
+        let Some(tab) = &self.tab else { return };
+        self.lines = tab::layout(tab, self.width, self.length_ms)
             .into_iter()
             .map(|r| Line {
                 label: format_ms(r.start_ms as u64),
                 start_ms: r.start_ms,
                 end_ms: r.end_ms,
                 cells: r.cells,
+                marks: r.marks,
             })
             .collect();
-        // Trailing silence makes no lines worth scrolling to.
-        while self.lines.len() > 1 && self.lines.last().is_some_and(|l| l.cells.is_empty()) {
-            self.lines.pop();
-        }
-        self.tab = Some(tab);
     }
 
     pub fn lines(&self) -> &[Line] {
@@ -304,10 +371,13 @@ impl TabView {
         let ms = ms as f64;
         let i = self.lines.iter().position(|l| ms < l.end_ms)?;
         let l = &self.lines[i];
-        Some((
-            i,
-            ((ms - l.start_ms) / (l.end_ms - l.start_ms)).clamp(0.0, 1.0) as f32,
-        ))
+        let row = tab::Row {
+            start_ms: l.start_ms,
+            end_ms: l.end_ms,
+            cells: Vec::new(),
+            marks: l.marks.clone(),
+        };
+        Some((i, tab::playhead(&row, ms)))
     }
 
     /// "Moved down an octave to fit. 3 notes moved by an octave."
@@ -356,5 +426,90 @@ impl TabView {
             ),
             None => String::new(),
         }
+    }
+}
+
+/// Whether a track has lyrics and notes to show, so their buttons can be
+/// greyed out before anything is opened. Lyrics are looked for on a
+/// thread of their own (they may be in an archive or the file's tags).
+pub struct Available {
+    track: Option<TrackRef>,
+    request: u64,
+    lyrics: Option<bool>,
+    notes: bool,
+    tx: Sender<(u64, bool)>,
+    rx: Receiver<(u64, bool)>,
+}
+
+impl Default for Available {
+    fn default() -> Self {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        Available {
+            track: None,
+            request: 0,
+            lyrics: None,
+            notes: false,
+            tx,
+            rx,
+        }
+    }
+}
+
+impl Available {
+    /// Looks into `track` if it is not the one already looked into; true
+    /// if what is known changed.
+    pub fn check(&mut self, track: Option<&TrackRef>) -> bool {
+        if self.track.as_ref() == track {
+            return false;
+        }
+        self.track = track.cloned();
+        self.request += 1;
+        self.lyrics = None;
+        self.notes = track.is_some_and(|t| notes::supported(&t.loc.name()));
+        if let Some(t) = track {
+            let (id, tx, t) = (self.request, self.tx.clone(), t.clone());
+            std::thread::Builder::new()
+                .name("lyrics".into())
+                .spawn(move || {
+                    crate::background_thread();
+                    let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        chippy_core::lyrics::find(&t)
+                    }))
+                    .ok()
+                    .flatten()
+                    .is_some_and(|l| !l.lines.is_empty());
+                    let _ = tx.send((id, found));
+                })
+                .ok();
+        }
+        true
+    }
+
+    /// Takes in a finished look; true if what is known changed.
+    pub fn poll(&mut self) -> bool {
+        let mut changed = false;
+        while let Ok((id, found)) = self.rx.try_recv() {
+            if id == self.request {
+                self.lyrics = Some(found);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Still looking for the track's lyrics.
+    pub fn pending(&self) -> bool {
+        self.track.is_some() && self.lyrics.is_none()
+    }
+
+    /// The track has lyrics (false until known).
+    pub fn lyrics(&self) -> bool {
+        self.lyrics == Some(true)
+    }
+
+    /// The track's notes can be looked for, and `view` (if it shows this
+    /// track) found some.
+    pub fn notes(&self, view: &TabView) -> bool {
+        self.notes && !(view.track == self.track && view.failed())
     }
 }

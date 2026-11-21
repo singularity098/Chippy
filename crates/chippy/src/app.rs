@@ -465,7 +465,9 @@ impl App {
         let tb = ui.global::<Tabs>();
         on!(app, tb, on_close, |a| a.close_tabs());
         on!(app, tb, on_step_part, |a, d: i32| a.step_tab_part(d));
-        on!(app, tb, on_step_tuning, |a, d: i32| a.step_tab_tuning(d));
+        on!(app, tb, on_set_part, |a, i: i32| a.set_tab_part(i));
+        on!(app, tb, on_set_tuning, |a, i: i32| a.set_tab_tuning(i));
+        on!(app, tb, on_set_width, |a, w: i32| a.set_tab_width(w));
         on!(app, tb, on_seek_line, |a, i: i32| a.seek_tab_line(i));
         on!(app, s, on_set_theme, |a, i: i32| {
             let names: Vec<String> = a

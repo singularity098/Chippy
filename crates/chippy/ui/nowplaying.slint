@@ -44,7 +44,10 @@ export global Now {
     in property <bool> midi;
     in property <string> soundfont;
     callback cycle-soundfont(int);
-    // The playing track's lyrics, and a guitar tab of its notes.
+    // The playing track's lyrics, and a guitar tab of its notes; whether
+    // there are lyrics, and whether its notes can be found.
+    in property <bool> has-lyrics;
+    in property <bool> has-notes;
     callback show-lyrics;
     callback show-tabs;
 }
@@ -343,16 +346,16 @@ export component BottomBar inherits Rectangle {
                 y: (parent.height - self.height) / 2;
                 icon: Icons.lyrics-line;
                 icon-size: 18px;
-                enabled: Now.has-track;
-                tip: "Lyrics (L)";
+                enabled: Now.has-track && Now.has-lyrics;
+                tip: !Now.has-track ? "Lyrics (L)" : Now.has-lyrics ? "Lyrics (L)" : "No lyrics found for this track";
                 clicked => { Now.show-lyrics(); }
             }
             IconButton {
                 y: (parent.height - self.height) / 2;
                 icon: Icons.guitar-line;
                 icon-size: 18px;
-                enabled: Now.has-track;
-                tip: "Guitar tab (T)";
+                enabled: Now.has-track && Now.has-notes;
+                tip: !Now.has-track ? "Guitar tab (T)" : Now.has-notes ? "Guitar tab (T)" : "The notes of this track can't be found";
                 clicked => { Now.show-tabs(); }
             }
             IconButton {

@@ -21,7 +21,7 @@ use chippy_engine::audio::Output;
 use chippy_engine::export::{self, Format, Progress};
 use chippy_engine::player::{Cmd, Event, Player};
 use chippy_engine::spectrum::{Spectrum, FFT_LEN};
-use chippy_engine::tabs::TabView;
+use chippy_engine::tabs::{Available, TabView};
 
 use crate::paths::{self, file_name, found_in, human_size, pretty};
 use crate::types::*;
@@ -155,6 +155,8 @@ pub struct Core {
     // ---- guitar tab
     tabs_shown: bool,
     tabs: TabView,
+    /// Whether the playing track has lyrics and notes to show.
+    avail: Available,
 
     // ---- export
     export: ExportJob,
@@ -238,6 +240,7 @@ impl Core {
             soundfont_status: String::new(),
             tabs_shown: false,
             tabs: TabView::default(),
+            avail: Available::default(),
             export: ExportJob::default(),
             export_tx,
             export_rx,
@@ -539,6 +542,8 @@ impl Core {
                 .as_deref()
                 .map(|n| formats::split_name(n).0.to_string())
                 .unwrap_or_default(),
+            has_lyrics: self.avail.lyrics(),
+            has_notes: self.avail.notes(&self.tabs),
             volume: self.settings.volume,
             muted: self.muted,
             position_ms: if self.state == State::Stopped {
@@ -691,10 +696,17 @@ impl Core {
         self.dirty.tabs = true;
     }
 
+    /// Puts the tab away; what was worked out is kept, to come back to.
     pub fn close_tabs(&mut self) {
         self.tabs_shown = false;
-        self.tabs.clear();
         self.dirty.tabs = true;
+    }
+
+    /// How many fret numbers fit across a line of the tab as shown.
+    pub fn set_tab_width(&mut self, digits: f32) {
+        if self.tabs.set_width(digits) {
+            self.dirty.tabs = true;
+        }
     }
 
     pub fn set_tab_part(&mut self, i: usize) {
@@ -710,21 +722,31 @@ impl Core {
     /// Takes in a finished tab, and follows the playlist to the next
     /// track; true while one is being worked out.
     fn tabs_tick(&mut self) -> bool {
-        if !self.tabs_shown {
-            return false;
-        }
         let playing = self
             .queue
             .current
             .and_then(|i| self.queue.items.get(i))
             .map(|i| i.track.clone());
+        // Whether there are lyrics and notes, for the buttons.
+        let notes = self.avail.notes(&self.tabs);
+        if self.avail.check(playing.as_ref()) | self.avail.poll()
+            || notes != self.avail.notes(&self.tabs)
+        {
+            self.dirty.now = true;
+        }
+        let pending = self.avail.pending();
+        if !self.tabs_shown {
+            return pending;
+        }
         if playing.is_some() && playing != self.tabs.track {
             self.load_tabs();
         }
         if self.tabs.poll() {
             self.dirty.tabs = true;
+            // The notes may have turned out not to be there.
+            self.dirty.now = true;
         }
-        self.tabs.busy()
+        self.tabs.busy() || pending
     }
 
     fn tabs_state(&self) -> TabsState {
@@ -750,6 +772,11 @@ impl Core {
                         .cells
                         .iter()
                         .map(|&(x, string, fret)| TabNote { x, string, fret })
+                        .collect(),
+                    marks: l
+                        .marks
+                        .iter()
+                        .map(|&(ms, x)| TabMark { ms: ms as u64, x })
                         .collect(),
                 })
                 .collect(),

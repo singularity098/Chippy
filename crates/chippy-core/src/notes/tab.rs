@@ -29,6 +29,14 @@ pub const TUNINGS: &[Tuning] = &[
         strings: &[39, 44, 49, 54, 58, 63],
     },
     Tuning {
+        name: "7-string guitar (B standard)",
+        strings: &[35, 40, 45, 50, 55, 59, 64],
+    },
+    Tuning {
+        name: "7-string guitar (drop A)",
+        strings: &[33, 40, 45, 50, 55, 59, 64],
+    },
+    Tuning {
         name: "Bass (4 strings)",
         strings: &[28, 33, 38, 43],
     },
@@ -41,6 +49,11 @@ pub const TUNINGS: &[Tuning] = &[
         strings: &[67, 60, 64, 69],
     },
 ];
+
+/// The tuning named `name`, if there is one.
+pub fn tuning_named(name: &str) -> Option<usize> {
+    TUNINGS.iter().position(|t| t.name == name)
+}
 
 /// The highest fret used.
 pub const FRETS: u8 = 22;
@@ -289,49 +302,139 @@ pub fn arrange(notes: &[Note], tuning: &Tuning) -> Tab {
 }
 
 /// A line of tab covering `start_ms..end_ms`, for drawing: each note's
-/// place across the line (0..1).
+/// place across the line (0..1), and where playback is at which time.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     pub start_ms: f64,
     pub end_ms: f64,
     /// (x 0..1, string, fret).
     pub cells: Vec<(f32, u8, u8)>,
+    /// (ms, x 0..1), in time order, from the line's start to its end: the
+    /// playhead goes straight from one to the next.
+    pub marks: Vec<(f64, f32)>,
 }
 
-/// How long a line of tab should be for these notes: about sixteen notes
-/// to a line, in whole seconds.
-pub fn row_length_ms(tab: &Tab) -> f64 {
-    let mut starts: Vec<f64> = tab.notes.iter().map(|n| n.start_ms).collect();
-    starts.dedup_by(|a, b| (*a - *b).abs() < CHORD_MS);
-    let mut gaps: Vec<f64> = starts.windows(2).map(|w| w[1] - w[0]).collect();
-    gaps.sort_by(f64::total_cmp);
-    let median = gaps.get(gaps.len() / 2).copied().unwrap_or(250.0);
-    ((median * 16.0) / 1000.0).round().clamp(2.0, 10.0) * 1000.0
-}
+/// Room kept at either end of a line, in digits.
+const MARGIN: f32 = 1.0;
+/// Space kept between two notes' numbers, in digits.
+const SPACE: f32 = 1.2;
+/// The most a rest can stretch, in digits.
+const LONGEST_REST: f32 = 8.0;
+/// How far apart the usual time between notes puts them, in digits.
+const USUAL_GAP: f32 = 2.8;
 
-/// The tab cut into lines of `row_ms`, from the start to `end_ms`.
-pub fn rows(tab: &Tab, row_ms: f64, end_ms: f64) -> Vec<Row> {
-    let end = end_ms.max(
-        tab.notes
-            .iter()
-            .map(|n| n.start_ms + 1.0)
-            .fold(0.0, f64::max),
-    );
-    let count = (end / row_ms).ceil().max(1.0) as usize;
-    let mut rows: Vec<Row> = (0..count)
-        .map(|i| Row {
-            start_ms: i as f64 * row_ms,
-            end_ms: (i + 1) as f64 * row_ms,
-            cells: Vec::new(),
-        })
-        .collect();
+/// The tab cut into lines `width` digits wide (a digit: about the width
+/// of a fret number, with its padding), from the start to `end_ms`.
+///
+/// Notes are spaced by the time between them, but never closer than
+/// their numbers allow, and rests are kept short: a line fills with as
+/// many notes as fit legibly.
+pub fn layout(tab: &Tab, width: f32, end_ms: f64) -> Vec<Row> {
+    let width = width.max(12.0);
+    // Columns: (time, frets at that time, widest number in digits).
+    type Column = (f64, Vec<(u8, u8)>, f32);
+    let mut cols: Vec<Column> = Vec::new();
     for n in &tab.notes {
-        let i = ((n.start_ms / row_ms) as usize).min(count - 1);
-        let r = &mut rows[i];
-        let x = ((n.start_ms - r.start_ms) / row_ms) as f32;
-        r.cells.push((x.clamp(0.0, 1.0), n.string, n.fret));
+        match cols.last_mut() {
+            Some(c) if n.start_ms - c.0 < CHORD_MS => c.1.push((n.string, n.fret)),
+            _ => cols.push((n.start_ms, vec![(n.string, n.fret)], 0.0)),
+        }
     }
+    for c in &mut cols {
+        c.2 = if c.1.iter().any(|p| p.1 >= 10) {
+            2.0
+        } else {
+            1.0
+        };
+    }
+    let end_ms = end_ms.max(cols.last().map_or(0.0, |c| c.0 + 1.0));
+    if cols.is_empty() {
+        return vec![Row {
+            start_ms: 0.0,
+            end_ms,
+            cells: Vec::new(),
+            marks: vec![(0.0, 0.0), (end_ms, 1.0)],
+        }];
+    }
+    // Digits per ms: the usual gap between notes gets USUAL_GAP.
+    let mut gaps: Vec<f64> = cols
+        .windows(2)
+        .map(|w| w[1].0 - w[0].0)
+        .filter(|&g| g > 0.0)
+        .collect();
+    gaps.sort_by(f64::total_cmp);
+    let median = gaps.get(gaps.len() / 2).copied().unwrap_or(250.0).max(20.0);
+    let scale = USUAL_GAP as f64 / median;
+    let spread = |ms: f64| ((ms * scale) as f32).min(LONGEST_REST);
+
+    let mut rows: Vec<Row> = Vec::new();
+    let mut row = Row {
+        start_ms: 0.0,
+        end_ms: 0.0,
+        cells: Vec::new(),
+        marks: vec![(0.0, 0.0)],
+    };
+    // The last note placed: (time, x, its width).
+    let mut last: Option<(f64, f32, f32)> = None;
+    for (t, frets, w) in &cols {
+        let x = match last {
+            None => MARGIN + w / 2.0 + spread(*t).min(LONGEST_REST / 2.0),
+            Some((lt, lx, lw)) => lx + spread(t - lt).max((lw + w) / 2.0 + SPACE),
+        };
+        let x = if let Some((lt, lx, lw)) = last.filter(|_| x + w / 2.0 + MARGIN > width) {
+            // Onto a new line, which starts where this note does.
+            let tail = (lx + spread(t - lt).max(lw / 2.0 + SPACE)).min(width - MARGIN / 2.0);
+            row.end_ms = *t;
+            row.marks.push((*t, tail / width));
+            rows.push(std::mem::replace(
+                &mut row,
+                Row {
+                    start_ms: *t,
+                    end_ms: 0.0,
+                    cells: Vec::new(),
+                    marks: Vec::new(),
+                },
+            ));
+            let x = MARGIN + w / 2.0;
+            row.marks.push((*t, x / width));
+            x
+        } else {
+            if last.is_some() || *t > 0.0 {
+                row.marks.push((*t, x / width));
+            } else {
+                row.marks[0].1 = x / width;
+            }
+            x
+        };
+        for &(string, fret) in frets {
+            row.cells.push((x / width, string, fret));
+        }
+        last = Some((*t, x, *w));
+    }
+    // The last line runs on to the end of the track.
+    let (lt, lx, lw) = last.unwrap();
+    let tail = (lx + spread(end_ms - lt).max(lw / 2.0 + SPACE)).min(width - MARGIN / 2.0);
+    row.end_ms = end_ms;
+    if end_ms > lt {
+        row.marks.push((end_ms, tail / width));
+    }
+    rows.push(row);
     rows
+}
+
+/// Where playback is across `row` at `ms`, 0..1.
+pub fn playhead(row: &Row, ms: f64) -> f32 {
+    let m = &row.marks;
+    let Some(i) = m.iter().position(|&(t, _)| t > ms) else {
+        return m.last().map_or(0.0, |p| p.1);
+    };
+    if i == 0 {
+        return m[0].1;
+    }
+    let (t0, x0) = m[i - 1];
+    let (t1, x1) = m[i];
+    let f = ((ms - t0) / (t1 - t0).max(1e-6)).clamp(0.0, 1.0) as f32;
+    x0 + (x1 - x0) * f
 }
 
 /// The tab as text, the usual way: a line of dashes per string (highest
@@ -457,13 +560,63 @@ mod tests {
     }
 
     #[test]
-    fn cuts_into_rows() {
-        let notes: Vec<Note> = (0..40).map(|i| note(i as f64 * 250.0, 64)).collect();
+    fn lays_out_lines_without_overlaps() {
+        // Fast notes, some with two-digit frets: on a narrow line no two
+        // numbers may touch, and every note is somewhere.
+        let notes: Vec<Note> = (0..64)
+            .map(|i| note(i as f64 * 60.0, if i % 3 == 0 { 76 } else { 64 }))
+            .collect();
         let tab = arrange(&notes, &TUNINGS[0]);
-        let ms = row_length_ms(&tab);
-        assert_eq!(ms, 4000.0);
-        let rows = rows(&tab, ms, 10_000.0);
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0].cells.len(), 16);
+        for width in [24.0, 40.0, 80.0] {
+            let rows = layout(&tab, width, 10_000.0);
+            assert!(rows.len() > 1);
+            assert_eq!(rows.iter().map(|r| r.cells.len()).sum::<usize>(), 64);
+            for r in &rows {
+                let mut xs: Vec<f32> = r.cells.iter().map(|c| c.0 * width).collect();
+                xs.dedup();
+                for w in xs.windows(2) {
+                    assert!(w[1] - w[0] >= 2.0, "{width}: {xs:?}");
+                }
+                assert!(xs.iter().all(|&x| x > 0.0 && x < width), "{xs:?}");
+                // The playhead goes forwards through the line.
+                assert!(r
+                    .marks
+                    .windows(2)
+                    .all(|m| m[0].0 <= m[1].0 && m[0].1 <= m[1].1));
+            }
+            // The lines follow on from each other.
+            for w in rows.windows(2) {
+                assert_eq!(w[0].end_ms, w[1].start_ms);
+            }
+            assert_eq!(rows.last().unwrap().end_ms, 10_000.0);
+        }
+        // Narrower lines hold fewer notes.
+        assert!(layout(&tab, 24.0, 0.0).len() > layout(&tab, 80.0, 0.0).len());
+    }
+
+    #[test]
+    fn playhead_reaches_each_note() {
+        let notes: Vec<Note> = (0..8)
+            .map(|i| note(1000.0 + i as f64 * 250.0, 64))
+            .collect();
+        let tab = arrange(&notes, &TUNINGS[0]);
+        let rows = layout(&tab, 60.0, 5000.0);
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        for (i, c) in r.cells.iter().enumerate() {
+            let at = playhead(r, 1000.0 + i as f64 * 250.0);
+            assert!((at - c.0).abs() < 1e-4, "{at} {}", c.0);
+        }
+        assert!(playhead(r, 0.0) < r.cells[0].0);
+        assert!(playhead(r, 5000.0) > r.cells[7].0);
+    }
+
+    #[test]
+    fn seven_strings() {
+        let i = tuning_named("7-string guitar (drop A)").unwrap();
+        let tab = arrange(&[note(0.0, 33)], &TUNINGS[i]);
+        assert_eq!(tab.transpose, 0);
+        assert_eq!((tab.notes[0].string, tab.notes[0].fret), (0, 0));
+        assert_eq!(tab.string_names.len(), 7);
     }
 }

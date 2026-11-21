@@ -34,6 +34,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.singularity098.chippy.Store
+import io.github.singularity098.chippy.core.LyricsInfo
 import io.github.singularity098.chippy.core.TrackInfo
 import io.github.singularity098.chippy.core.UiEvent
 import kotlinx.coroutines.launch
@@ -58,6 +59,8 @@ fun ChippyRoot(store: Store, host: Host) {
         val browser by store.browser.collectAsStateWithLifecycle()
         val playlist by store.playlist.collectAsStateWithLifecycle()
         val export by store.export.collectAsStateWithLifecycle()
+        val tabs by store.tabs.collectAsStateWithLifecycle()
+        var lyrics by remember { mutableStateOf<LyricsInfo?>(null) }
         var page by rememberSaveable { mutableStateOf(Page.Player) }
         var showExport by rememberSaveable { mutableStateOf(false) }
         var info by remember { mutableStateOf<TrackInfo?>(null) }
@@ -110,6 +113,8 @@ fun ChippyRoot(store: Store, host: Host) {
                             onOpenBrowser = { page = Page.Browser },
                             onOpenPlaylist = { page = Page.Playlist },
                             onOpenSettings = { page = Page.Settings },
+                            onLyrics = { scope.launch { lyrics = store.ask { lyrics() } } },
+                            onTabs = { store.send { openTabs() } },
                         )
                         Page.Browser -> BrowserScreen(store, browser, onClose = { page = Page.Player })
                         Page.Playlist -> PlaylistScreen(
@@ -139,6 +144,12 @@ fun ChippyRoot(store: Store, host: Host) {
             ExportDialog(store, export, onPickFolder = { host.pickFolder("export") }, onClose = { showExport = false })
         }
         info?.let { InfoSheet(it, onClose = { info = null }) }
+        // The lyrics follow the playlist to the next track.
+        LaunchedEffect(now?.title, now?.location) {
+            if (lyrics != null) lyrics = store.ask { lyrics() }
+        }
+        lyrics?.let { LyricsSheet(store, it, onClose = { lyrics = null }) }
+        tabs?.takeIf { it.shown }?.let { TabsSheet(store, it, onClose = { store.send { closeTabs() } }) }
     }
 }
 

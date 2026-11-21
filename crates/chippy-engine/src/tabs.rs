@@ -172,7 +172,9 @@ impl TabView {
     /// "Voice 3 · Flute", with how many there are.
     pub fn part_name(&self) -> String {
         match self.current_part() {
-            Some(p) if p.name.contains('·') => format!("{} ({}/{})", p.name, self.part + 1, self.parts.len()),
+            Some(p) if p.name.contains('·') => {
+                format!("{} ({}/{})", p.name, self.part + 1, self.parts.len())
+            }
             Some(p) => format!(
                 "{} · {} ({}/{})",
                 p.name,
@@ -290,7 +292,8 @@ impl TabView {
                 .iter()
                 .map(|&k| {
                     let n = notes::key_name(k);
-                    n.trim_end_matches(|c: char| c.is_ascii_digit() || c == '-').to_string()
+                    n.trim_end_matches(|c: char| c.is_ascii_digit() || c == '-')
+                        .to_string()
                 })
                 .collect(),
         }
@@ -301,7 +304,10 @@ impl TabView {
         let ms = ms as f64;
         let i = self.lines.iter().position(|l| ms < l.end_ms)?;
         let l = &self.lines[i];
-        Some((i, ((ms - l.start_ms) / (l.end_ms - l.start_ms)).clamp(0.0, 1.0) as f32))
+        Some((
+            i,
+            ((ms - l.start_ms) / (l.end_ms - l.start_ms)).clamp(0.0, 1.0) as f32,
+        ))
     }
 
     /// "Moved down an octave to fit. 3 notes moved by an octave."
@@ -341,7 +347,10 @@ impl TabView {
         match &self.tab {
             Some(t) => format!(
                 "{title}\n{} — {}\n\n{}",
-                self.part_names().get(self.part).cloned().unwrap_or_default(),
+                self.part_names()
+                    .get(self.part)
+                    .cloned()
+                    .unwrap_or_default(),
                 self.tuning_name(),
                 tab::ascii(t, 80)
             ),

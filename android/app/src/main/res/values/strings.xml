@@ -70,6 +70,14 @@
     <string name="export_folder">To the folder</string>
     <string name="hide">Hide</string>
     <string name="copy_all">Copy all</string>
+    <string name="copy">Copy</string>
+    <string name="lyrics">Lyrics</string>
+    <string name="lyrics_title">Lyrics: %1$s</string>
+    <string name="guitar_tab">Guitar tab</string>
+    <string name="tab_title">Guitar tab: %1$s</string>
+    <string name="tab_part">Part</string>
+    <string name="tab_instrument">For</string>
+    <string name="tab_busy">Working out the notes…</string>
 
     <!-- Settings -->
     <string name="music_folders">Music folders</string>

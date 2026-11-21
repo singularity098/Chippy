@@ -133,7 +133,11 @@ fn latin(p: *const c_char) -> String {
         return String::new();
     }
     let b = unsafe { CStr::from_ptr(p) }.to_bytes();
-    b.iter().map(|&c| c as char).collect::<String>().trim().to_string()
+    b.iter()
+        .map(|&c| c as char)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 /// Plays a module through once (silently, a frame at a time) up to
@@ -154,7 +158,14 @@ pub(crate) fn scan(
     for _ in 0..(3 * 60 * 60 * 50 * 4) {
         let (mut t, mut pos, mut row) = (0, 0, 0);
         let n = unsafe {
-            ffi::cxmp_scan(ctx.c, &mut t, &mut pos, &mut row, chans.as_mut_ptr(), chans.len() as c_int)
+            ffi::cxmp_scan(
+                ctx.c,
+                &mut t,
+                &mut pos,
+                &mut row,
+                chans.as_mut_ptr(),
+                chans.len() as c_int,
+            )
         };
         if n < 0 || t as f64 > max {
             break;
@@ -168,16 +179,25 @@ pub(crate) fn scan(
             let (mut name, mut data) = (std::ptr::null(), std::ptr::null());
             let (mut len, mut lps, mut lpe, mut flags) = (0, 0, 0, 0);
             let ok = unsafe {
-                ffi::cxmp_sample(ctx.c, i, &mut name, &mut data, &mut len, &mut lps, &mut lpe, &mut flags)
+                ffi::cxmp_sample(
+                    ctx.c, i, &mut name, &mut data, &mut len, &mut lps, &mut lpe, &mut flags,
+                )
             };
             if ok == 0 || data.is_null() {
                 return None;
             }
             let len = len as usize;
-            let step = if flags & ffi::SAMPLE_STEREO != 0 { 2 } else { 1 };
+            let step = if flags & ffi::SAMPLE_STEREO != 0 {
+                2
+            } else {
+                1
+            };
             let pcm: Vec<f32> = if flags & ffi::SAMPLE_16BIT != 0 {
                 let d = unsafe { std::slice::from_raw_parts(data as *const i16, len * step) };
-                d.iter().step_by(step).map(|&s| s as f32 / 32768.0).collect()
+                d.iter()
+                    .step_by(step)
+                    .map(|&s| s as f32 / 32768.0)
+                    .collect()
             } else {
                 let d = unsafe { std::slice::from_raw_parts(data as *const i8, len * step) };
                 d.iter().step_by(step).map(|&s| s as f32 / 128.0).collect()

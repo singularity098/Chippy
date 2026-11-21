@@ -234,7 +234,8 @@ pub fn transcribe(loc: &Location, max_ms: Option<u64>) -> Result<Transcription> 
                 .iter()
                 .map(|&(t, s)| (t, list[s].info.program.unwrap_or(0)))
                 .collect();
-            let mut p = Part::new(format!("Voice {}", i + 1), 0, v.finish(end)).with_programs(&progs);
+            let mut p =
+                Part::new(format!("Voice {}", i + 1), 0, v.finish(end)).with_programs(&progs);
             p.name = format!("Voice {} · {}", i + 1, super::gm::program_name(p.program));
             p
         })
@@ -371,7 +372,11 @@ mod tests {
 
         let sine = &t.samples[0];
         assert!((sine.hz.unwrap() - 500.0).abs() < 1.0, "{:?}", sine.hz);
-        assert_eq!(t.samples[0].program, Some(80), "a looped sine wave: a synth");
+        assert_eq!(
+            t.samples[0].program,
+            Some(80),
+            "a looped sine wave: a synth"
+        );
         assert!(t.samples[1].drum_key.is_some());
 
         let v = &t.parts[0].notes;

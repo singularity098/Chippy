@@ -70,7 +70,9 @@ pub struct Tab {
 }
 
 fn name(key: u8) -> String {
-    const N: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    const N: [&str; 12] = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
     N[key as usize % 12].to_string()
 }
 
@@ -137,7 +139,11 @@ fn fingerings(keys: &[u8], tuning: &Tuning) -> Vec<Fingering> {
 fn moving(hand: Option<f64>, frets: Option<(f64, f64)>) -> (f64, Option<f64>) {
     match (hand, frets) {
         (Some(w), Some((lo, hi))) => {
-            let to = if hi - 3.0 <= lo { w.clamp(hi - 3.0, lo) } else { lo };
+            let to = if hi - 3.0 <= lo {
+                w.clamp(hi - 3.0, lo)
+            } else {
+                lo
+            };
             let d = (to - w).abs();
             (if d > 0.0 { 0.5 + d * 0.3 } else { 0.0 }, Some(to))
         }
@@ -202,7 +208,7 @@ pub fn arrange(notes: &[Note], tuning: &Tuning) -> Tab {
     for c in &mut chords {
         if c.len() > tuning.strings.len() {
             // Keep the outer notes and those between, highest first.
-            c.sort_by(|a, b| b.2.cmp(&a.2));
+            c.sort_by_key(|n| std::cmp::Reverse(n.2));
             c.truncate(tuning.strings.len());
         }
     }
@@ -305,7 +311,12 @@ pub fn row_length_ms(tab: &Tab) -> f64 {
 
 /// The tab cut into lines of `row_ms`, from the start to `end_ms`.
 pub fn rows(tab: &Tab, row_ms: f64, end_ms: f64) -> Vec<Row> {
-    let end = end_ms.max(tab.notes.iter().map(|n| n.start_ms + 1.0).fold(0.0, f64::max));
+    let end = end_ms.max(
+        tab.notes
+            .iter()
+            .map(|n| n.start_ms + 1.0)
+            .fold(0.0, f64::max),
+    );
     let count = (end / row_ms).ceil().max(1.0) as usize;
     let mut rows: Vec<Row> = (0..count)
         .map(|i| Row {
@@ -409,7 +420,11 @@ mod tests {
     fn plays_a_scale_in_one_place() {
         // C major from C4: should stay low on the neck, no jumps.
         let keys = [60, 62, 64, 65, 67, 69, 71, 72];
-        let notes: Vec<Note> = keys.iter().enumerate().map(|(i, &k)| note(i as f64 * 250.0, k)).collect();
+        let notes: Vec<Note> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, &k)| note(i as f64 * 250.0, k))
+            .collect();
         let tab = arrange(&notes, &TUNINGS[0]);
         assert_eq!(tab.notes.len(), 8);
         assert_eq!(tab.transpose, 0);
@@ -424,7 +439,12 @@ mod tests {
     #[test]
     fn moves_parts_into_range_and_plays_chords() {
         // Two octaves too high, with a chord.
-        let notes = vec![note(0.0, 100), note(0.0, 103), note(0.0, 107), note(500.0, 110)];
+        let notes = vec![
+            note(0.0, 100),
+            note(0.0, 103),
+            note(0.0, 107),
+            note(500.0, 110),
+        ];
         let tab = arrange(&notes, &TUNINGS[0]);
         assert_eq!(tab.transpose, -24);
         let chord: Vec<_> = tab.notes.iter().filter(|n| n.start_ms == 0.0).collect();

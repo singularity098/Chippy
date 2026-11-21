@@ -36,7 +36,7 @@ import io.github.singularity098.chippy.core.ExportFormat
 import io.github.singularity098.chippy.core.ExportState
 import io.github.singularity098.chippy.core.TrackInfo
 
-/** Exporting playlist tracks to WAV, FLAC, MP3 or Opus files. */
+/** Exporting playlist tracks to WAV, FLAC, MP3 or Opus files, or their notes to MIDI. */
 @Composable
 fun ExportDialog(store: Store, state: ExportState?, onPickFolder: () -> Unit, onClose: () -> Unit) {
     val s = state ?: return
@@ -58,12 +58,19 @@ fun ExportDialog(store: Store, state: ExportState?, onPickFolder: () -> Unit, on
                             selected = s.format == f,
                             onClick = { store.send { setExportFormat(f) } },
                             shape = SegmentedButtonDefaults.itemShape(i, formats.size),
-                            enabled = !s.running,
+                            enabled = !s.running && (f != ExportFormat.MIDI || s.midiOk),
                             icon = {},
                         ) { Text(label) }
                     }
                 }
                 Text(s.formatDetail, style = MaterialTheme.typography.bodyMedium)
+                if (s.format == ExportFormat.MIDI && s.midiNote.isNotEmpty()) {
+                    Text(
+                        s.midiNote,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (s.format == ExportFormat.MP3 || s.format == ExportFormat.OPUS) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(stringResource(R.string.bitrate), Modifier.weight(1f))

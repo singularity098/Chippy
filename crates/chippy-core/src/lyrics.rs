@@ -151,7 +151,10 @@ pub fn parse(text: &str, source: &str) -> Lyrics {
         while plain.last().is_some_and(|p| p.is_empty()) {
             plain.pop();
         }
-        let start = plain.iter().position(|p| !p.is_empty()).unwrap_or(plain.len());
+        let start = plain
+            .iter()
+            .position(|p| !p.is_empty())
+            .unwrap_or(plain.len());
         l.lines = plain[start..]
             .iter()
             .map(|t| Line {
@@ -229,7 +232,10 @@ pub fn find(track: &TrackRef) -> Option<Lyrics> {
         stems.insert(1, format!("{stem} - {:02}", sub + 1));
     }
     for st in &stems {
-        if let Some(t) = loc.sibling(&format!("{st}.lrc")).and_then(|l| read_text(&l)) {
+        if let Some(t) = loc
+            .sibling(&format!("{st}.lrc"))
+            .and_then(|l| read_text(&l))
+        {
             found.push(parse(&t, &format!("{st}.lrc")));
             break;
         }
@@ -240,7 +246,11 @@ pub fn find(track: &TrackRef) -> Option<Lyrics> {
         }
     }
     if matches!(formats::kind_of(&name), FileKind::Audio(Codec::Midi)) {
-        if let Ok(ev) = loc.read().map_err(|_| ()).and_then(|d| crate::notes::smf::lyrics(&d).map_err(|_| ())) {
+        if let Ok(ev) = loc
+            .read()
+            .map_err(|_| ())
+            .and_then(|d| crate::notes::smf::lyrics(&d).map_err(|_| ()))
+        {
             let k = from_karaoke(&ev);
             if !k.lines.is_empty() {
                 found.push(k);
@@ -248,7 +258,10 @@ pub fn find(track: &TrackRef) -> Option<Lyrics> {
         }
     }
     for st in &stems {
-        if let Some(t) = loc.sibling(&format!("{st}.txt")).and_then(|l| read_text(&l)) {
+        if let Some(t) = loc
+            .sibling(&format!("{st}.txt"))
+            .and_then(|l| read_text(&l))
+        {
             found.push(parse(&t, &format!("{st}.txt")));
             break;
         }
@@ -271,7 +284,11 @@ mod tests {
         );
         assert!(l.synced);
         assert_eq!((l.artist.as_str(), l.title.as_str()), ("Someone", "A Song"));
-        let got: Vec<_> = l.lines.iter().map(|x| (x.ms.unwrap(), x.text.as_str())).collect();
+        let got: Vec<_> = l
+            .lines
+            .iter()
+            .map(|x| (x.ms.unwrap(), x.text.as_str()))
+            .collect();
         assert_eq!(
             got,
             vec![
@@ -318,7 +335,11 @@ mod tests {
         .map(|(t, s)| (*t, s.to_string()))
         .collect();
         let l = from_karaoke(&ev);
-        let got: Vec<_> = l.lines.iter().map(|x| (x.ms.unwrap(), x.text.as_str())).collect();
+        let got: Vec<_> = l
+            .lines
+            .iter()
+            .map(|x| (x.ms.unwrap(), x.text.as_str()))
+            .collect();
         assert_eq!(got, vec![(0, "Hello world"), (900, "Next line")]);
     }
 

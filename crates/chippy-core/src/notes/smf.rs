@@ -8,9 +8,19 @@ use super::{Note, Part, Transcription};
 
 /// One event of a track, at its absolute tick.
 enum Ev {
-    On { ch: u8, key: u8, vel: u8 },
-    Off { ch: u8, key: u8 },
-    Program { ch: u8, program: u8 },
+    On {
+        ch: u8,
+        key: u8,
+        vel: u8,
+    },
+    Off {
+        ch: u8,
+        key: u8,
+    },
+    Program {
+        ch: u8,
+        program: u8,
+    },
     Tempo(u32),
     /// Meta text: (kind, text). 1 text, 3 track name, 5 lyric.
     Text(u8, String),
@@ -314,7 +324,9 @@ pub fn lyrics(data: &[u8]) -> Result<Vec<(f64, String)>> {
             .iter()
             .flat_map(|t| t.events.iter())
             .filter_map(|(tick, e)| match e {
-                Ev::Text(k, s) if *k == kind && !s.starts_with('@') => Some((clock.ms(*tick), s.clone())),
+                Ev::Text(k, s) if *k == kind && !s.starts_with('@') => {
+                    Some((clock.ms(*tick), s.clone()))
+                }
                 _ => None,
             })
             .collect();

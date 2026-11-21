@@ -526,10 +526,8 @@ pub fn program_for(f: &Features, median_key: Option<u8>) -> u8 {
         };
     }
     if f.synthetic {
-        return if pure > 0.85 {
-            80 // a near-sine: the plainest lead
-        } else if hollow {
-            80 // square lead
+        return if pure > 0.85 || hollow {
+            80 // square lead (and the plainest, for near-sines)
         } else if brightness > 3.0 {
             81 // saw lead
         } else {
@@ -676,7 +674,11 @@ pub fn snes_envelope(adsr1: u8, adsr2: u8, gain: u8) -> Envelope {
         Envelope {
             attack_ms,
             sustained,
-            decay_ms: if sustained { f64::INFINITY } else { decay_ms.min(sustain_ms + decay_to_sustain) },
+            decay_ms: if sustained {
+                f64::INFINITY
+            } else {
+                decay_ms.min(sustain_ms + decay_to_sustain)
+            },
         }
     } else if gain & 0x80 == 0 {
         // A fixed volume.
@@ -752,7 +754,12 @@ mod tests {
         let hz = RATE / 64.0;
         let sine = wave(hz, 4096, &[1.0], None);
         assert_eq!(kind_of(&sine, true, 72), Kind::Melodic(73), "flute");
-        let square = wave(hz, 4096, &[1.0, 0.0, 0.33, 0.0, 0.2, 0.0, 0.14, 0.0, 0.11], None);
+        let square = wave(
+            hz,
+            4096,
+            &[1.0, 0.0, 0.33, 0.0, 0.2, 0.0, 0.14, 0.0, 0.11],
+            None,
+        );
         assert_eq!(kind_of(&square, true, 64), Kind::Melodic(71), "clarinet");
         let pluck = wave(hz, 16000, &[1.0, 0.5, 0.3, 0.2, 0.1], Some(0.15));
         assert!(

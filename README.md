@@ -74,7 +74,21 @@ info, PSF tags, vgmstream stream names).
   all*) and *Export…*.
 * **Export** the playlist (or one track) to WAV, FLAC, MP3 or Opus: the
   button above the playlist. One tagged file per track; looping chiptunes
-  end as they play, at their length with the fade.
+  end as they play, at their length with the fade. Or to **MIDI**: the
+  notes, worked out from what a tune does to its sound chip (NES, SNES,
+  Genesis and other VGM chips, Game Boy, PC Engine, MSX, Master System, Atari,
+  Commodore 64) or read from a tracker module's patterns, a MIDI track per
+  channel. Sampled instruments (SNES, modules) are measured and named to pick
+  each one's General MIDI instrument, and unpitched samples become drums.
+  MIDI is greyed out for tracks whose notes can't be found.
+* **Lyrics** (`L`, or the speech-bubble button by the volume): from an
+  `.lrc` file beside the track (timed: the line being sung is marked and
+  kept in view, and a click jumps to a line), the file's tags, a karaoke
+  MIDI file, or a `.txt` file beside it.
+* **Guitar tab** (`T`, or the guitar button): the playing track's notes laid
+  out for guitar (standard, drop D, half step down), bass or ukulele, a part
+  (channel) at a time, with a playhead that follows the song; *Copy* gives
+  the tab as text.
 * **Open a file** with the button in the title bar (`Ctrl+O`), or drop
   files on the window: the first plays, the rest join the playlist.
 * **Album art** on the right: an embedded picture, or `cover.jpg`,
@@ -157,7 +171,8 @@ you opened first. A tap opens a folder or plays a track with the rest of
 its folder; a long press adds it to the playlist instead. The field above
 the listing filters the folder, or searches everything below it (*Below*).
 In the playlist, swipe a track away to remove it; its menu shows it in the
-browser, its properties, or exports it.
+browser, its properties, or exports it. The buttons beside the playlist's
+at the top of the player show the playing track's lyrics and guitar tab.
 
 At the first start Chippy asks for *All files access*, as the file browser
 reads folders anywhere in shared storage (it starts in *Internal storage*;

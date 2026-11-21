@@ -322,9 +322,7 @@ impl App {
         let (ok, total) = self.midi_count();
         e.set_midi_ok(ok > 0);
         e.set_midi_note(ss(if ok > 0 && ok < total {
-            format!(
-                "Only {ok} of the {total} tracks can be: the others are left out."
-            )
+            format!("Only {ok} of the {total} tracks can be: the others are left out.")
         } else {
             String::new()
         }));
@@ -525,7 +523,11 @@ impl App {
             .map(|m| m.title.clone())
             .filter(|t| !t.is_empty())
             .unwrap_or_else(|| item.track.loc.name());
-        let length = item.meta.as_ref().and_then(|m| m.length_ms).or(self.duration_ms);
+        let length = item
+            .meta
+            .as_ref()
+            .and_then(|m| m.length_ms)
+            .or(self.duration_ms);
         Some((item.track.clone(), title, length))
     }
 

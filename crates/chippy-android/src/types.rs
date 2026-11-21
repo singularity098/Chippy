@@ -213,6 +213,67 @@ pub struct ExportState {
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct LyricLine {
+    /// When it is sung, ms; -1 for untimed lyrics.
+    pub ms: i64,
+    pub text: String,
+}
+
+/// The playing track's lyrics.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct LyricsInfo {
+    pub title: String,
+    /// "From Song.lrc · timed"; "" when none were found.
+    pub source: String,
+    /// The lines are timed: the current one can be followed.
+    pub synced: bool,
+    pub lines: Vec<LyricLine>,
+    /// Why there are none (and where to put them).
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TabNote {
+    /// Across the line, 0..1.
+    pub x: f32,
+    /// 0 is the lowest string.
+    pub string: u8,
+    pub fret: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TabLine {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    /// "1:04".
+    pub label: String,
+    pub notes: Vec<TabNote>,
+}
+
+/// The guitar tab of the playing track.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TabsState {
+    pub shown: bool,
+    pub title: String,
+    /// Working out the notes.
+    pub busy: bool,
+    /// Why there is no tab ("" if there is one, or it is being made).
+    pub message: String,
+    /// The pitched parts' names, and the one shown.
+    pub parts: Vec<String>,
+    pub part: u32,
+    pub tunings: Vec<String>,
+    pub tuning: u32,
+    /// String names, lowest first.
+    pub strings: Vec<String>,
+    pub lines: Vec<TabLine>,
+    /// "Moved down an octave to fit."
+    pub detail: String,
+    /// The tab as text, to copy.
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct InfoField {
     pub label: String,
     pub value: String,

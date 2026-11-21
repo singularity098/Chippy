@@ -24,9 +24,19 @@ const FX_TONE_VSLIDE: i32 = 0x05;
 
 /// What happened on a channel, in time order.
 enum Ev {
-    Attack { t: f64, smp: usize, note: f64, vol: i32 },
-    Pitch { t: f64, note: f64 },
-    Release { t: f64 },
+    Attack {
+        t: f64,
+        smp: usize,
+        note: f64,
+        vol: i32,
+    },
+    Pitch {
+        t: f64,
+        note: f64,
+    },
+    Release {
+        t: f64,
+    },
 }
 
 /// A sample, as decided after hearing how it is used.
@@ -141,7 +151,11 @@ pub fn transcribe(loc: &Location, max_ms: Option<u64>) -> Result<Transcription> 
                 return None;
             }
             // Instruments and samples are numbered alike in most formats.
-            let ins = scanned.instrument_names.get(i).map(String::as_str).unwrap_or("");
+            let ins = scanned
+                .instrument_names
+                .get(i)
+                .map(String::as_str)
+                .unwrap_or("");
             Some(decide(s, &format!("{ins} {}", s.name), notes))
         })
         .collect();
@@ -178,9 +192,7 @@ pub fn transcribe(loc: &Location, max_ms: Option<u64>) -> Result<Transcription> 
                             offset = d.offset;
                             v.attack(t, note + offset, velocity(vol));
                             progs.push((t, p));
-                            ends = d
-                                .length_ms
-                                .map(|l| t + l / 2f64.powf((note - 60.0) / 12.0));
+                            ends = d.length_ms.map(|l| t + l / 2f64.powf((note - 60.0) / 12.0));
                         }
                     }
                 }
@@ -260,6 +272,9 @@ mod tests {
             .filter(|p| !p.drums)
             .map(|p| p.program)
             .collect();
-        assert!(programs.len() > 1 || programs.iter().all(|&p| p != 0), "{programs:?}");
+        assert!(
+            programs.len() > 1 || programs.iter().all(|&p| p != 0),
+            "{programs:?}"
+        );
     }
 }

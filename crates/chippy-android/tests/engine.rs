@@ -11,6 +11,8 @@ struct Seen {
     playlist: Option<PlaylistState>,
     now: Option<NowState>,
     settings: Option<SettingsState>,
+    export: Option<ExportState>,
+    tabs: Option<TabsState>,
     events: Vec<UiEvent>,
 }
 
@@ -29,7 +31,12 @@ impl Listener for Collect {
     fn settings(&self, s: SettingsState) {
         self.0.lock().unwrap().settings = Some(s);
     }
-    fn export(&self, _: ExportState) {}
+    fn export(&self, s: ExportState) {
+        self.0.lock().unwrap().export = Some(s);
+    }
+    fn tabs(&self, s: TabsState) {
+        self.0.lock().unwrap().tabs = Some(s);
+    }
     fn art(&self, _: Option<Vec<u8>>) {}
     fn event(&self, e: UiEvent) {
         self.0.lock().unwrap().events.push(e);
@@ -80,6 +87,7 @@ fn browses_plays_and_seeks() {
     std::fs::create_dir_all(&music).unwrap();
     tone(&music.join("a tone.wav"));
     tone(&music.join("b tone.wav"));
+    std::fs::write(music.join("b tone.lrc"), "[00:00.50]One\n[00:01.50]Two\n").unwrap();
 
     let seen = Arc::new(Mutex::new(Seen::default()));
     let engine = Engine::new(
@@ -172,6 +180,29 @@ fn browses_plays_and_seeks() {
         seen.lock().unwrap().now.as_ref().unwrap().state,
         PlayState::Paused
     );
+
+    // Its lyrics, from the .lrc beside it.
+    let l = engine.lyrics().unwrap();
+    assert!(l.synced);
+    assert_eq!(l.lines.len(), 2);
+    assert_eq!((l.lines[1].ms, l.lines[1].text.as_str()), (1500, "Two"));
+
+    // A WAV holds no notes: no tab, and no MIDI export.
+    engine.open_tabs();
+    wait_for(&seen, "the tab", |s| {
+        s.tabs.as_ref().is_some_and(|t| t.shown && !t.busy)
+    });
+    assert!(!seen
+        .lock()
+        .unwrap()
+        .tabs
+        .as_ref()
+        .unwrap()
+        .message
+        .is_empty());
+    engine.close_tabs();
+    assert!(engine.prepare_export(Some(1)));
+    assert!(!seen.lock().unwrap().export.as_ref().unwrap().midi_ok);
 
     let info = engine.track_info(1).unwrap();
     assert!(info

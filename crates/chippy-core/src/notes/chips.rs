@@ -103,7 +103,13 @@ impl Ay {
         }
         let period = self.regs[c * 2] as u32 | ((self.regs[c * 2 + 1] & 15) as u32) << 8;
         if tone && period > 0 {
-            sound(v, t, self.clock / (16.0 * period as f64), attack, velocity(level, 15));
+            sound(
+                v,
+                t,
+                self.clock / (16.0 * period as f64),
+                attack,
+                velocity(level, 15),
+            );
         } else {
             v.release(t);
             if attack {
@@ -143,9 +149,18 @@ impl Chip for Ay {
             .voices
             .into_iter()
             .enumerate()
-            .map(|(i, v)| part(format!("{} {}", self.name, (b'A' + i as u8) as char), 80, v.finish(end)))
+            .map(|(i, v)| {
+                part(
+                    format!("{} {}", self.name, (b'A' + i as u8) as char),
+                    80,
+                    v.finish(end),
+                )
+            })
             .collect();
-        parts.push(Part::drums(format!("Drums ({} noise)", self.name), self.drums.finish()));
+        parts.push(Part::drums(
+            format!("Drums ({} noise)", self.name),
+            self.drums.finish(),
+        ));
         parts
     }
 }
@@ -372,7 +387,13 @@ impl Huc {
         if period == 0 {
             return v.release(t);
         }
-        sound(v, t, self.clock / (32.0 * period as f64), attack, velocity(vol, 31));
+        sound(
+            v,
+            t,
+            self.clock / (32.0 * period as f64),
+            attack,
+            velocity(vol, 31),
+        );
     }
 }
 
@@ -514,7 +535,10 @@ impl Chip for Pokey {
             .enumerate()
             .map(|(i, v)| part(format!("{} {}", self.name, i + 1), 80, v.finish(end)))
             .collect();
-        parts.push(Part::drums(format!("Drums ({} noise)", self.name), self.drums.finish()));
+        parts.push(Part::drums(
+            format!("Drums ({} noise)", self.name),
+            self.drums.finish(),
+        ));
         parts
     }
 }
@@ -632,7 +656,9 @@ impl Chip for Opll {
             .into_iter()
             .zip(self.uses)
             .enumerate()
-            .map(|(i, (v, uses))| Part::new(format!("FM {}", i + 1), 81, v.finish(end)).with_programs(&uses))
+            .map(|(i, (v, uses))| {
+                Part::new(format!("FM {}", i + 1), 81, v.finish(end)).with_programs(&uses)
+            })
             .collect();
         parts.push(Part::drums("Drums (FM rhythm)", self.drums.finish()));
         parts
@@ -795,14 +821,22 @@ impl Chip for Opl {
 
 /// Game Boy (GBS), PC Engine (HES), MSX and Sega (KSS) and Atari (SAP)
 /// tunes: their chips' writes, seen as the emulator plays.
-pub fn transcribe_gme(loc: &Location, ext: &str, track: u32, max_ms: Option<u64>) -> Result<Transcription> {
+pub fn transcribe_gme(
+    loc: &Location,
+    ext: &str,
+    track: u32,
+    max_ms: Option<u64>,
+) -> Result<Transcription> {
     const RATE: u32 = 44_100;
     // Small blocks, so each write's time is known to about 3 ms.
     const CHUNK: usize = 128;
     let mut chips: Vec<Box<dyn Chip>> = match ext {
         "gbs" => vec![Box::new(Dmg::new())],
         "hes" => vec![Box::new(Huc::new(3_579_545.0))],
-        "kss" => vec![Box::new(Ay::new("AY", 1_789_772.5)), Box::new(Psg::new(3_579_545.0))],
+        "kss" => vec![
+            Box::new(Ay::new("AY", 1_789_772.5)),
+            Box::new(Psg::new(3_579_545.0)),
+        ],
         "sap" => vec![
             Box::new(Pokey::new("POKEY", 1_789_790.0)),
             Box::new(Pokey::new("POKEY 2", 1_789_790.0)),
@@ -829,12 +863,12 @@ pub fn transcribe_gme(loc: &Location, ext: &str, track: u32, max_ms: Option<u64>
         ..Default::default()
     };
     if writes == 0 {
-        t.notes.push("The tune wrote nothing to its sound chip.".into());
+        t.notes
+            .push("The tune wrote nothing to its sound chip.".into());
     }
     if ext == "kss" {
         t.notes.push(
-            "Only the PSG (AY-3-8910) and Sega PSG are read: SCC and FM sound chips aren't."
-                .into(),
+            "Only the PSG (AY-3-8910) and Sega PSG are read: SCC and FM sound chips aren't.".into(),
         );
     }
     Ok(t)
@@ -875,7 +909,11 @@ mod tests {
         gb.write(1000.0, 0x13, 0x80); // noise trigger, but its DAC is off
         let parts = gb.finish(2000.0);
         assert_eq!(keys(&parts[0]), vec![69]);
-        assert!((parts[0].notes[0].dur_ms - 234.4).abs() < 1.0, "{}", parts[0].notes[0].dur_ms);
+        assert!(
+            (parts[0].notes[0].dur_ms - 234.4).abs() < 1.0,
+            "{}",
+            parts[0].notes[0].dur_ms
+        );
         assert!(parts[3].notes.is_empty());
     }
 

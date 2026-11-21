@@ -199,12 +199,20 @@ type Maker = fn(f64) -> Box<dyn Chip>;
 const OTHERS: &[(u8, usize, f64, Maker)] = &[
     (0x51, 0x10, 3_579_545.0, |c| Box::new(chips::Opll::new(c))),
     (0x54, 0x30, 3_579_545.0, |c| Box::new(chips::Opm::new(c))),
-    (0x5A, 0x50, 3_579_545.0, |c| Box::new(chips::Opl::new(c / 72.0, 1))),
-    (0x5E, 0x5C, 14_318_180.0, |c| Box::new(chips::Opl::new(c / 288.0, 2))),
-    (0xA0, 0x74, 1_789_772.5, |c| Box::new(chips::Ay::new("AY", c))),
+    (0x5A, 0x50, 3_579_545.0, |c| {
+        Box::new(chips::Opl::new(c / 72.0, 1))
+    }),
+    (0x5E, 0x5C, 14_318_180.0, |c| {
+        Box::new(chips::Opl::new(c / 288.0, 2))
+    }),
+    (0xA0, 0x74, 1_789_772.5, |c| {
+        Box::new(chips::Ay::new("AY", c))
+    }),
     (0xB3, 0x80, 4_194_304.0, |_| Box::new(chips::Dmg::new())),
     (0xB9, 0xA4, 3_579_545.0, |c| Box::new(chips::Huc::new(c))),
-    (0xBB, 0xB0, 1_789_772.0, |c| Box::new(chips::Pokey::new("POKEY", c))),
+    (0xBB, 0xB0, 1_789_772.0, |c| {
+        Box::new(chips::Pokey::new("POKEY", c))
+    }),
 ];
 
 impl Chips {
@@ -226,7 +234,8 @@ impl Chips {
                 } else {
                     0.0
                 };
-                self.others.push((cmd, make(if clock > 0.0 { clock } else { default })));
+                self.others
+                    .push((cmd, make(if clock > 0.0 { clock } else { default })));
                 self.others.len() - 1
             }
         };
@@ -325,7 +334,13 @@ fn run_vgm(d: &[u8], chips: &mut Chips, max_ms: f64) -> Result<f64> {
             0x93 => 11,
             0x94 => 2,
             0x30..=0x3F | 0x4F => 2,
-            0x40..=0x4E | 0x55..=0x59 | 0x5B..=0x5D | 0xA1..=0xB2 | 0xB4..=0xB8 | 0xBA | 0xBC..=0xBF => 3,
+            0x40..=0x4E
+            | 0x55..=0x59
+            | 0x5B..=0x5D
+            | 0xA1..=0xB2
+            | 0xB4..=0xB8
+            | 0xBA
+            | 0xBC..=0xBF => 3,
             0xC0..=0xDF => 4,
             0xE0..=0xFF => 5,
             _ => 1,
@@ -465,7 +480,9 @@ mod tests {
     #[test]
     fn reads_other_chips() {
         // A YM2151 note: A4 for 22050 samples.
-        let d = vgm(&[0x54, 0x28, 0x4A, 0x54, 0x08, 0x78, 0x61, 0x22, 0x56, 0x54, 0x08, 0x00]);
+        let d = vgm(&[
+            0x54, 0x28, 0x4A, 0x54, 0x08, 0x78, 0x61, 0x22, 0x56, 0x54, 0x08, 0x00,
+        ]);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.vgm");
         std::fs::write(&path, d).unwrap();

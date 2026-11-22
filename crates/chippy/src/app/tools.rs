@@ -11,9 +11,11 @@ use chippy_core::vfs::{self, EntryKind, TrackRef};
 
 use super::{ss, App};
 use crate::export::{self, Format, Progress};
+use crate::midimode;
 use crate::tabs::{Available, TabView};
 use crate::{Export, Info, InfoField, Lyrics, Now, TabCell, TabLine, Tabs};
 use chippy_core::lyrics;
+use chippy_core::notes::style::Style;
 
 /// The lyrics dialog's state: the track whose lyrics are shown.
 #[derive(Default)]
@@ -26,6 +28,9 @@ pub struct LyricsState {
 /// The guitar tab dialog's state.
 #[derive(Default)]
 pub struct TabsState {
+    /// What MIDI mode last said about the playing track (shown on its
+    /// button, beside the tab's).
+    pub midi_status: Option<midimode::Status>,
     pub shown: bool,
     pub view: TabView,
     /// Whether the playing track has lyrics and notes to show.
@@ -748,9 +753,72 @@ impl App {
         self.tabs.line = -1;
     }
 
+    // ---------------------------------------------------------- MIDI mode
+
+    /// Puts the saved MIDI mode in place, and the styles on the button.
+    pub(super) fn init_midi_mode(&mut self) {
+        let style = Style::from_id(&self.settings.midi_style).unwrap_or(Style::Original);
+        midimode::set(self.settings.midi_mode.then_some(style));
+        let ui = self.ui();
+        let n = ui.global::<Now>();
+        let names: Vec<SharedString> = Style::ALL.iter().map(|s| ss(s.name())).collect();
+        n.set_midi_styles(ModelRc::new(VecModel::from(names)));
+        n.set_midi_style(style.index() as i32);
+        n.set_midi_mode(self.settings.midi_mode);
+    }
+
+    pub(super) fn toggle_midi_mode(&mut self) {
+        self.settings.midi_mode = !self.settings.midi_mode;
+        self.apply_midi_mode();
+    }
+
+    pub(super) fn set_midi_style(&mut self, i: i32) {
+        let style = Style::from_index(i.max(0) as usize).unwrap_or(Style::Original);
+        self.settings.midi_style = style.id().into();
+        self.settings.midi_mode = true;
+        self.apply_midi_mode();
+    }
+
+    fn apply_midi_mode(&mut self) {
+        let style = Style::from_id(&self.settings.midi_style).unwrap_or(Style::Original);
+        midimode::set(self.settings.midi_mode.then_some(style));
+        let ui = self.ui();
+        let n = ui.global::<Now>();
+        n.set_midi_mode(self.settings.midi_mode);
+        n.set_midi_style(style.index() as i32);
+        self.save_settings();
+        if self.settings.midi_mode && self.soundfont_index().is_none() {
+            self.toast(
+                "MIDI mode needs a SoundFont: choose a folder of SF2 files in Settings, under MIDI",
+                true,
+            );
+        }
+    }
+
+    /// Shows what MIDI mode is doing with the playing track.
+    fn midi_mode_tick(&mut self) {
+        let status = midimode::status();
+        if self.tabs.midi_status == Some(status) {
+            return;
+        }
+        self.tabs.midi_status = Some(status);
+        self.ui().global::<Now>().set_midi_state(match status {
+            midimode::Status::Off => 0,
+            midimode::Status::Unsupported => 1,
+            midimode::Status::Preparing => 2,
+            midimode::Status::Playing => 3,
+            midimode::Status::Failed => 4,
+        });
+        if status == midimode::Status::Failed {
+            let e = midimode::error();
+            self.toast(&format!("Can't play this track as MIDI: {e}"), true);
+        }
+    }
+
     /// Follows playback in the open lyrics and tab, and follows the
     /// playlist to the next track.
     pub(super) fn sheets_tick(&mut self, pos_ms: u64) {
+        self.midi_mode_tick();
         let playing = self.current_track().cloned();
         // Whether there are lyrics and notes, for the buttons.
         let a = &mut self.tabs.avail;

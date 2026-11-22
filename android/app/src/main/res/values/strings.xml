@@ -74,6 +74,8 @@
     <string name="lyrics">Lyrics</string>
     <string name="lyrics_title">Lyrics: %1$s</string>
     <string name="guitar_tab">Guitar tab</string>
+    <string name="midi_mode">MIDI mode (hold for instruments)</string>
+    <string name="midi_mode_off">Chip (MIDI mode off)</string>
     <string name="tab_title">Guitar tab: %1$s</string>
     <string name="tab_part">Part</string>
     <string name="tab_instrument">For</string>

@@ -27,6 +27,7 @@ mod sgc;
 mod sid;
 pub mod smf;
 mod spc;
+pub mod style;
 pub mod tab;
 mod vgm;
 

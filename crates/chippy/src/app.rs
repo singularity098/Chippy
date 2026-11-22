@@ -262,6 +262,7 @@ impl App {
             a.init_ui();
             a.scan_soundfonts();
             a.load_soundfont();
+            a.init_midi_mode();
             let start = a.home_dir();
             a.navigate(&start, true);
             if let Some(p) = opts.open {
@@ -459,6 +460,8 @@ impl App {
         on!(app, n, on_cycle_soundfont, |a, d: i32| a.cycle_soundfont(d));
         on!(app, n, on_show_lyrics, |a| a.show_lyrics());
         on!(app, n, on_show_tabs, |a| a.show_tabs());
+        on!(app, n, on_toggle_midi_mode, |a| a.toggle_midi_mode());
+        on!(app, n, on_set_midi_style, |a, i: i32| a.set_midi_style(i));
         let ly = ui.global::<Lyrics>();
         on!(app, ly, on_close, |a| a.close_lyrics());
         on!(app, ly, on_seek_line, |a, i: i32| a.seek_lyrics_line(i));

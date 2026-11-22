@@ -13,12 +13,14 @@ use std::time::{Duration, Instant};
 
 use chippy_core::decode::midi;
 use chippy_core::meta::{self, format_ms, TrackMeta};
+use chippy_core::notes::style::Style;
 use chippy_core::playlist::Playlist as Queue;
 use chippy_core::settings::{Repeat, Session, Settings};
 use chippy_core::vfs::{self, Entry, EntryKind, Node, TrackRef};
 use chippy_core::{decode, formats, DecodeOptions};
 use chippy_engine::audio::Output;
 use chippy_engine::export::{self, Format, Progress};
+use chippy_engine::midimode;
 use chippy_engine::player::{Cmd, Event, Player};
 use chippy_engine::spectrum::{Spectrum, FFT_LEN};
 use chippy_engine::tabs::{Available, TabView};
@@ -166,6 +168,8 @@ pub struct Core {
     dirty: Dirty,
     art_out: Option<Option<Vec<u8>>>,
     events: Vec<UiEvent>,
+    /// What MIDI mode last said about the playing track.
+    midi_status: midimode::Status,
 }
 
 impl Core {
@@ -255,10 +259,12 @@ impl Core {
             },
             art_out: Some(None),
             events: Vec::new(),
+            midi_status: midimode::Status::Off,
         };
         core.queue.set_shuffle(core.settings.shuffle);
         core.scan_soundfonts();
         core.load_soundfont();
+        midimode::set(core.settings.midi_mode.then(|| core.midi_style()));
         let start = core.home_dir();
         core.navigate(&start, true);
         if core.settings.restore_session {
@@ -544,6 +550,16 @@ impl Core {
                 .unwrap_or_default(),
             has_lyrics: self.avail.lyrics(),
             has_notes: self.avail.notes(&self.tabs),
+            midi_mode: self.settings.midi_mode,
+            midi_style: self.midi_style().index() as u32,
+            midi_styles: Style::ALL.iter().map(|s| s.name().to_string()).collect(),
+            midi_state: match self.midi_status {
+                midimode::Status::Off => MidiState::Off,
+                midimode::Status::Unsupported => MidiState::Unsupported,
+                midimode::Status::Preparing => MidiState::Preparing,
+                midimode::Status::Playing => MidiState::Playing,
+                midimode::Status::Failed => MidiState::Failed,
+            },
             volume: self.settings.volume,
             muted: self.muted,
             position_ms: if self.state == State::Stopped {
@@ -748,6 +764,17 @@ impl Core {
             || notes != self.avail.notes(&self.tabs)
         {
             self.dirty.now = true;
+        }
+        let status = midimode::status();
+        if status != self.midi_status {
+            self.midi_status = status;
+            self.dirty.now = true;
+            if status == midimode::Status::Failed {
+                self.toast(
+                    format!("Can't play this track as MIDI: {}", midimode::error()),
+                    true,
+                );
+            }
         }
         let pending = self.avail.pending();
         if !self.tabs_shown {
@@ -983,6 +1010,36 @@ impl Core {
                 self.set_soundfont_dir(d);
             }
             _ => self.toast("SoundFonts have to be in a folder on disk", true),
+        }
+    }
+
+    // ----------------------------------------------------------- MIDI mode
+
+    fn midi_style(&self) -> Style {
+        Style::from_id(&self.settings.midi_style).unwrap_or(Style::Original)
+    }
+
+    pub fn toggle_midi_mode(&mut self) {
+        self.settings.midi_mode = !self.settings.midi_mode;
+        self.apply_midi_mode();
+    }
+
+    pub fn set_midi_style(&mut self, i: u32) {
+        let style = Style::from_index(i as usize).unwrap_or(Style::Original);
+        self.settings.midi_style = style.id().into();
+        self.settings.midi_mode = true;
+        self.apply_midi_mode();
+    }
+
+    fn apply_midi_mode(&mut self) {
+        midimode::set(self.settings.midi_mode.then(|| self.midi_style()));
+        self.mark_dirty();
+        self.dirty.now = true;
+        if self.settings.midi_mode && self.settings.soundfont.is_none() {
+            self.toast(
+                "MIDI mode needs a SoundFont: choose a folder of SF2 files in Settings, under MIDI",
+                true,
+            );
         }
     }
 

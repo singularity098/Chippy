@@ -7,6 +7,7 @@
 pub mod art;
 pub mod audio;
 pub mod export;
+pub mod midimode;
 pub mod player;
 pub mod spectrum;
 pub mod tabs;

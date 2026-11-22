@@ -120,6 +120,7 @@ fn run(
                     }
                     Err(e) => {
                         log::warn!("cannot play {}: {e:#}", track.loc.vpath().display());
+                        crate::midimode::stopped();
                         shared.lock().unwrap().producer_done = true;
                         let _ = events.send(Event::Failed {
                             generation,
@@ -140,6 +141,7 @@ fn run(
             }
             Some(Cmd::Stop) => {
                 playing = None;
+                crate::midimode::stopped();
                 let mut s = shared.lock().unwrap();
                 s.reset(0);
                 s.producer_done = true;
@@ -194,7 +196,7 @@ fn run(
 }
 
 fn open(track: &TrackRef, opts: &DecodeOptions, rate: u32, start_ms: u64) -> Result<Playing> {
-    let dec = open_decoder(track, opts)?;
+    let dec = crate::midimode::wrap(open_decoder(track, opts)?, track, opts.fade_ms);
     let resampler = (dec.sample_rate() != rate)
         .then(|| Resample::new(dec.sample_rate(), rate))
         .transpose()?;

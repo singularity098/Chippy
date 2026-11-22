@@ -152,11 +152,8 @@ impl TabView {
             .name("tabs".into())
             .spawn(move || {
                 crate::background_thread();
-                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    notes::transcribe(&track.loc, track.sub, length_ms)
-                        .map_err(|e| format!("{e:#}"))
-                }))
-                .unwrap_or_else(|_| Err("finding the notes failed".into()));
+                // Shared with MIDI mode, which may have them already.
+                let r = crate::midimode::cached(&track, length_ms).map(|t| (*t).clone());
                 let _ = tx.send((id, r));
             })
             .ok();

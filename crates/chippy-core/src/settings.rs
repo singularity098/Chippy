@@ -82,6 +82,10 @@ pub struct Settings {
     /// in use.
     pub soundfont_dir: Option<PathBuf>,
     pub soundfont: Option<String>,
+    /// MIDI mode: chiptunes play their notes as MIDI, with the instruments
+    /// of a style (its id, see `notes::style::Style`).
+    pub midi_mode: bool,
+    pub midi_style: String,
     /// Linux: run as a native Wayland window. Off, a Wayland desktop runs
     /// Chippy through XWayland, where dropping files on the window and the
     /// window's icon work (the toolkit supports neither on Wayland yet).
@@ -154,6 +158,8 @@ impl Default for Settings {
             spectrum_bars: 32,
             soundfont_dir: None,
             soundfont: None,
+            midi_mode: false,
+            midi_style: "original".into(),
         }
     }
 }

@@ -83,7 +83,9 @@ pub struct Settings {
     pub soundfont_dir: Option<PathBuf>,
     pub soundfont: Option<String>,
     /// MIDI mode: chiptunes play their notes as MIDI, with the instruments
-    /// of a style (its id, see `notes::style::Style`).
+    /// of a style (its id, see `notes::style::Style`). Never saved: every
+    /// start begins with it off.
+    #[serde(skip)]
     pub midi_mode: bool,
     pub midi_style: String,
     /// Linux: run as a native Wayland window. Off, a Wayland desktop runs

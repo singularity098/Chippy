@@ -23,8 +23,8 @@ pub struct Line {
     pub end_ms: f64,
     /// "1:04".
     pub label: String,
-    /// (x 0..1, string (0 lowest), fret).
-    pub cells: Vec<(f32, u8, u8)>,
+    /// (x 0..1, string (0 lowest), fret, soft: played quieter, an echo).
+    pub cells: Vec<(f32, u8, u8, bool)>,
     /// (ms, x 0..1): where the playhead is when; straight between them.
     pub marks: Vec<(f64, f32)>,
     /// Bar lines across it: (x 0..1, the bar starting there).
@@ -69,6 +69,13 @@ pub struct TabView {
     selected: Option<(usize, usize)>,
     /// Where a chosen run of bars started (a shift-click extends from it).
     anchor: usize,
+    /// Parts made by merging others (the parts of the transcription as
+    /// found, by index), per track, for as long as the app runs: one tune
+    /// split across channels (to pan it, or to let notes ring on) read as
+    /// one. Added after the parts found.
+    merges: HashMap<TrackRef, Vec<Vec<usize>>>,
+    /// How many parts the transcription had as found.
+    found_parts: usize,
 }
 
 impl Default for TabView {
@@ -95,7 +102,48 @@ impl Default for TabView {
             meter: None,
             selected: None,
             anchor: 0,
+            merges: HashMap::new(),
+            found_parts: 0,
         }
+    }
+}
+
+/// Parts `sources` of `t` as one: their notes together, in time order, a
+/// note both play at once kept once (the louder).
+fn merge_parts(t: &Transcription, sources: &[usize]) -> Part {
+    let mut notes: Vec<notes::Note> = sources
+        .iter()
+        .filter_map(|&i| t.parts.get(i))
+        .flat_map(|p| p.notes.iter().cloned())
+        .collect();
+    notes.sort_by(|a, b| a.start_ms.total_cmp(&b.start_ms).then(a.key.cmp(&b.key)));
+    let mut out: Vec<notes::Note> = Vec::with_capacity(notes.len());
+    for n in notes {
+        // The same note in both parts, started together.
+        if let Some(m) = out
+            .iter_mut()
+            .rev()
+            .take_while(|m| n.start_ms - m.start_ms < 25.0)
+            .find(|m| m.key == n.key)
+        {
+            let end = (m.start_ms + m.dur_ms).max(n.start_ms + n.dur_ms);
+            m.velocity = m.velocity.max(n.velocity);
+            m.dur_ms = end - m.start_ms;
+            continue;
+        }
+        out.push(n);
+    }
+    let first = sources.first().and_then(|&i| t.parts.get(i));
+    Part {
+        name: sources
+            .iter()
+            .filter_map(|&i| t.parts.get(i))
+            .map(|p| p.name.split(" · ").next().unwrap_or(&p.name).to_string())
+            .collect::<Vec<_>>()
+            .join(" + "),
+        program: first.map_or(0, |p| p.program),
+        notes: out,
+        ..Default::default()
     }
 }
 
@@ -264,8 +312,23 @@ impl TabView {
                     .collect();
                 self.part = first_part(t, &self.parts);
                 self.length_ms = self.length_ms.max(t.end_ms());
+                self.found_parts = t.parts.len();
             }
             self.found = Some(r);
+            // Parts merged before, back (the track was shown earlier).
+            let merges = self
+                .track
+                .as_ref()
+                .and_then(|k| self.merges.get(k))
+                .cloned()
+                .unwrap_or_default();
+            if let Some(Ok(t)) = &mut self.found {
+                for m in &merges {
+                    let p = merge_parts(t, m);
+                    t.parts.push(p);
+                    self.parts.push(t.parts.len() - 1);
+                }
+            }
             self.fit_meter();
             self.arrange();
             changed = true;
@@ -365,6 +428,126 @@ impl TabView {
             self.part = i;
             self.arrange();
         }
+    }
+
+    /// The parts as found that the shown part is (itself, or the parts
+    /// merged into it).
+    fn sources(&self, part: usize) -> Vec<usize> {
+        let Some(&i) = self.parts.get(part) else {
+            return Vec::new();
+        };
+        if i < self.found_parts {
+            return vec![i];
+        }
+        self.track
+            .as_ref()
+            .and_then(|k| self.merges.get(k))
+            .and_then(|m| m.get(i - self.found_parts))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Whether the shown part was made by merging others.
+    pub fn is_merged(&self) -> bool {
+        self.parts
+            .get(self.part)
+            .is_some_and(|&i| i >= self.found_parts)
+    }
+
+    /// The parts the shown one can be merged with (indices into
+    /// `part_names`), and their names: those with notes it doesn't have
+    /// already.
+    pub fn merge_choices(&self) -> Vec<(usize, String)> {
+        let mine = self.sources(self.part);
+        let names = self.part_names();
+        (0..self.parts.len())
+            .filter(|&k| k != self.part)
+            .filter(|&k| !self.sources(k).iter().all(|i| mine.contains(i)))
+            .map(|k| (k, names[k].clone()))
+            .collect()
+    }
+
+    /// Adds a part with the notes of the shown part and of part `other`
+    /// (an index into `part_names`) together, and shows it; a merge made
+    /// before is shown again.
+    pub fn merge_with(&mut self, other: usize) {
+        let Some(track) = self.track.clone() else {
+            return;
+        };
+        if other == self.part || other >= self.parts.len() {
+            return;
+        }
+        let mut sources = self.sources(self.part);
+        for i in self.sources(other) {
+            if !sources.contains(&i) {
+                sources.push(i);
+            }
+        }
+        sources.sort_unstable();
+        let found = self.found_parts;
+        let merges = self.merges.entry(track).or_default();
+        let k = match merges.iter().position(|m| *m == sources) {
+            Some(k) => k,
+            None => {
+                let Some(Ok(t)) = &mut self.found else { return };
+                let p = merge_parts(t, &sources);
+                t.parts.push(p);
+                self.parts.push(t.parts.len() - 1);
+                merges.push(sources);
+                merges.len() - 1
+            }
+        };
+        if let Some(part) = self.parts.iter().position(|&i| i == found + k) {
+            self.part = part;
+        }
+        self.arrange();
+    }
+
+    /// Takes the shown part away if it was made by merging others, showing
+    /// the first of them.
+    pub fn unmerge(&mut self) {
+        if !self.is_merged() {
+            return;
+        }
+        let Some(track) = self.track.clone() else {
+            return;
+        };
+        let i = self.parts[self.part];
+        let k = i - self.found_parts;
+        let first = self.sources(self.part).first().copied();
+        if let Some(m) = self.merges.get_mut(&track) {
+            if k < m.len() {
+                m.remove(k);
+            }
+        }
+        // Merged parts after it move down one; their adjustments with them.
+        if let Some(Ok(t)) = &mut self.found {
+            t.parts.remove(i);
+        }
+        self.parts.retain(|&p| p != i);
+        for p in &mut self.parts {
+            if *p > i {
+                *p -= 1;
+            }
+        }
+        let moved: Vec<((TrackRef, usize), tab::Adjust)> = self
+            .adjusts
+            .keys()
+            .filter(|(t, p)| *t == track && *p >= i)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter_map(|key| self.adjusts.remove_entry(&key))
+            .collect();
+        for ((t, p), a) in moved {
+            if p > i {
+                self.adjusts.insert((t, p - 1), a);
+            }
+        }
+        self.part = first
+            .and_then(|f| self.parts.iter().position(|&p| p == f))
+            .unwrap_or(0);
+        self.arrange();
     }
 
     /// Sets how many digits (fret numbers with their padding) fit across a
@@ -834,6 +1017,30 @@ impl TabView {
         }
     }
 
+    /// What is in view with the view scrolled `top` lines down: the time
+    /// the line nearest the top starts at, and how far above or below that
+    /// line the view starts (in lines). See [`TabView::keep_in_view`].
+    pub fn in_view(&self, top: f32) -> Option<(f64, f32)> {
+        if self.lines.is_empty() {
+            return None;
+        }
+        let i = (top.max(0.0).round() as usize).min(self.lines.len() - 1);
+        Some((self.lines[i].start_ms, top - i as f32))
+    }
+
+    /// Where to scroll (lines from the top) so what [`TabView::in_view`]
+    /// gave, before the lines changed, is in view again: the line with
+    /// that time in it, as far down the view as before.
+    pub fn keep_in_view(&self, (ms, offset): (f64, f32)) -> f32 {
+        // A hair in, so a line ending where the old one started isn't it.
+        let i = self
+            .lines
+            .iter()
+            .position(|l| ms + 1.0 < l.end_ms)
+            .unwrap_or(self.lines.len().saturating_sub(1));
+        (i as f32 + offset).max(0.0)
+    }
+
     /// The line playing at `ms`, and how far across it (0..1).
     pub fn position(&self, ms: u64) -> Option<(usize, f32)> {
         let ms = ms as f64;
@@ -876,6 +1083,9 @@ impl TabView {
                 },
                 if t.octave > 0 { "higher" } else { "lower" },
             ));
+        }
+        if t.notes.iter().any(|n| n.soft) {
+            out.push("Notes in brackets are played softer (echoes).".into());
         }
         let bars = t.spans.iter().filter(|&&s| s != 0).count();
         if bars > 0 {
@@ -1009,5 +1219,46 @@ impl Available {
     /// track) found some.
     pub fn notes(&self, view: &TabView) -> bool {
         self.notes && !(view.track == self.track && view.failed())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chippy_core::notes::Note;
+
+    fn note(t: f64, key: u8) -> Note {
+        Note {
+            start_ms: t,
+            dur_ms: 100.0,
+            key,
+            velocity: 100,
+            legato: false,
+        }
+    }
+
+    #[test]
+    fn merged_parts_interleave() {
+        // An arpeggio split across two channels, one note shared.
+        let t = Transcription {
+            parts: vec![
+                Part::new(
+                    "Pulse 1",
+                    80,
+                    vec![note(0.0, 67), note(400.0, 74), note(800.0, 60)],
+                ),
+                Part::new(
+                    "Pulse 2",
+                    80,
+                    vec![note(200.0, 70), note(600.0, 75), note(805.0, 60)],
+                ),
+            ],
+            ..Default::default()
+        };
+        let m = merge_parts(&t, &[0, 1]);
+        assert_eq!(m.name, "Pulse 1 + Pulse 2");
+        let keys: Vec<u8> = m.notes.iter().map(|n| n.key).collect();
+        assert_eq!(keys, vec![67, 70, 74, 75, 60]);
+        assert_eq!(m.notes[4].dur_ms, 105.0);
     }
 }

@@ -309,6 +309,13 @@ impl Engine {
         self.act(|c| c.set_tab_part(index as usize));
     }
 
+    /// Item `index` of [`TabsState::merge_items`]: the shown part merged
+    /// with another into a new part, or (the last item, for a merge) taken
+    /// apart.
+    pub fn merge_tab_part(&self, index: u32) {
+        self.act(|c| c.merge_tab_part(index as usize));
+    }
+
     pub fn set_tab_tuning(&self, index: u32) {
         self.act(|c| c.set_tab_tuning(index as usize));
     }

@@ -266,6 +266,9 @@ pub struct TabNote {
     /// 0 is the lowest string.
     pub string: u8,
     pub fret: u8,
+    /// Played softer than the notes around it (an echo): shown in
+    /// brackets, dimmer.
+    pub soft: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -316,6 +319,9 @@ pub struct TabsState {
     /// The pitched parts' names, and the one shown.
     pub parts: Vec<String>,
     pub part: u32,
+    /// What the shown part can be merged with ("With Pulse 2 · ..."), and
+    /// if it is a merge, a way to take it apart: see `merge_tab_part`.
+    pub merge_items: Vec<String>,
     pub tunings: Vec<String>,
     pub tuning: u32,
     /// String names, lowest first.

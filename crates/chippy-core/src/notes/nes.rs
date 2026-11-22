@@ -34,6 +34,10 @@ struct Apu {
     restarted: [bool; 4],
     last_vol: [u8; 4],
     rising: [bool; 4],
+    /// The volume has gone down since the note started: a rise now is a
+    /// new note, not the note's own envelope swelling (drivers often start
+    /// a note soft for a few frames, then raise it).
+    fell: [bool; 4],
     noise_on: bool,
 }
 
@@ -123,10 +127,18 @@ impl Apu {
     /// rise already under way (a new note's attack, not a swell).
     fn attack_of(&mut self, c: usize, vol: u8) -> bool {
         let rising = vol > self.last_vol[c];
-        let attack = rising && !self.rising[c];
+        if vol < self.last_vol[c] {
+            self.fell[c] = true;
+        }
+        let attack = rising && !self.rising[c] && self.fell[c];
         self.rising[c] = rising;
         self.last_vol[c] = vol;
         attack
+    }
+
+    /// A new note started on channel `c`.
+    fn started(&mut self, c: usize) {
+        self.fell[c] = false;
     }
 }
 
@@ -185,8 +197,11 @@ pub fn transcribe(loc: &Location, track: u32, max_ms: Option<u64>) -> Result<Tra
                         let pitch = hz_to_key(CPU_HZ / (16.0 * (timer + 1) as f64));
                         if !v.sounding() || attack || restarted {
                             v.attack(t, pitch, velocity(vol));
+                            apu.started(c);
                         } else {
                             v.pitch(t, pitch);
+                            // Swelling: as loud as it gets.
+                            v.velocity(velocity(vol));
                         }
                     } else {
                         v.release(t);
@@ -209,6 +224,7 @@ pub fn transcribe(loc: &Location, track: u32, max_ms: Option<u64>) -> Result<Tra
                 let on = apu.len[3] > 0 && vol > 0;
                 if on && (!apu.noise_on || attack || apu.restarted[3]) {
                     drums.hit(t, noise_key(apu.regs[0xE]), velocity(vol));
+                    apu.started(3);
                 }
                 apu.noise_on = on;
                 apu.restarted = [false; 4];

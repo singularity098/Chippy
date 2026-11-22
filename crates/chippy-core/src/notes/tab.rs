@@ -76,6 +76,50 @@ pub struct TabNote {
     pub fret: u8,
     /// The key as played (after any transposing).
     pub key: u8,
+    /// Played softer than the notes around it: an echo or a dying repeat
+    /// (see [`soft_notes`]), shown in brackets.
+    pub soft: bool,
+}
+
+/// How far back an echo looks for the louder note it repeats.
+const ECHO_MS: f64 = 1000.0;
+
+/// Which of `notes` are soft: quieter than a note of the same key shortly
+/// before (an echo, the way chip tunes fake a delay or reverb, or a
+/// repeat dying away), or far quieter than anything near them.
+pub fn soft_notes(notes: &[Note]) -> Vec<bool> {
+    let mut order: Vec<usize> = (0..notes.len()).collect();
+    order.sort_by(|&a, &b| notes[a].start_ms.total_cmp(&notes[b].start_ms));
+    let mut soft = vec![false; notes.len()];
+    for (k, &i) in order.iter().enumerate() {
+        let n = &notes[i];
+        let v = n.velocity as u32;
+        let mut loudest = 0u32;
+        let mut echo = false;
+        for &j in order[..k].iter().rev() {
+            let m = &notes[j];
+            if n.start_ms - m.start_ms > ECHO_MS {
+                break;
+            }
+            loudest = loudest.max(m.velocity as u32);
+            // Not the same note in two pieces (a chord, or a slide).
+            if m.key == n.key
+                && n.start_ms - m.start_ms >= CHORD_MS
+                && v * 100 <= m.velocity as u32 * 92
+            {
+                echo = true;
+            }
+        }
+        for &j in &order[k + 1..] {
+            let m = &notes[j];
+            if m.start_ms - n.start_ms > ECHO_MS {
+                break;
+            }
+            loudest = loudest.max(m.velocity as u32);
+        }
+        soft[i] = echo || v * 10 <= loudest * 6;
+    }
+    soft
 }
 
 /// Changes made by hand to how a part is shown.
@@ -392,9 +436,11 @@ pub fn arrange_with(notes: &[Note], tuning: &Tuning, adjust: Adjust) -> Tab {
     let octave = adjust.octave.clamp(-MAX_OCTAVES, MAX_OCTAVES);
     let shift = transpose + octave * 12;
     let mut folded = 0;
-    let mut sorted: Vec<(f64, f64, u8)> = notes
+    let soft = soft_notes(notes);
+    let mut sorted: Vec<(f64, f64, u8, bool)> = notes
         .iter()
-        .map(|n| {
+        .zip(soft)
+        .map(|(n, soft)| {
             let mut k = n.key as i32 + shift;
             if k < low as i32 || k > high as i32 {
                 folded += 1;
@@ -405,20 +451,20 @@ pub fn arrange_with(notes: &[Note], tuning: &Tuning, adjust: Adjust) -> Tab {
             while k > high as i32 {
                 k -= 12;
             }
-            (n.start_ms, n.dur_ms, k as u8)
+            (n.start_ms, n.dur_ms, k as u8, soft)
         })
         .collect();
     sorted.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.2.cmp(&b.2)));
 
     // Chords: notes starting together, at most one per string.
-    let mut chords: Vec<Vec<(f64, f64, u8)>> = Vec::new();
+    let mut chords: Vec<Vec<(f64, f64, u8, bool)>> = Vec::new();
     for n in sorted {
         match chords.last_mut() {
-            Some(c) if n.0 - c[0].0 < CHORD_MS => {
-                if !c.iter().any(|m| m.2 == n.2) {
-                    c.push(n);
-                }
-            }
+            Some(c) if n.0 - c[0].0 < CHORD_MS => match c.iter_mut().find(|m| m.2 == n.2) {
+                // The same key twice (two parts together): loud if either is.
+                Some(m) => m.3 &= n.3,
+                None => c.push(n),
+            },
             _ => chords.push(vec![n]),
         }
     }
@@ -475,7 +521,7 @@ pub fn arrange_with(notes: &[Note], tuning: &Tuning, adjust: Adjust) -> Tab {
     let mut out = Vec::new();
     for ((chord, opts), &j) in chords.iter().zip(&options).zip(&pick) {
         let Some(f) = opts.get(j) else { continue };
-        let played: Vec<&(f64, f64, u8)> = if f.places.len() == chord.len() {
+        let played: Vec<&(f64, f64, u8, bool)> = if f.places.len() == chord.len() {
             chord.iter().collect()
         } else {
             chord.iter().max_by_key(|n| n.2).into_iter().collect()
@@ -487,6 +533,7 @@ pub fn arrange_with(notes: &[Note], tuning: &Tuning, adjust: Adjust) -> Tab {
                 string,
                 fret,
                 key: n.2,
+                soft: n.3,
             });
         }
     }
@@ -508,8 +555,8 @@ pub fn arrange_with(notes: &[Note], tuning: &Tuning, adjust: Adjust) -> Tab {
 pub struct Row {
     pub start_ms: f64,
     pub end_ms: f64,
-    /// (x 0..1, string, fret).
-    pub cells: Vec<(f32, u8, u8)>,
+    /// (x 0..1, string, fret, soft).
+    pub cells: Vec<(f32, u8, u8, bool)>,
     /// (ms, x 0..1), in time order, from the line's start to its end: the
     /// playhead goes straight from one to the next.
     pub marks: Vec<(f64, f32)>,
@@ -555,10 +602,11 @@ const EARLY_MS: f64 = 15.0;
 /// A line breaks at a bar line if one is at least this far across.
 const BREAK_AT_BAR: f32 = 0.6;
 
-/// Something across a line: a chord (its time, frets, and width in
-/// digits) or a bar line (its time, and which bar starts).
+/// Something across a line: a chord (its time, (string, fret, soft) per
+/// note, and width in digits) or a bar line (its time, and which bar
+/// starts).
 enum Item {
-    Chord(f64, Vec<(u8, u8)>, f32),
+    Chord(f64, Vec<(u8, u8, bool)>, f32),
     Bar(f64, usize),
 }
 
@@ -607,11 +655,15 @@ pub fn layout(tab: &Tab, width: f32, end_ms: f64, bars: &[f64]) -> Vec<Row> {
     for n in &tab.notes {
         match items.last_mut() {
             Some(Item::Chord(t, frets, _)) if n.start_ms - *t < CHORD_MS => {
-                frets.push((n.string, n.fret))
+                frets.push((n.string, n.fret, n.soft))
             }
             _ => {
                 push_bars(&mut items, n.start_ms);
-                items.push(Item::Chord(n.start_ms, vec![(n.string, n.fret)], 0.0));
+                items.push(Item::Chord(
+                    n.start_ms,
+                    vec![(n.string, n.fret, n.soft)],
+                    0.0,
+                ));
             }
         }
     }
@@ -619,11 +671,11 @@ pub fn layout(tab: &Tab, width: f32, end_ms: f64, bars: &[f64]) -> Vec<Row> {
     push_bars(&mut items, end_ms - EARLY_MS - 1.0);
     for it in &mut items {
         if let Item::Chord(_, frets, w) = it {
-            *w = if frets.iter().any(|p| p.1 >= 10) {
-                2.0
-            } else {
-                1.0
-            };
+            // Two digits take two; brackets about one more.
+            *w = frets
+                .iter()
+                .map(|p| if p.1 >= 10 { 2.0 } else { 1.0 } + if p.2 { 1.0 } else { 0.0 })
+                .fold(1.0, f32::max);
         }
     }
     if items.is_empty() {
@@ -726,8 +778,8 @@ pub fn layout(tab: &Tab, width: f32, end_ms: f64, bars: &[f64]) -> Vec<Row> {
             row.marks.push((it.t(), x / width));
             match it {
                 Item::Chord(_, frets, _) => {
-                    for &(string, fret) in frets {
-                        row.cells.push((x / width, string, fret));
+                    for &(string, fret, soft) in frets {
+                        row.cells.push((x / width, string, fret, soft));
                     }
                 }
                 Item::Bar(_, i) => row.bars.push((x / width, *i)),
@@ -773,7 +825,8 @@ pub fn ascii(tab: &Tab, width: usize, bars: &[f64]) -> String {
     }
     // Columns: each chord, then dashes for the time until the next; a bar
     // line is a column of its own, empty.
-    let mut cols: Vec<Vec<Option<u8>>> = Vec::new();
+    // A fret as written: soft notes in brackets.
+    let mut cols: Vec<Vec<Option<String>>> = Vec::new();
     let mut i = 0;
     let notes = &tab.notes;
     let mut next_bar = bars.partition_point(|&b| b <= 0.5);
@@ -786,7 +839,12 @@ pub fn ascii(tab: &Tab, width: usize, bars: &[f64]) -> String {
         let mut col = vec![None; strings];
         let mut j = i;
         while j < notes.len() && notes[j].start_ms - t < CHORD_MS {
-            col[notes[j].string as usize] = Some(notes[j].fret);
+            let n = &notes[j];
+            col[n.string as usize] = Some(if n.soft {
+                format!("({})", n.fret)
+            } else {
+                n.fret.to_string()
+            });
             j += 1;
         }
         cols.push(col);
@@ -808,7 +866,7 @@ pub fn ascii(tab: &Tab, width: usize, bars: &[f64]) -> String {
         while end < cols.len() {
             let w = cols[end]
                 .iter()
-                .map(|f| f.map_or(1, |f| f.to_string().len()))
+                .map(|f| f.as_ref().map_or(1, String::len))
                 .max()
                 .map_or(1, |w| w + 1);
             if used + w > body && end > start {
@@ -829,10 +887,12 @@ pub fn ascii(tab: &Tab, width: usize, bars: &[f64]) -> String {
                 }
                 let w = col
                     .iter()
-                    .map(|f| f.map_or(1, |f| f.to_string().len()))
+                    .map(|f| f.as_ref().map_or(1, String::len))
                     .max()
                     .unwrap_or(1);
-                let cell = col[s].map_or_else(|| "-".repeat(w), |f| format!("{f:-<w$}"));
+                let cell = col[s]
+                    .as_ref()
+                    .map_or_else(|| "-".repeat(w), |f| format!("{f:-<w$}"));
                 out.push_str(&cell);
                 out.push('-');
             }
@@ -1169,5 +1229,36 @@ mod tests {
             },
         );
         assert_eq!(empty.spans, vec![0]);
+    }
+
+    #[test]
+    fn echoes_are_soft() {
+        let at = |t: f64, key: u8, velocity: u8| Note {
+            velocity,
+            ..note(t, key)
+        };
+        // A tune, each note echoed quieter a little later; a note repeated
+        // as loud, and one played softly on its own, are not echoes.
+        let notes = vec![
+            at(0.0, 60, 110),
+            at(150.0, 60, 70),
+            at(300.0, 64, 110),
+            at(450.0, 64, 70),
+            at(600.0, 64, 110),
+            at(2000.0, 67, 70),
+        ];
+        assert_eq!(
+            soft_notes(&notes),
+            vec![false, true, false, true, false, false]
+        );
+        let t = arrange(&notes, &TUNINGS[0]);
+        assert_eq!(t.notes.iter().filter(|n| n.soft).count(), 2);
+        let text = ascii(&t, 80, &[]);
+        assert_eq!(text.matches('(').count(), 2, "{text}");
+        let rows = layout(&t, 40.0, 3000.0, &[]);
+        assert_eq!(
+            rows.iter().flat_map(|r| &r.cells).filter(|c| c.3).count(),
+            2
+        );
     }
 }

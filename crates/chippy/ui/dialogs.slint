@@ -25,7 +25,10 @@ export struct TabCell {
     x: float,
     // 0 is the lowest string.
     string: int,
+    // "5", or "(5)" for a soft note.
     fret: string,
+    // Played softer than the notes around it (an echo): drawn dimmer.
+    soft: bool,
 }
 
 // A bar across a line of tab: from x0 to x1 (0..1), with its bar line at
@@ -130,6 +133,17 @@ export global Tabs {
     callback save;
     // How many fret numbers fit across a line, as the panel is sized.
     callback set-width(int);
+    // How far the view is scrolled, in lines from the top (kept up to date
+    // by the view, so the same bars stay in view when the part changes).
+    in-out property <float> top-line;
+    // Scroll to `keep-line` (lines from the top) when `keep` changes,
+    // instead of following playback.
+    in property <float> keep-line;
+    in property <int> keep;
+    // What the shown part can be merged with ("Pulse 2 · Square lead"),
+    // and, if it is a merge, a way to take it apart; merge(i) does item i.
+    in property <[string]> merge-items;
+    callback merge(int);
 }
 
 export global Export {
@@ -427,6 +441,8 @@ component Dropdown inherits Rectangle {
     in property <bool> enabled: true;
     in property <string> tip;
     in property <length> list-width: 300px;
+    // Shown when nothing is chosen.
+    in property <string> placeholder: "–";
     callback picked(int);
     preferred-width: 140px;
     min-width: 60px;
@@ -440,8 +456,8 @@ component Dropdown inherits Rectangle {
         x: 12px;
         width: parent.width - 42px;
         height: parent.height;
-        text: root.current >= 0 && root.current < root.items.length ? root.items[root.current] : "–";
-        color: Theme.accent;
+        text: root.current >= 0 && root.current < root.items.length ? root.items[root.current] : root.placeholder;
+        color: root.current >= 0 && root.current < root.items.length ? Theme.accent : Theme.text-dim;
         font-weight: Theme.regular;
         vertical-alignment: center;
         overflow: elide;
@@ -881,10 +897,21 @@ export component TabsSheet inherits Sheet {
     property <int> digits: floor(root.span / root.digit);
     changed digits => { Tabs.set-width(root.digits); }
     init => { Tabs.set-width(root.digits); }
-    property <int> cur: Tabs.current;
-    changed cur => {
-        if root.cur >= 0 {
-            scroll.viewport-y = -max(0, min(root.cur * root.line-height - scroll.visible-height / 4, Tabs.lines.length * root.line-height - scroll.visible-height));
+    // Follows playback, or (when the part changes) stays on the bars that
+    // were in view: one handler, so the two can't fight.
+    property <int> follow: Tabs.current + Tabs.keep * 65536;
+    property <int> kept: 0;
+    property <bool> jump;
+    property <float> view-top: -scroll.viewport-y / root.line-height;
+    changed view-top => { Tabs.top-line = root.view-top; }
+    changed follow => {
+        if Tabs.keep != root.kept {
+            root.kept = Tabs.keep;
+            root.jump = true;
+            scroll.viewport-y = -max(0, min(Tabs.keep-line * root.line-height, Tabs.lines.length * root.line-height - scroll.visible-height));
+        } else if Tabs.current >= 0 {
+            root.jump = false;
+            scroll.viewport-y = -max(0, min(Tabs.current * root.line-height - scroll.visible-height / 4, Tabs.lines.length * root.line-height - scroll.visible-height));
         }
     }
     HorizontalLayout {
@@ -922,6 +949,16 @@ export component TabsSheet inherits Sheet {
             tip: "The next part (channel)";
             clicked => { Tabs.step-part(1); }
         }
+        Dropdown {
+            horizontal-stretch: 1;
+            preferred-width: 90px;
+            items: Tabs.merge-items;
+            current: -1;
+            placeholder: "Merge…";
+            enabled: Tabs.merge-items.length > 0 && !Tabs.busy;
+            tip: "Read this part and another as one: for a tune split across channels (to pan it, or to let its notes ring on)";
+            picked(i) => { Tabs.merge(i); }
+        }
         Rectangle { width: 8px; }
         Text {
             text: "For";
@@ -955,7 +992,7 @@ export component TabsSheet inherits Sheet {
         vertical-stretch: 1;
         scroll := ScrollView {
             visible: !Tabs.busy;
-            animate viewport-y { duration: 350ms; easing: ease-in-out; }
+            animate viewport-y { duration: root.jump ? 0ms : 350ms; easing: ease-in-out; }
             VerticalLayout {
                 for line[li] in Tabs.lines: row := Rectangle {
                     height: root.line-height;
@@ -1005,7 +1042,7 @@ export component TabsSheet inherits Sheet {
                         background: row.now ? Theme.surface-2 : Theme.bg;
                         fret := Text {
                             text: c.fret;
-                            color: Theme.text;
+                            color: c.soft ? Theme.text-dim : Theme.text;
                             font-size: Theme.font-small;
                             font-weight: Theme.regular;
                             horizontal-alignment: center;

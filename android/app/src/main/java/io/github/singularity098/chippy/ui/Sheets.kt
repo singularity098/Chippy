@@ -470,6 +470,7 @@ private fun TabLineView(
             val pad = 3.dp.toPx()
             val small = TextStyle(fontSize = 11.sp, color = faint)
             val fret = TextStyle(fontSize = 13.sp, color = text, fontWeight = FontWeight.Medium)
+            val softFret = TextStyle(fontSize = 13.sp, color = faint, fontWeight = FontWeight.Normal)
             strings.forEachIndexed { i, name ->
                 val y = top + (n - 1 - i) * g
                 drawLine(lineColor, Offset(left, y), Offset(size.width - 6.dp.toPx(), y), 1f)
@@ -499,7 +500,11 @@ private fun TabLineView(
                 }
             }
             for (note in line.notes) {
-                val m = measurer.measure(note.fret.toString(), fret)
+                val m = if (note.soft) {
+                    measurer.measure("(${note.fret})", softFret)
+                } else {
+                    measurer.measure(note.fret.toString(), fret)
+                }
                 val x = left + note.x * span
                 val y = top + (n - 1 - note.string.toInt()) * g
                 drawRect(
@@ -525,7 +530,25 @@ fun TabsSheet(store: Store, state: TabsState, onClose: () -> Unit) {
     val current = state.lines.indexOfFirst { pos < it.endMs.toLong() }
     val playhead = state.lines.getOrNull(current)?.let { playheadAt(it, pos) }
     val list = rememberLazyListState()
+    // Another part or instrument keeps the same bars in view: the time the
+    // top line starts at, kept until the new lines come.
+    val keep = remember { mutableStateOf<Long?>(null) }
+    // The line playing when the view was put back: no need to follow it.
+    val kept = remember { intArrayOf(-2) }
+    val keepView = {
+        keep.value = state.lines.getOrNull(list.firstVisibleItemIndex)?.startMs?.toLong()
+    }
+    LaunchedEffect(state.lines) {
+        val ms = keep.value ?: return@LaunchedEffect
+        val i = state.lines.indexOfFirst { ms + 1 < it.endMs.toLong() }
+        kept[0] = current
+        keep.value = null
+        if (i >= 0) list.scrollToItem(i, list.firstVisibleItemScrollOffset)
+    }
     LaunchedEffect(current, state.lines.size) {
+        val held = kept[0] == current
+        kept[0] = -2
+        if (held) return@LaunchedEffect
         if (current >= 0) list.animateScrollToItem((current - 1).coerceAtLeast(0))
     }
     SheetPanel(
@@ -568,10 +591,11 @@ fun TabsSheet(store: Store, state: TabsState, onClose: () -> Unit) {
                     state.part.toInt(),
                     enabled = parts > 1 && !state.busy,
                     modifier = Modifier.weight(1f),
-                ) { i -> store.send { setTabPart(i.toUInt()) } }
+                ) { i -> keepView(); store.send { setTabPart(i.toUInt()) } }
                 IconButton(
                     onClick = {
                         val i = Math.floorMod(state.part.toInt() - 1, parts.coerceAtLeast(1))
+                        keepView()
                         store.send { setTabPart(i.toUInt()) }
                     },
                     enabled = parts > 1 && !state.busy,
@@ -579,6 +603,7 @@ fun TabsSheet(store: Store, state: TabsState, onClose: () -> Unit) {
                 IconButton(
                     onClick = {
                         val i = Math.floorMod(state.part.toInt() + 1, parts.coerceAtLeast(1))
+                        keepView()
                         store.send { setTabPart(i.toUInt()) }
                     },
                     enabled = parts > 1 && !state.busy,
@@ -594,9 +619,27 @@ fun TabsSheet(store: Store, state: TabsState, onClose: () -> Unit) {
                     state.tuning.toInt(),
                     enabled = parts > 0 && !state.busy,
                     modifier = Modifier.weight(1f),
-                ) { i -> store.send { setTabTuning(i.toUInt()) } }
-                // Lined up with the part's dropdown above.
-                Spacer(Modifier.width(96.dp))
+                ) { i -> keepView(); store.send { setTabTuning(i.toUInt()) } }
+                // Under the part's arrows: the part merged with another.
+                var merging by remember { mutableStateOf(false) }
+                Box(Modifier.width(96.dp), contentAlignment = Alignment.Center) {
+                    TextButton(
+                        onClick = { merging = true },
+                        enabled = state.mergeItems.isNotEmpty() && !state.busy,
+                    ) { Text(stringResource(R.string.tab_merge)) }
+                    DropdownMenu(expanded = merging, onDismissRequest = { merging = false }) {
+                        state.mergeItems.forEachIndexed { i, item ->
+                            DropdownMenuItem(
+                                text = { Text(item) },
+                                onClick = {
+                                    merging = false
+                                    keepView()
+                                    store.send { mergeTabPart(i.toUInt()) }
+                                },
+                            )
+                        }
+                    }
+                }
             }
             // Moved by hand: by octaves, and along the neck.
             val ready = !state.busy && state.lines.isNotEmpty()

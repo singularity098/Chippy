@@ -94,6 +94,13 @@ info, PSF tags, vgmstream stream names).
   standard, drop A), bass or ukulele, a part (channel) at a time, starting
   with the lead; the notes are spaced to fit the window without touching,
   with a playhead that follows the song; *Copy* gives the tab as text.
+  Another part or instrument keeps the same bars in view. Notes played
+  softer than those around them (an echo of a note just played, the way
+  chip tunes fake a delay) are shown in brackets, dimmer: `(5)`. *Merge…*
+  reads two parts as one, added to the list of parts ("Pulse 1 + Pulse 2"):
+  for a tune split across channels, to pan it or let its notes ring on,
+  like the arpeggios of Zelda's dungeon theme; merge it again to add a
+  third, or take it apart.
   *Octave* shows the part an octave higher or lower; *Neck* nudges its
   shapes up or down the neck, a step at a time: the lowest-fretted notes of
   each passage move to a lower string, played higher up (or the highest to
@@ -125,6 +132,7 @@ info, PSF tags, vgmstream stream names).
   tracks without notes to find play as they are. The notes are worked out
   in the background the first time (the chip plays meanwhile, the button's
   dot pulsing), and the MIDI follows the chip's loudness and its fade.
+  Chippy always starts with it off.
 * Lyrics and the tab slide up over the player, the transport still below
   them, and slide back down with the arrow, a drag or `Esc`. Their buttons
   are greyed out when a track has no lyrics, or its notes can't be found.

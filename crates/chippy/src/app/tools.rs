@@ -37,6 +37,11 @@ pub struct TabsState {
     pub avail: Available,
     pub line: i32,
     pub playhead: f32,
+    /// Where playback was at the last tick.
+    pub pos_ms: u64,
+    /// What each of the merge menu's items does: merge with that part
+    /// (an index into the parts), or (None) take the merge apart.
+    pub merges: Vec<Option<usize>>,
 }
 
 /// What a file picker running on its own thread came back with.
@@ -656,21 +661,51 @@ impl App {
     }
 
     pub(super) fn step_tab_part(&mut self, d: i32) {
-        self.tabs.view.step_part(d);
-        self.tabs.line = -1;
-        self.sync_tabs();
+        self.keeping_tab_view(|v| v.step_part(d));
     }
 
     pub(super) fn set_tab_part(&mut self, i: i32) {
-        self.tabs.view.set_part(i.max(0) as usize);
-        self.tabs.line = -1;
-        self.sync_tabs();
+        self.keeping_tab_view(|v| v.set_part(i.max(0) as usize));
+    }
+
+    /// Item `i` of the merge menu: the shown part merged with another, or
+    /// taken apart.
+    pub(super) fn merge_tab_part(&mut self, i: i32) {
+        let Some(&what) = self.tabs.merges.get(i.max(0) as usize) else {
+            return;
+        };
+        self.keeping_tab_view(|v| match what {
+            Some(other) => v.merge_with(other),
+            None => v.unmerge(),
+        });
     }
 
     pub(super) fn set_tab_tuning(&mut self, i: i32) {
-        self.tabs.view.set_tuning(i.max(0) as usize);
-        self.tabs.line = -1;
+        self.keeping_tab_view(|v| v.set_tuning(i.max(0) as usize));
+    }
+
+    /// Changes the tab with `f` (another part, instrument...), keeping the
+    /// same bars in view rather than jumping to the playhead.
+    fn keeping_tab_view(&mut self, f: impl FnOnce(&mut TabView)) {
+        let top = self.ui().global::<Tabs>().get_top_line();
+        let seen = self.tabs.view.in_view(top);
+        f(&mut self.tabs.view);
         self.sync_tabs();
+        let Some(seen) = seen else { return };
+        let to = self.tabs.view.keep_in_view(seen);
+        let (line, x) = self
+            .tabs
+            .view
+            .position(self.tabs.pos_ms)
+            .map_or((-1, 0.0), |(i, x)| (i as i32, x));
+        self.tabs.line = line;
+        self.tabs.playhead = x;
+        let ui = self.ui();
+        let t = ui.global::<Tabs>();
+        t.set_current(line);
+        t.set_playhead(x);
+        t.set_keep_line(to);
+        t.set_keep((t.get_keep() + 1) & 0x3FFF);
     }
 
     pub(super) fn shift_tab_octave(&mut self, d: i32) {
@@ -819,10 +854,15 @@ impl App {
                 cells: ModelRc::new(VecModel::from(
                     l.cells
                         .iter()
-                        .map(|&(x, string, fret)| TabCell {
+                        .map(|&(x, string, fret, soft)| TabCell {
                             x,
                             string: string as i32,
-                            fret: ss(fret.to_string()),
+                            fret: ss(if soft {
+                                format!("({fret})")
+                            } else {
+                                fret.to_string()
+                            }),
+                            soft,
                         })
                         .collect::<Vec<_>>(),
                 )),
@@ -843,6 +883,17 @@ impl App {
             })
             .collect();
         t.set_lines(ModelRc::new(VecModel::from(lines)));
+        let mut merges: Vec<Option<usize>> = Vec::new();
+        let mut items: Vec<SharedString> = Vec::new();
+        for (k, name) in v.merge_choices() {
+            merges.push(Some(k));
+            items.push(ss(format!("With {name}")));
+        }
+        if v.is_merged() {
+            merges.push(None);
+            items.push(ss("Take this merge apart"));
+        }
+        t.set_merge_items(ModelRc::new(VecModel::from(items)));
         t.set_detail(ss(v.detail()));
         let adjust = v.adjust();
         t.set_octave(adjust.octave);
@@ -866,6 +917,7 @@ impl App {
         t.set_all_text(ss(v.text(title.trim_start_matches("Guitar tab: "))));
         t.set_current(-1);
         self.tabs.line = -1;
+        self.tabs.merges = merges;
     }
 
     // ---------------------------------------------------------- MIDI mode
@@ -963,6 +1015,7 @@ impl App {
                 self.ui().global::<Lyrics>().set_current(line);
             }
         }
+        self.tabs.pos_ms = pos_ms;
         if self.tabs.shown {
             if playing.is_some() && playing != self.tabs.view.track {
                 self.load_tabs();

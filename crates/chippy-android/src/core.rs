@@ -725,6 +725,18 @@ impl Core {
         self.dirty.tabs = true;
     }
 
+    /// Item `i` of [`TabsState::merge_items`]: the shown part merged with
+    /// another, or taken apart.
+    pub fn merge_tab_part(&mut self, i: usize) {
+        let choices = self.tabs.merge_choices();
+        match choices.get(i) {
+            Some(&(other, _)) => self.tabs.merge_with(other),
+            None if i == choices.len() => self.tabs.unmerge(),
+            None => return,
+        }
+        self.dirty.tabs = true;
+    }
+
     pub fn set_tab_tuning(&mut self, i: usize) {
         self.tabs.set_tuning(i);
         self.dirty.tabs = true;
@@ -867,6 +879,12 @@ impl Core {
             message: v.message(),
             parts: v.part_names(),
             part: v.part_index() as u32,
+            merge_items: v
+                .merge_choices()
+                .into_iter()
+                .map(|(_, name)| format!("With {name}"))
+                .chain(v.is_merged().then(|| "Take this merge apart".to_string()))
+                .collect(),
             tunings: TabView::tuning_names(),
             tuning: v.tuning_index() as u32,
             strings: v.strings(),
@@ -880,7 +898,12 @@ impl Core {
                     notes: l
                         .cells
                         .iter()
-                        .map(|&(x, string, fret)| TabNote { x, string, fret })
+                        .map(|&(x, string, fret, soft)| TabNote {
+                            x,
+                            string,
+                            fret,
+                            soft,
+                        })
                         .collect(),
                     marks: l
                         .marks

@@ -81,6 +81,7 @@
     <string name="tab_instrument">For</string>
     <string name="tab_busy">Working out the notes…</string>
     <string name="tab_previous_part">The previous part</string>
+    <string name="tab_merge">Merge…</string>
     <string name="tab_next_part">The next part</string>
     <string name="tab_octave">Octave</string>
     <string name="tab_octave_down">Show it an octave lower</string>

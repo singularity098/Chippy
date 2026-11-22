@@ -475,6 +475,14 @@ impl App {
         on!(app, tb, on_nudge, |a, d: i32| a.nudge_tab(d));
         on!(app, tb, on_reset_adjust, |a| a.reset_tab_adjust());
         on!(app, tb, on_seek_line, |a, i: i32| a.seek_tab_line(i));
+        on!(app, tb, on_select_bar, |a, i: i32, extend: bool| a
+            .select_tab_bar(i, extend));
+        on!(app, tb, on_seek_bar, |a, i: i32| a.seek_tab_bar(i));
+        on!(app, tb, on_set_sig, |a, i: i32| a.set_tab_sig(i));
+        on!(app, tb, on_step_speed, |a, d: i32| a.step_tab_speed(d));
+        on!(app, tb, on_shift_bars, |a, d: i32| a.shift_tab_bars(d));
+        on!(app, tb, on_reset_meter, |a| a.reset_tab_meter());
+        on!(app, tb, on_save, |a| a.save_tab());
         on!(app, s, on_set_theme, |a, i: i32| {
             let names: Vec<String> = a
                 .ui()

@@ -1,15 +1,20 @@
 //! The guitar tab view's state, shared by the desktop and Android: the
-//! playing track's notes (worked out on a thread of their own), which part
-//! is shown on which instrument, and where playback is in the tab.
+//! playing track's notes and bars (worked out on a thread of their own),
+//! which part is shown on which instrument, the bars as put right by hand,
+//! the fingering moved along the neck (the whole part, or chosen bars),
+//! and where playback is in the tab.
 
 use chippy_core::meta::format_ms;
+use chippy_core::notes::meter::{self, Meter, MeterAdjust};
+use chippy_core::notes::score::{self, Score};
 use chippy_core::notes::{self, gm, tab, Part, Transcription};
 use chippy_core::TrackRef;
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashMap;
 
-/// The notes of a track, found in the background: (request, result).
-type Found = (u64, Result<Transcription, String>);
+/// The notes of a track and its bars, found in the background: (request,
+/// result).
+type Found = (u64, Result<(Transcription, Option<Meter>), String>);
 
 /// A line of tab, ready to draw.
 #[derive(Clone, Debug, PartialEq)]
@@ -22,6 +27,10 @@ pub struct Line {
     pub cells: Vec<(f32, u8, u8)>,
     /// (ms, x 0..1): where the playhead is when; straight between them.
     pub marks: Vec<(f64, f32)>,
+    /// Bar lines across it: (x 0..1, the bar starting there).
+    pub bars: Vec<(f32, usize)>,
+    /// The bars across it: (from x, to x, bar), 0..1.
+    pub segments: Vec<(f32, f32, usize)>,
 }
 
 /// How wide a line is taken to be until the view says (in digits).
@@ -46,10 +55,20 @@ pub struct TabView {
     /// How many digits (fret numbers) fit across a line.
     width: f32,
     /// Octaves and steps along the neck chosen by hand, per track and
-    /// part, for as long as the app runs (never saved).
+    /// part, for as long as the app runs (never saved). Bars nudged on
+    /// their own are spans from their start to their end.
     adjusts: HashMap<(TrackRef, usize), tab::Adjust>,
     /// The last step along the neck, up (true) or down, moved nothing.
     stuck: Option<bool>,
+    /// The bars as found, and as put right by hand (per track, until the
+    /// app closes).
+    found_meter: Option<Meter>,
+    meter_adjusts: HashMap<TrackRef, MeterAdjust>,
+    meter: Option<Meter>,
+    /// Bars chosen, to nudge on their own: (first, last).
+    selected: Option<(usize, usize)>,
+    /// Where a chosen run of bars started (a shift-click extends from it).
+    anchor: usize,
 }
 
 impl Default for TabView {
@@ -71,6 +90,11 @@ impl Default for TabView {
             width: DEFAULT_WIDTH,
             adjusts: HashMap::new(),
             stuck: None,
+            found_meter: None,
+            meter_adjusts: HashMap::new(),
+            meter: None,
+            selected: None,
+            anchor: 0,
         }
     }
 }
@@ -133,6 +157,50 @@ fn median_key(p: &Part) -> u8 {
     notes::instrument::median(&mut keys).unwrap_or(60)
 }
 
+/// The parts of `t`, laid out as `tabs` says ((part index, tuning, tab)),
+/// written out in the bars of `meter`.
+fn build_score(
+    t: &Transcription,
+    title: &str,
+    meter: &Meter,
+    tabs: &[(usize, usize, tab::Tab)],
+) -> Score {
+    let parts: Vec<score::PartTab> = tabs
+        .iter()
+        .map(|(i, tuning, tb)| {
+            let p = &t.parts[*i];
+            score::PartTab {
+                name: p.name.clone(),
+                program: p.program,
+                tuning: &tab::TUNINGS[*tuning],
+                tab: tb,
+            }
+        })
+        .collect();
+    score::build(title, meter, &parts)
+}
+
+/// A track's notes as tab in bars, as the tab view first shows them
+/// (each pitched part on a guitar, or a bass if it is low), over
+/// `meter`'s bars. None if there are no pitched notes.
+pub fn default_score(t: &Transcription, title: &str, meter: &Meter) -> Option<Score> {
+    let tabs: Vec<(usize, usize, tab::Tab)> = t
+        .parts
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| !p.drums && !p.notes.is_empty())
+        .map(|(i, p)| {
+            let tuning = if is_bass(p) {
+                tab::tuning_named("Bass (4 strings)").unwrap_or(0)
+            } else {
+                0
+            };
+            (i, tuning, tab::arrange(&p.notes, &tab::TUNINGS[tuning]))
+        })
+        .collect();
+    (!tabs.is_empty()).then(|| build_score(t, title, meter, &tabs))
+}
+
 impl TabView {
     /// Starts working out `track`'s notes over `length_ms` (unless it is
     /// the one already shown).
@@ -146,6 +214,9 @@ impl TabView {
         self.tab = None;
         self.lines.clear();
         self.parts.clear();
+        self.found_meter = None;
+        self.meter = None;
+        self.selected = None;
         self.length_ms = length_ms.unwrap_or(0) as f64;
         let (id, tx, track) = (self.request, self.tx.clone(), track.clone());
         std::thread::Builder::new()
@@ -153,7 +224,11 @@ impl TabView {
             .spawn(move || {
                 crate::background_thread();
                 // Shared with MIDI mode, which may have them already.
-                let r = crate::midimode::cached(&track, length_ms).map(|t| (*t).clone());
+                let r = crate::midimode::cached(&track, length_ms).map(|t| {
+                    let end = t.end_ms().max(length_ms.unwrap_or(0) as f64);
+                    let m = meter::find(&t, end);
+                    ((*t).clone(), m)
+                });
                 let _ = tx.send((id, r));
             })
             .ok();
@@ -167,6 +242,9 @@ impl TabView {
         self.tab = None;
         self.lines.clear();
         self.parts.clear();
+        self.found_meter = None;
+        self.meter = None;
+        self.selected = None;
     }
 
     /// Takes in finished work; true if the view changed.
@@ -176,6 +254,10 @@ impl TabView {
             if id != self.request {
                 continue;
             }
+            let r = r.map(|(t, m)| {
+                self.found_meter = m;
+                t
+            });
             if let Ok(t) = &r {
                 self.parts = (0..t.parts.len())
                     .filter(|&i| !t.parts[i].drums && !t.parts[i].notes.is_empty())
@@ -184,6 +266,7 @@ impl TabView {
                 self.length_ms = self.length_ms.max(t.end_ms());
             }
             self.found = Some(r);
+            self.fit_meter();
             self.arrange();
             changed = true;
         }
@@ -326,7 +409,7 @@ impl TabView {
     /// The shown part's octave and steps along the neck, chosen by hand.
     pub fn adjust(&self) -> tab::Adjust {
         self.adjust_key()
-            .and_then(|k| self.adjusts.get(&k).copied())
+            .and_then(|k| self.adjusts.get(&k).cloned())
             .unwrap_or_default()
     }
 
@@ -347,27 +430,82 @@ impl TabView {
         self.set_adjust(a);
     }
 
-    /// Moves the fingering `d` steps up the neck (down, if negative).
+    /// Moves the fingering `d` steps up the neck (down, if negative): the
+    /// chosen bars', or else the whole part's.
     pub fn nudge(&mut self, d: i32) {
+        let before = self.steps();
         let mut a = self.adjust();
-        let before = a.position;
-        a.position = (a.position + d).clamp(-tab::MAX_STEPS, tab::MAX_STEPS);
+        match self.selected_span() {
+            Some((from, to)) => {
+                let bars: Vec<(f64, f64)> = (from..=to).filter_map(|i| self.bar_span(i)).collect();
+                for (start, end) in bars {
+                    match a.spans.iter_mut().find(|s| s.start_ms == start) {
+                        Some(s) => s.steps = (s.steps + d).clamp(-tab::MAX_STEPS, tab::MAX_STEPS),
+                        None => a.spans.push(tab::Span {
+                            start_ms: start,
+                            end_ms: end,
+                            steps: d.clamp(-tab::MAX_STEPS, tab::MAX_STEPS),
+                        }),
+                    }
+                }
+                a.spans.retain(|s| s.steps != 0);
+            }
+            None => a.position = (a.position + d).clamp(-tab::MAX_STEPS, tab::MAX_STEPS),
+        }
         self.set_adjust(a);
-        if d != 0 && self.adjust().position == before {
+        if d != 0 && self.steps() == before {
             self.stuck = Some(d > 0);
         }
     }
 
-    /// Back to the part as it fits best.
-    pub fn reset_adjust(&mut self) {
-        self.set_adjust(tab::Adjust::default());
+    /// Steps along the neck of what the neck buttons move: the first
+    /// chosen bar, or else the whole part.
+    pub fn steps(&self) -> i32 {
+        let a = self.adjust();
+        match self
+            .selected_span()
+            .and_then(|(from, _)| self.bar_span(from))
+        {
+            Some((start, _)) => a
+                .spans
+                .iter()
+                .find(|s| s.start_ms == start)
+                .map_or(0, |s| s.steps),
+            None => a.position,
+        }
     }
 
-    /// Whether the part can be moved further up (`up`) or down the neck:
-    /// false once a step that way moved nothing.
+    /// Back to the part as it fits best (the chosen bars, if any are).
+    pub fn reset_adjust(&mut self) {
+        match self.selected_span() {
+            Some((from, to)) => {
+                let starts: Vec<f64> = (from..=to)
+                    .filter_map(|i| self.bar_span(i))
+                    .map(|b| b.0)
+                    .collect();
+                let mut a = self.adjust();
+                a.spans.retain(|s| !starts.contains(&s.start_ms));
+                self.set_adjust(a);
+            }
+            None => self.set_adjust(tab::Adjust::default()),
+        }
+    }
+
+    /// Something to put back: the part moved, or (with bars chosen) one of
+    /// them.
+    pub fn adjusted(&self) -> bool {
+        let a = self.adjust();
+        match self.selected_span() {
+            Some(_) => self.steps() != 0,
+            None => a != tab::Adjust::default(),
+        }
+    }
+
+    /// Whether the fingering can be moved further up (`up`) or down the
+    /// neck: false once a step that way moved nothing.
     pub fn can_nudge(&self, up: bool) -> bool {
         let Some(t) = &self.tab else { return false };
-        let p = self.adjust().position;
+        let p = self.steps();
         !t.notes.is_empty()
             && self.stuck != Some(up)
             && if up {
@@ -377,33 +515,224 @@ impl TabView {
             }
     }
 
-    fn arrange(&mut self) {
-        self.tab = None;
-        self.lines.clear();
+    // ---- bars
+
+    /// The bars as shown (as found, put right by hand).
+    pub fn meter(&self) -> Option<&Meter> {
+        self.meter.as_ref()
+    }
+
+    /// Where bar `i` starts and ends, ms.
+    fn bar_span(&self, i: usize) -> Option<(f64, f64)> {
+        let m = self.meter.as_ref()?;
+        Some((m.bars.get(i)?.start_ms, m.bar_end(i)))
+    }
+
+    /// When bar `i` starts (not before the track does), to play from.
+    pub fn bar_start(&self, i: usize) -> Option<u64> {
+        self.bar_span(i).map(|b| b.0.max(0.0) as u64)
+    }
+
+    fn meter_adjust(&self) -> MeterAdjust {
+        self.track
+            .as_ref()
+            .and_then(|t| self.meter_adjusts.get(t).copied())
+            .unwrap_or_default()
+    }
+
+    fn set_meter_adjust(&mut self, a: MeterAdjust) {
+        let Some(t) = self.track.clone() else { return };
+        if a == MeterAdjust::default() {
+            self.meter_adjusts.remove(&t);
+        } else {
+            self.meter_adjusts.insert(t, a);
+        }
+        self.selected = None;
+        self.fit_meter();
+        self.arrange();
+    }
+
+    /// The bars from those found and the changes made by hand.
+    fn fit_meter(&mut self) {
+        let a = self.meter_adjust();
+        self.meter = self.found_meter.as_ref().map(|m| m.adjusted(&a));
+    }
+
+    /// "4/4, ♩ = 120 · guessed from the notes".
+    pub fn meter_text(&self) -> String {
+        match (&self.meter, &self.found_meter) {
+            (Some(m), Some(f)) => {
+                let how = if self.meter_adjust() != MeterAdjust::default() {
+                    "set by hand"
+                } else if f.exact {
+                    "from the file"
+                } else {
+                    "guessed from the notes"
+                };
+                format!("{} · {how}", m.describe())
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// The time signatures to choose from: "As found", then "2/4"...
+    pub fn sig_names() -> Vec<String> {
+        std::iter::once("As found".to_string())
+            .chain(meter::SIGNATURES.iter().map(|s| format!("{}/{}", s.0, s.1)))
+            .collect()
+    }
+
+    /// Which of [`Self::sig_names`] is in use.
+    pub fn sig_index(&self) -> usize {
+        self.meter_adjust()
+            .sig
+            .and_then(|s| meter::SIGNATURES.iter().position(|&x| x == s))
+            .map_or(0, |i| i + 1)
+    }
+
+    pub fn set_sig(&mut self, i: usize) {
+        let mut a = self.meter_adjust();
+        a.sig = i
+            .checked_sub(1)
+            .and_then(|i| meter::SIGNATURES.get(i))
+            .copied();
+        self.set_meter_adjust(a);
+    }
+
+    /// The beat twice as fast (`d` = 1) or half as fast (-1).
+    pub fn step_speed(&mut self, d: i32) {
+        let mut a = self.meter_adjust();
+        a.speed = (a.speed + d).clamp(-meter::MAX_SPEED, meter::MAX_SPEED);
+        self.set_meter_adjust(a);
+    }
+
+    pub fn speed(&self) -> i32 {
+        self.meter_adjust().speed
+    }
+
+    /// The bar lines a beat later (`d` = 1) or earlier.
+    pub fn shift_bars(&mut self, d: i32) {
+        let mut a = self.meter_adjust();
+        a.shift += d;
+        self.set_meter_adjust(a);
+    }
+
+    /// The bars back as found.
+    pub fn reset_meter(&mut self) {
+        self.set_meter_adjust(MeterAdjust::default());
+    }
+
+    pub fn meter_adjusted(&self) -> bool {
+        self.meter_adjust() != MeterAdjust::default()
+    }
+
+    /// Chooses bar `i` to nudge on its own; again, chooses none. With
+    /// `extend`, chooses the bars from the one chosen before to it.
+    pub fn select_bar(&mut self, i: usize, extend: bool) {
+        let Some(m) = &self.meter else { return };
+        if i >= m.bars.len() {
+            return;
+        }
+        self.selected = match self.selected {
+            Some(_) if extend => Some((self.anchor.min(i), self.anchor.max(i))),
+            Some((a, b)) if a == i && b == i => None,
+            _ => {
+                self.anchor = i;
+                Some((i, i))
+            }
+        };
         self.stuck = None;
-        let adjust = self.adjust();
-        let Some(p) = self.current_part() else { return };
-        let tuning = if self.tuning_chosen {
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selected = None;
+        self.stuck = None;
+    }
+
+    /// The bars chosen: (first, last).
+    pub fn selection(&self) -> Option<(usize, usize)> {
+        self.selected
+    }
+
+    fn selected_span(&self) -> Option<(usize, usize)> {
+        self.selected.filter(|_| self.meter.is_some())
+    }
+
+    /// The bars nudged on their own in the shown part.
+    pub fn nudged_bars(&self) -> Vec<usize> {
+        let Some(m) = &self.meter else {
+            return Vec::new();
+        };
+        self.adjust()
+            .spans
+            .iter()
+            .filter(|s| s.steps != 0)
+            .filter_map(|s| m.bar_at(s.start_ms + 0.5))
+            .collect()
+    }
+
+    /// The tuning to show part `i` (an index into the transcription's
+    /// parts) on.
+    fn tuning_for(&self, p: &Part) -> usize {
+        if self.tuning_chosen {
             self.tuning
         } else if is_bass(p) {
             // Low parts on a bass, the rest on a guitar.
             tab::tuning_named("Bass (4 strings)").unwrap_or(0)
         } else {
             0
-        };
-        let tab = tab::arrange_with(&p.notes, &tab::TUNINGS[tuning], adjust);
+        }
+    }
+
+    /// `a` with its spans moved onto the bars they start in (the bars may
+    /// have been moved since).
+    fn fit_spans(&self, a: &tab::Adjust) -> tab::Adjust {
+        let mut a = a.clone();
+        if let Some(m) = &self.meter {
+            let mut spans: Vec<tab::Span> = Vec::new();
+            for s in &a.spans {
+                let Some(i) = m.bar_at(s.start_ms + 0.5) else {
+                    continue;
+                };
+                let (start, end) = (m.bars[i].start_ms, m.bar_end(i));
+                match spans.iter_mut().find(|x| x.start_ms == start) {
+                    Some(x) => x.steps = s.steps,
+                    None => spans.push(tab::Span {
+                        start_ms: start,
+                        end_ms: end,
+                        steps: s.steps,
+                    }),
+                }
+            }
+            a.spans = spans;
+        }
+        a
+    }
+
+    fn arrange(&mut self) {
+        self.tab = None;
+        self.lines.clear();
+        self.stuck = None;
+        let adjust = self.fit_spans(&self.adjust());
+        let Some(p) = self.current_part() else { return };
+        let tuning = self.tuning_for(p);
+        let tab = tab::arrange_with(&p.notes, &tab::TUNINGS[tuning], adjust.clone());
         // Steps asked for past where anything moves are forgotten, so a
         // step back the other way shows at once.
-        if tab.position != adjust.position {
+        let mut kept = tab::Adjust {
+            position: tab.position,
+            ..adjust.clone()
+        };
+        for (s, &got) in kept.spans.iter_mut().zip(&tab.spans) {
+            s.steps = got;
+        }
+        kept.spans.retain(|s| s.steps != 0);
+        if kept != self.adjust() {
             if let Some(k) = self.adjust_key() {
-                let a = tab::Adjust {
-                    position: tab.position,
-                    ..adjust
-                };
-                if a == tab::Adjust::default() {
+                if kept == tab::Adjust::default() {
                     self.adjusts.remove(&k);
                 } else {
-                    self.adjusts.insert(k, a);
+                    self.adjusts.insert(k, kept);
                 }
             }
         }
@@ -412,19 +741,77 @@ impl TabView {
         self.layout();
     }
 
+    /// When each bar starts, for drawing.
+    fn bar_starts(&self) -> Vec<f64> {
+        self.meter.as_ref().map(Meter::starts).unwrap_or_default()
+    }
+
     /// Cuts the tab into lines as wide as the view.
     fn layout(&mut self) {
         let Some(tab) = &self.tab else { return };
-        self.lines = tab::layout(tab, self.width, self.length_ms)
+        let bars = self.bar_starts();
+        self.lines = tab::layout(tab, self.width, self.length_ms, &bars)
             .into_iter()
             .map(|r| Line {
-                label: format_ms(r.start_ms as u64),
+                label: format_ms(r.start_ms.max(0.0) as u64),
                 start_ms: r.start_ms,
                 end_ms: r.end_ms,
+                segments: r.segments(),
+                bars: r.bars,
                 cells: r.cells,
                 marks: r.marks,
             })
             .collect();
+    }
+
+    /// The track shown, as set up here, for an export of `tracks` to
+    /// `format`: its bars if they were changed by hand, and (for tab) its
+    /// parts as shown.
+    pub fn shown_for_export(
+        &self,
+        tracks: &[(TrackRef, chippy_core::TrackMeta)],
+        format: crate::export::Format,
+    ) -> Vec<crate::export::Shown> {
+        use crate::export::{Format, Shown};
+        let Some(track) = self.track.clone() else {
+            return Vec::new();
+        };
+        let Some((_, meta)) = tracks.iter().find(|(t, _)| *t == track) else {
+            return Vec::new();
+        };
+        let tab = matches!(format, Format::MusicXml | Format::GuitarPro);
+        vec![Shown {
+            meter: self.meter_adjusted().then(|| self.meter.clone()).flatten(),
+            score: tab.then(|| self.score(&meta.title)).flatten(),
+            track,
+        }]
+    }
+
+    /// The parts as tab in bars, for writing out as sheet music: every
+    /// pitched part, each on its instrument and moved as it was by hand.
+    pub fn score(&self, title: &str) -> Option<Score> {
+        let t = self.transcription()?;
+        let m = self.meter.as_ref()?;
+        let track = self.track.clone()?;
+        let tabs: Vec<(usize, usize, tab::Tab)> = self
+            .parts
+            .iter()
+            .map(|&i| {
+                let p = &t.parts[i];
+                let tuning = self.tuning_for(p);
+                let a = self
+                    .adjusts
+                    .get(&(track.clone(), i))
+                    .map(|a| self.fit_spans(a))
+                    .unwrap_or_default();
+                (
+                    i,
+                    tuning,
+                    tab::arrange_with(&p.notes, &tab::TUNINGS[tuning], a),
+                )
+            })
+            .collect();
+        Some(build_score(t, title, m, &tabs))
     }
 
     pub fn lines(&self) -> &[Line] {
@@ -457,6 +844,8 @@ impl TabView {
             end_ms: l.end_ms,
             cells: Vec::new(),
             marks: l.marks.clone(),
+            bar: None,
+            bars: Vec::new(),
         };
         Some((i, tab::playhead(&row, ms)))
     }
@@ -486,6 +875,14 @@ impl TabView {
                     n => format!("{n} octaves"),
                 },
                 if t.octave > 0 { "higher" } else { "lower" },
+            ));
+        }
+        let bars = t.spans.iter().filter(|&&s| s != 0).count();
+        if bars > 0 {
+            out.push(format!(
+                "{bars} {} moved along the neck on {}.",
+                if bars == 1 { "bar" } else { "bars" },
+                if bars == 1 { "its own" } else { "their own" },
             ));
         }
         if t.position != 0 {
@@ -523,7 +920,7 @@ impl TabView {
                     .cloned()
                     .unwrap_or_default(),
                 self.tuning_name(),
-                tab::ascii(t, 80)
+                tab::ascii(t, 80, &self.bar_starts())
             ),
             None => String::new(),
         }

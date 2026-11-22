@@ -261,6 +261,7 @@ pub fn transcribe(loc: &Location, max_ms: Option<u64>) -> Result<Transcription> 
                 .into(),
         ],
         samples: list,
+        meter: None,
     })
 }
 

@@ -10,7 +10,8 @@
 //! shapes nudged up or down the neck: each step up moves the lowest-fretted
 //! notes of every passage onto a lower string, where they are played
 //! higher up (each step down, the highest onto a higher string), and the
-//! rest of the fingering follows to stay comfortable.
+//! rest of the fingering follows to stay comfortable. A stretch of it (a
+//! bar, say) can be nudged on its own the same way.
 
 use super::Note;
 
@@ -78,12 +79,24 @@ pub struct TabNote {
 }
 
 /// Changes made by hand to how a part is shown.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Adjust {
     /// Octaves up (or down) from where the part fits best.
     pub octave: i32,
     /// Steps up (or down) the neck from the most comfortable fingering.
     pub position: i32,
+    /// Stretches nudged along the neck on their own, after the whole part
+    /// is: each a further number of steps for the notes starting in it.
+    pub spans: Vec<Span>,
+}
+
+/// A stretch of a part (a bar, or a few), nudged along the neck on its own.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Span {
+    pub start_ms: f64,
+    pub end_ms: f64,
+    /// Steps up (or down) the neck.
+    pub steps: i32,
 }
 
 /// The most octaves a part can be moved by hand.
@@ -102,6 +115,8 @@ pub struct Tab {
     /// Steps nudged along the neck that changed something (fewer than
     /// asked for once nothing more can move).
     pub position: i32,
+    /// The same, for each of the adjustment's spans, in order.
+    pub spans: Vec<i32>,
     /// Notes moved by an octave or more on their own to fit.
     pub folded: usize,
     /// The strings' names, lowest first ("E", "A", ...).
@@ -198,8 +213,9 @@ pub fn arrange(notes: &[Note], tuning: &Tuning) -> Tab {
 
 /// The most comfortable fingering of each chord over the whole part (a
 /// Viterbi search), notes outside each chord's `limits` (lowest, highest
-/// fret) counting heavily against it: an index into each chord's options.
-fn choose(options: &[Vec<Fingering>], limits: &[(u8, u8)]) -> Vec<usize> {
+/// fret) counting heavily against it, and chords `keep` gives a fingering
+/// for kept to it: an index into each chord's options.
+fn choose(options: &[Vec<Fingering>], limits: &[(u8, u8)], keep: &[Option<usize>]) -> Vec<usize> {
     let outside = |f: &Fingering, (lo, hi): (u8, u8)| -> f64 {
         f.places
             .iter()
@@ -223,8 +239,13 @@ fn choose(options: &[Vec<Fingering>], limits: &[(u8, u8)]) -> Vec<usize> {
     for (i, opts) in options.iter().enumerate() {
         let row: Vec<(f64, usize, Option<f64>)> = opts
             .iter()
-            .map(|o| {
-                let own = o.cost + outside(o, limits[i]);
+            .enumerate()
+            .map(|(oi, o)| {
+                let kept = match keep.get(i).copied().flatten() {
+                    Some(k) if k != oi => 1000.0,
+                    _ => 0.0,
+                };
+                let own = o.cost + outside(o, limits[i]) + kept;
                 if i == 0 {
                     return (own, 0, moving(None, o.pos).1);
                 }
@@ -259,15 +280,17 @@ fn choose(options: &[Vec<Fingering>], limits: &[(u8, u8)]) -> Vec<usize> {
 /// How far either side of a chord its passage reaches, for nudging.
 const PASSAGE_MS: f64 = 2000.0;
 
-/// One step up (`up`) or down the neck from `pick`: each chord's limits
-/// close in past the lowest (highest) fret played around it, so those
-/// notes move to another string. Notes that could not move before are
-/// passed over: the next ones in are moved instead.
+/// One step up (`up`) or down the neck from `pick` for the chords in
+/// `range`: each chord's limits close in past the lowest (highest) fret
+/// played around it, so those notes move to another string. Notes that
+/// could not move before are passed over: the next ones in are moved
+/// instead.
 fn step_limits(
     options: &[Vec<Fingering>],
     pick: &[usize],
     times: &[f64],
     limits: &mut [(u8, u8)],
+    range: std::ops::Range<usize>,
     up: bool,
 ) {
     let frets: Vec<Vec<u8>> = options
@@ -279,12 +302,12 @@ fn step_limits(
         })
         .collect();
     let old = limits.to_vec();
-    let (mut a, mut b) = (0usize, 0usize);
-    for i in 0..times.len() {
+    let (mut a, mut b) = (range.start, range.start);
+    for i in range.clone() {
         while times[a] < times[i] - PASSAGE_MS {
             a += 1;
         }
-        while b + 1 < times.len() && times[b + 1] <= times[i] + PASSAGE_MS {
+        while b + 1 < range.end && times[b + 1] <= times[i] + PASSAGE_MS {
             b += 1;
         }
         let (lo, hi) = old[i];
@@ -297,6 +320,50 @@ fn step_limits(
             limits[i].1 = m.min(hi).saturating_sub(1);
         }
     }
+}
+
+/// Moves the chords in `range` `wanted` steps along the neck (up if
+/// positive), a step at a time, each one moving something; it stops when
+/// nothing more will move. The chords outside it stay as they are, unless
+/// it is the whole part. The steps taken.
+fn step_along(
+    options: &[Vec<Fingering>],
+    pick: &mut Vec<usize>,
+    times: &[f64],
+    limits: &mut [(u8, u8)],
+    range: std::ops::Range<usize>,
+    wanted: i32,
+) -> i32 {
+    let wanted = wanted.clamp(-MAX_STEPS, MAX_STEPS);
+    let mut position = 0;
+    if range.is_empty() || wanted == 0 {
+        return 0;
+    }
+    let keep: Vec<Option<usize>> = (0..options.len())
+        .map(|i| (!range.contains(&i)).then_some(pick[i]))
+        .collect();
+    'steps: while position != wanted {
+        let up = wanted > 0;
+        for _ in 0..FRETS {
+            let before = limits.to_vec();
+            step_limits(options, pick, times, limits, range.clone(), up);
+            if limits == before.as_slice() {
+                break 'steps;
+            }
+            let next = choose(options, limits, &keep);
+            let moved = range.clone().any(|i| {
+                options[i].get(next[i]).map(|f| &f.places)
+                    != options[i].get(pick[i]).map(|f| &f.places)
+            });
+            *pick = next;
+            if moved {
+                position += if up { 1 } else { -1 };
+                continue 'steps;
+            }
+        }
+        break;
+    }
+    position
 }
 
 /// Lays `notes` out on an instrument tuned `tuning`, moved by hand as
@@ -378,32 +445,33 @@ pub fn arrange_with(notes: &[Note], tuning: &Tuning, adjust: Adjust) -> Tab {
         })
         .collect();
     let mut limits = vec![(0u8, FRETS); options.len()];
-    let mut pick = choose(&options, &limits);
-    // Along the neck, a step at a time, each one moving something; it
-    // stops when nothing more will move.
+    let mut pick = choose(&options, &limits, &[]);
+    // Along the neck: the whole part, then each span on its own.
     let times: Vec<f64> = chords.iter().map(|c| c[0].0).collect();
-    let wanted = adjust.position.clamp(-MAX_STEPS, MAX_STEPS);
-    let mut position = 0;
-    'steps: while position != wanted {
-        let up = wanted > 0;
-        for _ in 0..FRETS {
-            let before = limits.clone();
-            step_limits(&options, &pick, &times, &mut limits, up);
-            if limits == before {
-                break 'steps;
-            }
-            let next = choose(&options, &limits);
-            let moved = next.iter().zip(&pick).enumerate().any(|(i, (&a, &b))| {
-                options[i].get(a).map(|f| &f.places) != options[i].get(b).map(|f| &f.places)
-            });
-            pick = next;
-            if moved {
-                position += if up { 1 } else { -1 };
-                continue 'steps;
-            }
-        }
-        break;
-    }
+    let position = step_along(
+        &options,
+        &mut pick,
+        &times,
+        &mut limits,
+        0..options.len(),
+        adjust.position,
+    );
+    let spans = adjust
+        .spans
+        .iter()
+        .map(|sp| {
+            let from = times.partition_point(|&t| t < sp.start_ms);
+            let to = times.partition_point(|&t| t < sp.end_ms);
+            step_along(
+                &options,
+                &mut pick,
+                &times,
+                &mut limits,
+                from..to.max(from),
+                sp.steps,
+            )
+        })
+        .collect();
     let mut out = Vec::new();
     for ((chord, opts), &j) in chords.iter().zip(&options).zip(&pick) {
         let Some(f) = opts.get(j) else { continue };
@@ -427,13 +495,15 @@ pub fn arrange_with(notes: &[Note], tuning: &Tuning, adjust: Adjust) -> Tab {
         transpose,
         octave,
         position,
+        spans,
         folded,
         string_names,
     }
 }
 
 /// A line of tab covering `start_ms..end_ms`, for drawing: each note's
-/// place across the line (0..1), and where playback is at which time.
+/// place across the line (0..1), where the bar lines are, and where
+/// playback is at which time.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     pub start_ms: f64,
@@ -443,113 +513,238 @@ pub struct Row {
     /// (ms, x 0..1), in time order, from the line's start to its end: the
     /// playhead goes straight from one to the next.
     pub marks: Vec<(f64, f32)>,
+    /// The bar the line starts in, if there are bars.
+    pub bar: Option<usize>,
+    /// Bar lines across the line: (x 0..1, the bar starting there). A line
+    /// starting with a bar has it at 0.
+    pub bars: Vec<(f32, usize)>,
+}
+
+impl Row {
+    /// The bars across the line: (from x, to x, bar), 0..1.
+    pub fn segments(&self) -> Vec<(f32, f32, usize)> {
+        let mut out: Vec<(f32, f32, usize)> = Vec::new();
+        let mut from = (0.0f32, self.bar);
+        for &(x, i) in &self.bars {
+            if let Some(b) = from.1 {
+                if x > from.0 {
+                    out.push((from.0, x, b));
+                }
+            }
+            from = (x, Some(i));
+        }
+        if let Some(b) = from.1 {
+            out.push((from.0, 1.0, b));
+        }
+        out
+    }
 }
 
 /// Room kept at either end of a line, in digits.
 const MARGIN: f32 = 1.0;
 /// Space kept between two notes' numbers, in digits.
 const SPACE: f32 = 1.2;
+/// Space kept between a bar line and a note's number, in digits.
+const BAR_SPACE: f32 = 0.8;
 /// The most a rest can stretch, in digits.
 const LONGEST_REST: f32 = 8.0;
 /// How far apart the usual time between notes puts them, in digits.
 const USUAL_GAP: f32 = 2.8;
+/// A note this little before a bar line is played on it.
+const EARLY_MS: f64 = 15.0;
+/// A line breaks at a bar line if one is at least this far across.
+const BREAK_AT_BAR: f32 = 0.6;
+
+/// Something across a line: a chord (its time, frets, and width in
+/// digits) or a bar line (its time, and which bar starts).
+enum Item {
+    Chord(f64, Vec<(u8, u8)>, f32),
+    Bar(f64, usize),
+}
+
+impl Item {
+    fn t(&self) -> f64 {
+        match self {
+            Item::Chord(t, ..) | Item::Bar(t, _) => *t,
+        }
+    }
+    fn w(&self) -> f32 {
+        match self {
+            Item::Chord(_, _, w) => *w,
+            Item::Bar(..) => 0.0,
+        }
+    }
+    fn space(&self) -> f32 {
+        match self {
+            Item::Chord(..) => SPACE,
+            Item::Bar(..) => BAR_SPACE,
+        }
+    }
+}
 
 /// The tab cut into lines `width` digits wide (a digit: about the width
-/// of a fret number, with its padding), from the start to `end_ms`.
+/// of a fret number, with its padding), from the start to `end_ms`, with
+/// bar lines where `bars` start (ms, in order).
 ///
 /// Notes are spaced by the time between them, but never closer than
 /// their numbers allow, and rests are kept short: a line fills with as
-/// many notes as fit legibly.
-pub fn layout(tab: &Tab, width: f32, end_ms: f64) -> Vec<Row> {
+/// many notes as fit legibly, breaking at a bar line where one is near
+/// its end.
+pub fn layout(tab: &Tab, width: f32, end_ms: f64, bars: &[f64]) -> Vec<Row> {
     let width = width.max(12.0);
-    // Columns: (time, frets at that time, widest number in digits).
-    type Column = (f64, Vec<(u8, u8)>, f32);
-    let mut cols: Vec<Column> = Vec::new();
+    let mut items: Vec<Item> = Vec::new();
+    let mut next_bar = bars.partition_point(|&b| b <= 0.5);
+    let bar_at = |ms: f64| -> Option<usize> {
+        (!bars.is_empty()).then(|| bars.partition_point(|&b| b <= ms + EARLY_MS).max(1) - 1)
+    };
+    let mut push_bars = |items: &mut Vec<Item>, until: f64| {
+        while next_bar < bars.len() && bars[next_bar] - EARLY_MS <= until && bars[next_bar] < end_ms
+        {
+            items.push(Item::Bar(bars[next_bar], next_bar));
+            next_bar += 1;
+        }
+    };
     for n in &tab.notes {
-        match cols.last_mut() {
-            Some(c) if n.start_ms - c.0 < CHORD_MS => c.1.push((n.string, n.fret)),
-            _ => cols.push((n.start_ms, vec![(n.string, n.fret)], 0.0)),
+        match items.last_mut() {
+            Some(Item::Chord(t, frets, _)) if n.start_ms - *t < CHORD_MS => {
+                frets.push((n.string, n.fret))
+            }
+            _ => {
+                push_bars(&mut items, n.start_ms);
+                items.push(Item::Chord(n.start_ms, vec![(n.string, n.fret)], 0.0));
+            }
         }
     }
-    for c in &mut cols {
-        c.2 = if c.1.iter().any(|p| p.1 >= 10) {
-            2.0
-        } else {
-            1.0
-        };
+    let end_ms = end_ms.max(items.last().map_or(0.0, |c| c.t() + 1.0));
+    push_bars(&mut items, end_ms - EARLY_MS - 1.0);
+    for it in &mut items {
+        if let Item::Chord(_, frets, w) = it {
+            *w = if frets.iter().any(|p| p.1 >= 10) {
+                2.0
+            } else {
+                1.0
+            };
+        }
     }
-    let end_ms = end_ms.max(cols.last().map_or(0.0, |c| c.0 + 1.0));
-    if cols.is_empty() {
+    if items.is_empty() {
         return vec![Row {
             start_ms: 0.0,
             end_ms,
             cells: Vec::new(),
             marks: vec![(0.0, 0.0), (end_ms, 1.0)],
+            bar: bar_at(0.0),
+            bars: Vec::new(),
         }];
     }
     // Digits per ms: the usual gap between notes gets USUAL_GAP.
-    let mut gaps: Vec<f64> = cols
+    let mut gaps: Vec<f64> = items
+        .iter()
+        .filter(|i| matches!(i, Item::Chord(..)))
+        .map(Item::t)
+        .collect::<Vec<_>>()
         .windows(2)
-        .map(|w| w[1].0 - w[0].0)
+        .map(|w| w[1] - w[0])
         .filter(|&g| g > 0.0)
         .collect();
     gaps.sort_by(f64::total_cmp);
     let median = gaps.get(gaps.len() / 2).copied().unwrap_or(250.0).max(20.0);
     let scale = USUAL_GAP as f64 / median;
-    let spread = |ms: f64| ((ms * scale) as f32).min(LONGEST_REST);
+    let spread = |ms: f64| ((ms.max(0.0) * scale) as f32).min(LONGEST_REST);
+    // How far each item is from the one before it on an endless line.
+    let gap = |a: &Item, b: &Item| -> f32 {
+        let room = (a.w() + b.w()) / 2.0
+            + if matches!(a, Item::Bar(..)) || matches!(b, Item::Bar(..)) {
+                BAR_SPACE
+            } else {
+                SPACE
+            };
+        spread(b.t() - a.t()).max(room)
+    };
+    // Where a line starting with `it` puts it.
+    let first_x = |it: &Item, line_start: bool| -> f32 {
+        match it {
+            Item::Bar(..) if !line_start => 0.0,
+            Item::Bar(t, _) => MARGIN / 2.0 + spread(*t).min(LONGEST_REST / 2.0),
+            Item::Chord(t, _, w) if line_start => {
+                MARGIN + w / 2.0 + spread(*t).min(LONGEST_REST / 2.0)
+            }
+            Item::Chord(_, _, w) => MARGIN + w / 2.0,
+        }
+    };
 
     let mut rows: Vec<Row> = Vec::new();
-    let mut row = Row {
-        start_ms: 0.0,
-        end_ms: 0.0,
-        cells: Vec::new(),
-        marks: vec![(0.0, 0.0)],
-    };
-    // The last note placed: (time, x, its width).
-    let mut last: Option<(f64, f32, f32)> = None;
-    for (t, frets, w) in &cols {
-        let x = match last {
-            None => MARGIN + w / 2.0 + spread(*t).min(LONGEST_REST / 2.0),
-            Some((lt, lx, lw)) => lx + spread(t - lt).max((lw + w) / 2.0 + SPACE),
-        };
-        let x = if let Some((lt, lx, lw)) = last.filter(|_| x + w / 2.0 + MARGIN > width) {
-            // Onto a new line, which starts where this note does.
-            let tail = (lx + spread(t - lt).max(lw / 2.0 + SPACE)).min(width - MARGIN / 2.0);
-            row.end_ms = *t;
-            row.marks.push((*t, tail / width));
-            rows.push(std::mem::replace(
-                &mut row,
-                Row {
-                    start_ms: *t,
-                    end_ms: 0.0,
-                    cells: Vec::new(),
-                    marks: Vec::new(),
-                },
-            ));
-            let x = MARGIN + w / 2.0;
-            row.marks.push((*t, x / width));
-            x
-        } else {
-            if last.is_some() || *t > 0.0 {
-                row.marks.push((*t, x / width));
-            } else {
-                row.marks[0].1 = x / width;
+    let mut s = 0;
+    while s < items.len() {
+        let first_line = s == 0;
+        // How far this line runs.
+        let mut xs = vec![first_x(&items[s], first_line)];
+        let mut e = s + 1;
+        while e < items.len() {
+            let x = xs[xs.len() - 1] + gap(&items[e - 1], &items[e]);
+            if x + items[e].w() / 2.0 + MARGIN > width {
+                break;
             }
-            x
-        };
-        for &(string, fret) in frets {
-            row.cells.push((x / width, string, fret));
+            xs.push(x);
+            e += 1;
         }
-        last = Some((*t, x, *w));
+        // Break at a bar line instead, if one is far enough across.
+        if e < items.len() {
+            if let Some(b) = (s + 1..e)
+                .rev()
+                .find(|&i| matches!(items[i], Item::Bar(..)) && xs[i - s] >= BREAK_AT_BAR * width)
+            {
+                e = b;
+                xs.truncate(b - s);
+            }
+        }
+        let start_ms = if first_line { 0.0 } else { items[s].t() };
+        let (row_end, tail) = match items.get(e) {
+            Some(next) => {
+                let last = &items[e - 1];
+                let tail = xs[xs.len() - 1]
+                    + spread(next.t() - last.t()).max(last.w() / 2.0 + last.space());
+                (next.t(), tail.min(width - MARGIN / 2.0))
+            }
+            None => {
+                let last = &items[e - 1];
+                let tail = xs[xs.len() - 1] + spread(end_ms - last.t()).max(last.w() / 2.0 + SPACE);
+                (end_ms, tail.min(width - MARGIN / 2.0))
+            }
+        };
+        let mut row = Row {
+            start_ms,
+            end_ms: row_end,
+            cells: Vec::new(),
+            marks: Vec::new(),
+            bar: bar_at(start_ms),
+            bars: Vec::new(),
+        };
+        if first_line && items[0].t() > 0.0 {
+            row.marks.push((0.0, 0.0));
+        }
+        for (it, &x) in items[s..e].iter().zip(&xs) {
+            row.marks.push((it.t(), x / width));
+            match it {
+                Item::Chord(_, frets, _) => {
+                    for &(string, fret) in frets {
+                        row.cells.push((x / width, string, fret));
+                    }
+                }
+                Item::Bar(_, i) => row.bars.push((x / width, *i)),
+            }
+        }
+        if row_end > items[e - 1].t() {
+            row.marks.push((row_end, tail / width));
+        }
+        // Times a hair apart (a note just before its bar line) kept in order.
+        for k in 1..row.marks.len() {
+            if row.marks[k].0 < row.marks[k - 1].0 {
+                row.marks[k].0 = row.marks[k - 1].0;
+            }
+        }
+        rows.push(row);
+        s = e;
     }
-    // The last line runs on to the end of the track.
-    let (lt, lx, lw) = last.unwrap();
-    let tail = (lx + spread(end_ms - lt).max(lw / 2.0 + SPACE)).min(width - MARGIN / 2.0);
-    row.end_ms = end_ms;
-    if end_ms > lt {
-        row.marks.push((end_ms, tail / width));
-    }
-    rows.push(row);
     rows
 }
 
@@ -569,18 +764,25 @@ pub fn playhead(row: &Row, ms: f64) -> f32 {
 }
 
 /// The tab as text, the usual way: a line of dashes per string (highest
-/// first), notes spaced by the time between them, wrapped at `width`.
-pub fn ascii(tab: &Tab, width: usize) -> String {
+/// first), notes spaced by the time between them, with bar lines where
+/// `bars` start (ms, in order), wrapped at `width`.
+pub fn ascii(tab: &Tab, width: usize, bars: &[f64]) -> String {
     let strings = tab.string_names.len();
     if strings == 0 {
         return String::new();
     }
-    // Columns: each chord, then dashes for the time until the next.
+    // Columns: each chord, then dashes for the time until the next; a bar
+    // line is a column of its own, empty.
     let mut cols: Vec<Vec<Option<u8>>> = Vec::new();
     let mut i = 0;
     let notes = &tab.notes;
+    let mut next_bar = bars.partition_point(|&b| b <= 0.5);
     while i < notes.len() {
         let t = notes[i].start_ms;
+        while next_bar < bars.len() && bars[next_bar] - EARLY_MS <= t {
+            cols.push(Vec::new());
+            next_bar += 1;
+        }
         let mut col = vec![None; strings];
         let mut j = i;
         while j < notes.len() && notes[j].start_ms - t < CHORD_MS {
@@ -608,8 +810,7 @@ pub fn ascii(tab: &Tab, width: usize) -> String {
                 .iter()
                 .map(|f| f.map_or(1, |f| f.to_string().len()))
                 .max()
-                .unwrap_or(1)
-                + 1;
+                .map_or(1, |w| w + 1);
             if used + w > body && end > start {
                 break;
             }
@@ -618,7 +819,14 @@ pub fn ascii(tab: &Tab, width: usize) -> String {
         }
         for s in (0..strings).rev() {
             out.push_str(&format!("{:<label_w$}|", tab.string_names[s]));
-            for col in &cols[start..end] {
+            for (k, col) in cols[start..end].iter().enumerate() {
+                if col.is_empty() {
+                    // A bar line; the line's own ends stand for one there.
+                    if k > 0 && start + k + 1 < end {
+                        out.push('|');
+                    }
+                    continue;
+                }
                 let w = col
                     .iter()
                     .map(|f| f.map_or(1, |f| f.to_string().len()))
@@ -685,7 +893,7 @@ mod tests {
         assert_eq!(chord.len(), 3);
         let strings: std::collections::HashSet<u8> = chord.iter().map(|n| n.string).collect();
         assert_eq!(strings.len(), 3);
-        let text = ascii(&tab, 60);
+        let text = ascii(&tab, 60, &[]);
         assert_eq!(text.lines().filter(|l| l.contains('|')).count(), 6);
         assert!(text.starts_with("E|"), "{text}");
     }
@@ -699,7 +907,7 @@ mod tests {
             .collect();
         let tab = arrange(&notes, &TUNINGS[0]);
         for width in [24.0, 40.0, 80.0] {
-            let rows = layout(&tab, width, 10_000.0);
+            let rows = layout(&tab, width, 10_000.0, &[]);
             assert!(rows.len() > 1);
             assert_eq!(rows.iter().map(|r| r.cells.len()).sum::<usize>(), 64);
             for r in &rows {
@@ -722,7 +930,7 @@ mod tests {
             assert_eq!(rows.last().unwrap().end_ms, 10_000.0);
         }
         // Narrower lines hold fewer notes.
-        assert!(layout(&tab, 24.0, 0.0).len() > layout(&tab, 80.0, 0.0).len());
+        assert!(layout(&tab, 24.0, 0.0, &[]).len() > layout(&tab, 80.0, 0.0, &[]).len());
     }
 
     #[test]
@@ -731,7 +939,7 @@ mod tests {
             .map(|i| note(1000.0 + i as f64 * 250.0, 64))
             .collect();
         let tab = arrange(&notes, &TUNINGS[0]);
-        let rows = layout(&tab, 60.0, 5000.0);
+        let rows = layout(&tab, 60.0, 5000.0, &[]);
         assert_eq!(rows.len(), 1);
         let r = &rows[0];
         for (i, c) in r.cells.iter().enumerate() {
@@ -768,6 +976,7 @@ mod tests {
                 Adjust {
                     octave: 0,
                     position: steps,
+                    ..Default::default()
                 },
             );
             assert_eq!(tab.position, steps);
@@ -787,6 +996,7 @@ mod tests {
             Adjust {
                 octave: 0,
                 position: 4,
+                ..Default::default()
             },
         );
         let down = arrange_with(
@@ -795,6 +1005,7 @@ mod tests {
             Adjust {
                 octave: 0,
                 position: -2,
+                ..Default::default()
             },
         );
         assert!(down.position < 0);
@@ -807,6 +1018,7 @@ mod tests {
             Adjust {
                 octave: 0,
                 position: MAX_STEPS,
+                ..Default::default()
             },
         );
         assert!(far.position > 0 && far.position <= MAX_STEPS);
@@ -823,6 +1035,7 @@ mod tests {
             Adjust {
                 octave: 1,
                 position: 0,
+                ..Default::default()
             },
         );
         assert_eq!(up.octave, 1);
@@ -836,6 +1049,7 @@ mod tests {
             Adjust {
                 octave: -1,
                 position: 0,
+                ..Default::default()
             },
         );
         for (n, m) in down.notes.iter().zip(&base.notes) {
@@ -850,5 +1064,110 @@ mod tests {
         assert_eq!(tab.transpose, 0);
         assert_eq!((tab.notes[0].string, tab.notes[0].fret), (0, 0));
         assert_eq!(tab.string_names.len(), 7);
+    }
+
+    #[test]
+    fn draws_bar_lines() {
+        // Eighths at 250 ms, a bar every 2 s from 0.
+        let notes: Vec<Note> = (0..64)
+            .map(|i| note(i as f64 * 250.0, 60 + (i % 5) as u8))
+            .collect();
+        let tab = arrange(&notes, &TUNINGS[0]);
+        let bars: Vec<f64> = (0..8).map(|i| i as f64 * 2000.0).collect();
+        for width in [30.0, 50.0, 90.0] {
+            let rows = layout(&tab, width, 16_000.0, &bars);
+            assert_eq!(rows.iter().map(|r| r.cells.len()).sum::<usize>(), 64);
+            // Every bar but the first starts at a line's start or a line.
+            let mut seen: Vec<usize> = rows
+                .iter()
+                .flat_map(|r| r.bars.iter().map(|b| b.1))
+                .collect();
+            seen.dedup();
+            assert_eq!(seen, (1..8).collect::<Vec<_>>(), "{width}");
+            for r in &rows {
+                // Bar lines clear of the numbers.
+                for &(bx, _) in &r.bars {
+                    for c in &r.cells {
+                        assert!((c.0 - bx).abs() * width >= 1.0, "{width}: {bx} {}", c.0);
+                    }
+                }
+                // The segments cover the line, in order, one bar each.
+                let segs = r.segments();
+                assert_eq!(segs.first().unwrap().0, 0.0);
+                assert_eq!(segs.last().unwrap().1, 1.0);
+                for w in segs.windows(2) {
+                    assert_eq!(w[0].1, w[1].0);
+                    assert_eq!(w[0].2 + 1, w[1].2);
+                }
+                assert!(r
+                    .marks
+                    .windows(2)
+                    .all(|m| m[0].0 <= m[1].0 && m[0].1 <= m[1].1));
+            }
+            for w in rows.windows(2) {
+                assert_eq!(w[0].end_ms, w[1].start_ms);
+            }
+        }
+        // Wide enough lines break at bar lines.
+        let rows = layout(&tab, 50.0, 16_000.0, &bars);
+        assert!(rows.len() > 1);
+        for r in &rows[1..] {
+            assert_eq!(r.bars.first().map(|b| b.0), Some(0.0));
+            assert_eq!(r.bar, Some(r.bars[0].1));
+        }
+        let text = ascii(&tab, 400, &bars);
+        let top = text.lines().next().unwrap();
+        assert_eq!(top.matches('|').count(), 2 + 7, "{top}");
+    }
+
+    #[test]
+    fn nudges_a_bar_on_its_own() {
+        let notes = riff();
+        let g = &TUNINGS[0];
+        let base = arrange(&notes, g);
+        // The second half (from 1 s) up two steps; the first as it was.
+        let tab = arrange_with(
+            &notes,
+            g,
+            Adjust {
+                spans: vec![Span {
+                    start_ms: 1000.0,
+                    end_ms: 2000.0,
+                    steps: 2,
+                }],
+                ..Default::default()
+            },
+        );
+        assert_eq!(tab.spans, vec![2]);
+        assert_eq!(tab.position, 0);
+        for (n, m) in tab.notes.iter().zip(&base.notes) {
+            assert_eq!(n.key, m.key);
+            if n.start_ms < 1000.0 {
+                assert_eq!((n.string, n.fret), (m.string, m.fret));
+            }
+        }
+        let low = |t: &Tab| {
+            t.notes
+                .iter()
+                .filter(|n| n.start_ms >= 1000.0)
+                .map(|n| n.fret)
+                .min()
+                .unwrap()
+        };
+        assert!(low(&tab) > low(&base));
+        // A span with no notes moves nothing.
+        let empty = arrange_with(
+            &notes,
+            g,
+            Adjust {
+                spans: vec![Span {
+                    start_ms: 5000.0,
+                    end_ms: 6000.0,
+                    steps: 3,
+                }],
+                ..Default::default()
+            },
+        );
+        assert_eq!(empty.spans, vec![0]);
     }
 }

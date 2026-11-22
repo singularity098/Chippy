@@ -85,6 +85,8 @@ pub fn transcribe(loc: &Location, max_ms: Option<u64>) -> Result<Transcription> 
     let mut last_row: Option<(i32, i32)> = None;
     let mut sounding: Vec<bool> = Vec::new();
     let mut uses: Vec<Vec<f64>> = Vec::new();
+    // When each row starts: (ms, order position, row), for the bars.
+    let mut rows: Vec<(f64, i32, i32)> = Vec::new();
     let scanned = scan(loc, max_ms, |t, row, chans| {
         if events.len() < chans.len() {
             events.resize_with(chans.len(), Vec::new);
@@ -92,6 +94,9 @@ pub fn transcribe(loc: &Location, max_ms: Option<u64>) -> Result<Transcription> 
         }
         let new_row = last_row != Some(row);
         last_row = Some(row);
+        if new_row {
+            rows.push((t, row.0, row.1));
+        }
         for (c, ch) in chans.iter().enumerate() {
             let ev = &mut events[c];
             let note = note_of(ch.period);
@@ -249,6 +254,7 @@ pub fn transcribe(loc: &Location, max_ms: Option<u64>) -> Result<Transcription> 
              instruments are guessed from samples' names and sounds."
                 .into(),
         ],
+        meter: super::meter::from_rows(&rows, end),
     })
 }
 

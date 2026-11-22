@@ -173,6 +173,7 @@ pub fn restyle(t: &Transcription, style: Style) -> Transcription {
     let mut out = Transcription {
         system: t.system.clone(),
         notes: t.notes.clone(),
+        meter: t.meter.clone(),
         ..Default::default()
     };
     for (p, role) in t.parts.iter().zip(roles) {

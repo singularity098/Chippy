@@ -89,6 +89,17 @@
     <string name="tab_neck_down">Move the shapes down the neck</string>
     <string name="tab_neck_up">Move the shapes up the neck</string>
     <string name="tab_reset">Back to how it fits best</string>
+    <string name="tab_reset_bars">These bars back to how they fit best</string>
+    <string name="tab_bars">Bars</string>
+    <string name="tab_speed_down">Half as many beats, each twice as long</string>
+    <string name="tab_speed_up">Twice as many beats, each half as long</string>
+    <string name="tab_bars_earlier">The bar lines a beat earlier</string>
+    <string name="tab_bars_later">The bar lines a beat later</string>
+    <string name="tab_bars_reset">The bars back as found</string>
+    <string name="tab_bars_hint">Tap a bar to move it along the neck on its own (hold for a run of bars); double-tap to play from it.</string>
+    <string name="tab_save">Save</string>
+    <string name="tab_save_musicxml">MusicXML (sheet music and tab)</string>
+    <string name="tab_save_gp">Guitar Pro 5</string>
     <string name="put_away">Put away</string>
     <string name="no_lyrics">No lyrics found for this track</string>
     <string name="no_notes">The notes of this track can\'t be found</string>

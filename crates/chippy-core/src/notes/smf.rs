@@ -22,6 +22,8 @@ enum Ev {
         program: u8,
     },
     Tempo(u32),
+    /// A time signature: (beats, note value).
+    TimeSig(u8, u8),
     /// Meta text: (kind, text). 1 text, 3 track name, 5 lyric.
     Text(u8, String),
 }
@@ -90,6 +92,9 @@ fn parse_track(d: &[u8]) -> Result<Track> {
                         tick,
                         Ev::Tempo((body[0] as u32) << 16 | (body[1] as u32) << 8 | body[2] as u32),
                     )),
+                    0x58 if len >= 2 => {
+                        events.push((tick, Ev::TimeSig(body[0].max(1), 1u8 << body[1].min(5))))
+                    }
                     1 | 3 | 5 => events.push((tick, Ev::Text(kind, text(body)))),
                     _ => {}
                 }
@@ -251,6 +256,20 @@ pub fn read(data: &[u8]) -> Result<Transcription> {
     let mut program = [0u8; 16];
     let mut open: HashMap<(u8, u8), Vec<(f64, u8)>> = HashMap::new();
     let mut last = 0.0f64;
+    let end_tick = events.last().map_or(0, |e| e.0);
+    let mut sigs: Vec<(u64, (u8, u8))> = events
+        .iter()
+        .filter_map(|(tick, _, e)| match e {
+            Ev::TimeSig(n, d) => Some((*tick, (*n, *d))),
+            _ => None,
+        })
+        .collect();
+    sigs.dedup_by_key(|s| s.0);
+    let meter = if clock.smpte_ms_per_tick.is_some() {
+        None
+    } else {
+        super::meter::from_ticks(&sigs, clock.ppq as u64, end_tick, |t| clock.ms(t))
+    };
     for (tick, _, e) in events {
         let t = clock.ms(tick);
         last = last.max(t);
@@ -308,6 +327,7 @@ pub fn read(data: &[u8]) -> Result<Transcription> {
     Ok(Transcription {
         system: "MIDI".into(),
         parts,
+        meter,
         ..Default::default()
     })
 }

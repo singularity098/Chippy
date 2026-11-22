@@ -621,15 +621,10 @@ impl Core {
                 Format::Mp3 => ExportFormat::Mp3,
                 Format::Opus => ExportFormat::Opus,
                 Format::Midi => ExportFormat::Midi,
+                Format::MusicXml => ExportFormat::MusicXml,
+                Format::GuitarPro => ExportFormat::GuitarPro,
             },
-            format_detail: match format {
-                Format::Wav => "Uncompressed, 16-bit.",
-                Format::Flac => "Lossless and compressed, 16-bit.",
-                Format::Mp3 => "Lossy; plays everywhere.",
-                Format::Opus => "Lossy; best quality for its size.",
-                Format::Midi => "The notes, for tabs and sheet music, with instruments guessed.",
-            }
-            .into(),
+            format_detail: format.detail().into(),
             bitrate: match format {
                 Format::Opus => s.export_opus_kbps,
                 _ => s.export_mp3_kbps,
@@ -750,6 +745,76 @@ impl Core {
         self.dirty.tabs = true;
     }
 
+    pub fn select_tab_bar(&mut self, i: usize, extend: bool) {
+        self.tabs.select_bar(i, extend);
+        self.dirty.tabs = true;
+    }
+
+    pub fn clear_tab_selection(&mut self) {
+        self.tabs.clear_selection();
+        self.dirty.tabs = true;
+    }
+
+    /// Plays from the start of bar `i`.
+    pub fn seek_tab_bar(&mut self, i: usize) {
+        if let Some(ms) = self.tabs.bar_start(i) {
+            self.seek(ms);
+        }
+    }
+
+    pub fn set_tab_sig(&mut self, i: usize) {
+        self.tabs.set_sig(i);
+        self.dirty.tabs = true;
+    }
+
+    pub fn step_tab_speed(&mut self, d: i32) {
+        self.tabs.step_speed(d);
+        self.dirty.tabs = true;
+    }
+
+    pub fn shift_tab_bars(&mut self, d: i32) {
+        self.tabs.shift_bars(d);
+        self.dirty.tabs = true;
+    }
+
+    pub fn reset_tab_meter(&mut self) {
+        self.tabs.reset_meter();
+        self.dirty.tabs = true;
+    }
+
+    /// Saves the tab, every part, in the export folder: as Guitar Pro, or
+    /// MusicXML.
+    pub fn save_tab(&mut self, guitar_pro: bool) {
+        let Some(folder) = self.settings.export_dir.clone() else {
+            self.toast(
+                "Choose an export folder first (Export, in the playlist's menu)",
+                true,
+            );
+            return;
+        };
+        let title = self.sheet_track().map(|t| t.1).unwrap_or_default();
+        let Some(score) = self.tabs.score(&title) else {
+            return;
+        };
+        let format = if guitar_pro {
+            Format::GuitarPro
+        } else {
+            Format::MusicXml
+        };
+        let mut name = export::safe_name(&title);
+        if name.is_empty() {
+            name = "Tab".into();
+        }
+        let path = folder.join(format!("{name}.{}", format.extension()));
+        let done = std::fs::create_dir_all(&folder)
+            .map_err(anyhow::Error::from)
+            .and_then(|_| export::write_notes(&score, format, &path));
+        match done {
+            Ok(()) => self.toast(format!("Saved {}", pretty(&path)), false),
+            Err(e) => self.toast(format!("Couldn't save the tab: {e:#}"), true),
+        }
+    }
+
     /// Takes in a finished tab, and follows the playlist to the next
     /// track; true while one is being worked out.
     fn tabs_tick(&mut self) -> bool {
@@ -794,6 +859,8 @@ impl Core {
     fn tabs_state(&self) -> TabsState {
         let v = &self.tabs;
         let title = self.sheet_track().map(|t| t.1).unwrap_or_default();
+        let selected = v.selection();
+        let nudged = v.nudged_bars();
         TabsState {
             shown: self.tabs_shown,
             busy: v.busy(),
@@ -818,7 +885,23 @@ impl Core {
                     marks: l
                         .marks
                         .iter()
-                        .map(|&(ms, x)| TabMark { ms: ms as u64, x })
+                        .map(|&(ms, x)| TabMark {
+                            ms: ms.max(0.0) as u64,
+                            x,
+                        })
+                        .collect(),
+                    bars: l
+                        .segments
+                        .iter()
+                        .map(|&(x0, x1, i)| TabBar {
+                            x0,
+                            x1,
+                            index: i as u32,
+                            line: l.bars.iter().any(|b| b.1 == i),
+                            label: (i + 1).to_string(),
+                            selected: selected.is_some_and(|(a, b)| (a..=b).contains(&i)),
+                            nudged: nudged.contains(&i),
+                        })
                         .collect(),
                 })
                 .collect(),
@@ -826,9 +909,21 @@ impl Core {
             text: v.text(&title),
             title,
             octave: v.adjust().octave,
-            position: v.adjust().position,
+            position: v.steps(),
             can_up: v.can_nudge(true),
             can_down: v.can_nudge(false),
+            adjusted: v.adjusted(),
+            selection: match selected {
+                Some((a, b)) if a == b => format!("Bar {}", a + 1),
+                Some((a, b)) => format!("Bars {}–{}", a + 1, b + 1),
+                None => String::new(),
+            },
+            has_bars: v.meter().is_some(),
+            meter_text: v.meter_text(),
+            sigs: TabView::sig_names(),
+            sig: v.sig_index() as u32,
+            speed: v.speed(),
+            meter_adjusted: v.meter_adjusted(),
         }
     }
 
@@ -1973,17 +2068,17 @@ impl Core {
         (ok, rows.len())
     }
 
-    /// The format to export to: the one chosen, unless that is MIDI and
-    /// none of the tracks' notes can be found.
+    /// The format to export to: the one chosen, unless that is the notes
+    /// and none of the tracks' notes can be found.
     fn export_format(&self) -> Format {
         match Format::from_index(self.settings.export_format) {
-            Format::Midi if self.midi_count().0 == 0 => Format::Flac,
+            f if f.is_notes() && self.midi_count().0 == 0 => Format::Flac,
             f => f,
         }
     }
 
     pub fn set_export_format(&mut self, f: ExportFormat) {
-        if f == ExportFormat::Midi && self.midi_count().0 == 0 {
+        if Format::from_index(f as u32).is_notes() && self.midi_count().0 == 0 {
             return;
         }
         self.settings.export_format = f as u32;
@@ -2026,7 +2121,7 @@ impl Core {
             .rows
             .iter()
             .filter_map(|&i| self.queue.items.get(i))
-            .filter(|item| format != Format::Midi || export::midi_possible(&item.track))
+            .filter(|item| !format.is_notes() || export::midi_possible(&item.track))
             .map(|item| {
                 let m = item
                     .meta
@@ -2051,6 +2146,7 @@ impl Core {
             Format::Opus => self.settings.export_opus_kbps,
             _ => self.settings.export_mp3_kbps,
         };
+        let shown = self.tabs.shown_for_export(&tracks, format);
         let cancel = Arc::new(AtomicBool::new(false));
         self.export.cancel = Some(cancel.clone());
         self.export.total = tracks.len();
@@ -2064,6 +2160,7 @@ impl Core {
                 format,
                 kbps,
                 opts,
+                shown,
             },
             cancel,
             self.export_tx.clone(),

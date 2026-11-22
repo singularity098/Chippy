@@ -74,11 +74,14 @@ info, PSF tags, vgmstream stream names).
   all*) and *Export…*.
 * **Export** the playlist (or one track) to WAV, FLAC, MP3 or Opus: the
   button above the playlist. One tagged file per track; looping chiptunes
-  end as they play, at their length with the fade. Or to **MIDI**: the
+  end as they play, at their length with the fade. Or to **MusicXML** or
+  **Guitar Pro 5**: the pitched parts as tab in bars (as the guitar tab
+  shows them; the track open in it, with its changes). Or to **MIDI**: the
   notes, worked out from what a tune does to its sound chip (NES, SNES,
   Genesis and other VGM chips, Game Boy, PC Engine, MSX, Master System, Atari,
   Commodore 64) or read from a tracker module's patterns, a MIDI track per
-  channel. Sampled instruments (SNES, modules) are measured and named to pick
+  channel, in the track's bars (its tempo and time signature, so the notes
+  fall on the beats in a sequencer). Sampled instruments (SNES, modules) are measured and named to pick
   each one's General MIDI instrument, and unpitched samples become drums.
   MIDI is greyed out for tracks whose notes can't be found.
 * **Lyrics** (`L`, or the speech-bubble button by the volume): from an
@@ -94,8 +97,23 @@ info, PSF tags, vgmstream stream names).
   *Octave* shows the part an octave higher or lower; *Neck* nudges its
   shapes up or down the neck, a step at a time: the lowest-fretted notes of
   each passage move to a lower string, played higher up (or the highest to
-  a higher string), to find a more comfortable way to play a riff. Both are
-  remembered for each track and part until Chippy closes, never saved.
+  a higher string), to find a more comfortable way to play a riff.
+  **Bars**: the tab has bar lines and bar numbers. MIDI files say where
+  the bars fall, and tracker modules nearly do (four rows to a beat, a bar
+  starting with each pattern); for other chiptunes, which hold only their
+  sound driver's code, the beat and the bars are worked out from the notes
+  (the step the notes move in, the beat they lean on, where the bass and
+  the kick drum put their weight, and how the music repeats). That can be
+  wrong, so the *Bars* row puts it right: the time signature, the beat
+  twice or half as fast, and the bar lines a beat earlier or later. Click a
+  bar (Shift-click for a run of them; on Android tap, and hold for a run)
+  and *Neck* moves just those bars' shapes, leaving the rest as they are;
+  double-click a bar to play from it. All of this is remembered for each
+  track and part until Chippy closes, never saved. *Save…* writes every
+  part as tab in bars: **MusicXML** (sheet music and tab, for MuseScore,
+  Guitar Pro, TuxGuitar, Sibelius...) or **Guitar Pro 5** (`.gp5`), as
+  shown, with times rounded to sixteenths (or triplets, where the notes fit
+  them clearly better).
 * **MIDI mode** (`Shift+M`, or the keyboard button beside the guitar): a
   chiptune whose notes can be found (the same tracks as the guitar tab)
   plays them as MIDI through the SoundFont, crossfading from the chip and

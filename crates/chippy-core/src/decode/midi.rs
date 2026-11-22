@@ -53,6 +53,14 @@ pub fn soundfont_loading() {
     FONT_LOADING.store(true, Ordering::Release);
 }
 
+/// Bumped each time the SoundFont changes, and whether one is being loaded.
+pub fn soundfont_state() -> (u64, bool) {
+    (
+        FONT_GENERATION.load(Ordering::Acquire),
+        FONT_LOADING.load(Ordering::Acquire),
+    )
+}
+
 fn current_font() -> (u64, Option<Arc<SoundFont>>) {
     let f = FONT.read().unwrap();
     (f.generation, f.font.clone())
@@ -320,12 +328,27 @@ fn send(s: &mut Synthesizer, e: &Ev) {
 
 impl MidiDecoder {
     pub fn open(loc: &Location, opts: &DecodeOptions) -> Result<Self> {
-        let song = Arc::new(parse(&loc.read()?)?);
-        let (generation, font) = wait_for_font();
+        let song = parse(&loc.read()?)?;
+        Self::with_song(song, wait_for_font(), opts.sample_rate)
+    }
+
+    /// Plays notes found in a chiptune ([`crate::notes::transcribe`]) at
+    /// `rate`, through the SoundFont chosen now (it doesn't wait for one
+    /// being loaded).
+    pub fn from_notes(t: &crate::notes::Transcription, rate: u32) -> Result<Self> {
+        let song = parse(&crate::notes::midi::write(t, ""))?;
+        Self::with_song(song, current_font(), rate)
+    }
+
+    fn with_song(
+        song: Song,
+        (generation, font): (u64, Option<Arc<SoundFont>>),
+        rate: u32,
+    ) -> Result<Self> {
+        let song = Arc::new(song);
         let Some(font) = font else {
             bail!("no SoundFont: choose a folder of SF2 files in Settings, under MIDI");
         };
-        let rate = opts.sample_rate;
         let end_frame = ((song.length + TAIL_S) * rate as f64) as u64;
         let block = 64;
         Ok(MidiDecoder {

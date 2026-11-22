@@ -146,6 +146,13 @@ object ChippyIcons {
             weight = 1.6f,
         )
     }
+    val Midi: ImageVector by lazy {
+        icon(
+            "Midi",
+            line = "M 4.5 5 L 19.5 5 A 1.5 1.5 0 0 1 21 6.5 L 21 17.5 A 1.5 1.5 0 0 1 19.5 19 L 4.5 19 A 1.5 1.5 0 0 1 3 17.5 L 3 6.5 A 1.5 1.5 0 0 1 4.5 5 Z M 12 13 L 12 19 M 7.5 13 L 7.5 19 M 16.5 13 L 16.5 19 M 6 5 L 6 13 L 9 13 L 9 5 M 15 5 L 15 13 L 18 13 L 18 5 M 10.5 5 L 10.5 13 L 13.5 13 L 13.5 5",
+            weight = 1.6f,
+        )
+    }
     val Info: ImageVector by lazy {
         icon(
             "Info",

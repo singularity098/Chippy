@@ -1,7 +1,7 @@
 // What is playing: the large album art, and the bottom bar (now playing
 // with its spectrum, the transport and timeline, shuffle, repeat, volume).
 import { Theme } from "theme.slint";
-import { IconButton, PlayButton, Scrubber, Tip } from "widgets.slint";
+import { IconButton, MenuItem, PlayButton, Scrubber, Tip } from "widgets.slint";
 import { Icon, Icons } from "icons.slint";
 
 export global Now {
@@ -50,6 +50,111 @@ export global Now {
     in property <bool> has-notes;
     callback show-lyrics;
     callback show-tabs;
+    // MIDI mode: chiptunes whose notes can be found (has-notes) play them
+    // as MIDI through the SoundFont, with the instruments of a style.
+    in property <bool> midi-mode;
+    in property <int> midi-style;
+    in property <[string]> midi-styles;
+    // What the playing track does: 0 plays as it is, 1 its notes can't be
+    // played, 2 finding them, 3 playing MIDI, 4 failed.
+    in property <int> midi-state;
+    callback toggle-midi-mode;
+    callback set-midi-style(int);
+}
+
+// The MIDI mode button: a click turns it on and off; holding it (or a
+// right-click) lists the styles.
+component MidiButton inherits Rectangle {
+    in property <bool> enabled: true;
+    property <bool> held;
+    property <length> size: 40px;
+    width: self.size;
+    height: self.size;
+    border-radius: self.size / 2;
+    background: touch.pressed ? Theme.pressed : touch.has-hover ? #ffffff0f : transparent;
+    border-width: touch.has-hover ? 1px : 0;
+    border-color: Theme.border-hover;
+    opacity: root.enabled ? 1 : 0.35;
+    Icon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 20px;
+        height: 20px;
+        line: Icons.midi-line;
+        weight: 1.6;
+        tint: Now.midi-mode ? Theme.paint : touch.has-hover ? Theme.text : Theme.text-dim;
+    }
+    // On: a dot, pulsing while the notes are worked out.
+    if Now.midi-mode: Rectangle {
+        y: parent.height - 6px;
+        x: (parent.width - self.width) / 2;
+        width: 4px;
+        height: 4px;
+        border-radius: 2px;
+        background: Now.midi-state == 4 ? #e05a5a : Theme.paint;
+        opacity: Now.midi-state == 2 ? 0.3 + 0.7 * abs(sin(360deg * animation-tick() / 1.2s)) : 1;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                root.held = false;
+                if e.button == PointerEventButton.right {
+                    root.held = true;
+                    menu.show();
+                }
+            }
+        }
+        clicked => {
+            if !root.held { Now.toggle-midi-mode(); }
+        }
+    }
+    Timer {
+        running: touch.pressed && !root.held;
+        interval: 450ms;
+        triggered => {
+            root.held = true;
+            menu.show();
+        }
+    }
+    Tip {
+        text: !Now.has-track || !root.enabled ? "MIDI mode: hold for instruments (Shift+M)"
+            : !Now.midi-mode ? "MIDI mode: off. Hold for instruments (Shift+M)"
+            : Now.midi-state == 2 ? "MIDI mode: finding the notes…"
+            : Now.midi-state == 4 ? "MIDI mode: couldn't play this track as MIDI"
+            : "MIDI mode: " + Now.midi-styles[Now.midi-style] + ". Hold for others (Shift+M)";
+        hover: touch.has-hover;
+        pressed: touch.pressed;
+    }
+    menu := PopupWindow {
+        x: (root.width - 220px) / 2;
+        y: - (Now.midi-styles.length + 1) * 36px - 22px;
+        width: 220px;
+        Rectangle {
+            background: Theme.popup;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #000000a0;
+            VerticalLayout {
+                padding: 6px;
+                MenuItem {
+                    text: "Chip (MIDI mode off)";
+                    checkable: true;
+                    checked: !Now.midi-mode;
+                    clicked => { if Now.midi-mode { Now.toggle-midi-mode(); } }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                for name[i] in Now.midi-styles: MenuItem {
+                    text: name;
+                    checkable: true;
+                    checked: Now.midi-mode && Now.midi-style == i;
+                    clicked => { Now.set-midi-style(i); }
+                }
+            }
+        }
+    }
 }
 
 // Bars rising from the bottom in the theme's paint, with peak caps.
@@ -174,7 +279,7 @@ export component BottomBar inherits Rectangle {
     // The timeline is 70% longer than it once was, the room taken from
     // the now playing part (which seldom needs it all): what the bar used
     // to be, then the now playing part shortened by 70% of it.
-    property <length> right-width: root.narrow ? 300px : 360px;
+    property <length> right-width: root.narrow ? 348px : 408px;
     property <length> fixed: 14px + 18px + root.right-width + (root.narrow ? 2 * 18px : 150px + 3 * 18px) + 2 * 54px + 2 * 10px;
     property <length> was-now: root.narrow ? min(300px, root.width * 0.3) : min(470px, root.width * 0.34);
     property <length> was-bar: max(0px, root.width - root.fixed - root.was-now);
@@ -367,6 +472,10 @@ export component BottomBar inherits Rectangle {
                 enabled: Now.has-track && Now.has-notes;
                 tip: !Now.has-track ? "Guitar tab (T)" : Now.has-notes ? "Guitar tab (T)" : "The notes of this track can't be found";
                 clicked => { Now.show-tabs(); }
+            }
+            MidiButton {
+                y: (parent.height - self.height) / 2;
+                enabled: Now.has-track && Now.has-notes && !Now.midi;
             }
             IconButton {
                 y: (parent.height - self.height) / 2;

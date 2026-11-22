@@ -7,6 +7,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -22,6 +24,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -56,6 +62,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.singularity098.chippy.R
 import io.github.singularity098.chippy.Store
 import io.github.singularity098.chippy.core.Frame
+import io.github.singularity098.chippy.core.MidiState
 import io.github.singularity098.chippy.core.NowState
 import io.github.singularity098.chippy.core.PlayState
 import io.github.singularity098.chippy.core.RepeatMode
@@ -140,6 +147,7 @@ fun PlayerScreen(
                             stringResource(if (notesOk || now?.hasTrack != true) R.string.guitar_tab else R.string.no_notes),
                         )
                     }
+                    MidiButton(store, now, enabled = notesOk && now?.midi != true)
                     IconButton(onClick = onOpenPlaylist) {
                         Icon(ChippyIcons.Queue, stringResource(R.string.playlist))
                     }
@@ -398,4 +406,65 @@ fun formatMs(ms: Long): String {
     val m = (s / 60) % 60
     val sec = s % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
+}
+
+/** MIDI mode: a tap turns it on and off, a long press lists the styles
+ *  (the instruments the notes are played with). */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun MidiButton(store: Store, now: NowState?, enabled: Boolean) {
+    var menu by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
+    val on = now?.midiMode == true
+    val label = stringResource(R.string.midi_mode)
+    Box {
+        Box(
+            Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .combinedClickable(
+                    enabled = enabled,
+                    onClickLabel = label,
+                    onLongClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        menu = true
+                    },
+                    onClick = { store.send { toggleMidiMode() } },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            val tint = when {
+                !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                now?.midiState == MidiState.FAILED && on -> MaterialTheme.colorScheme.error
+                on -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            // Dimmed while the notes are being found.
+            val alpha = if (on && now?.midiState == MidiState.PREPARING) 0.5f else 1f
+            Icon(ChippyIcons.Midi, label, tint = tint.copy(alpha = tint.alpha * alpha))
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.midi_mode_off)) },
+                trailingIcon = if (!on) { { Icon(ChippyIcons.Check, null) } } else null,
+                onClick = {
+                    menu = false
+                    if (on) store.send { toggleMidiMode() }
+                },
+            )
+            HorizontalDivider()
+            now?.midiStyles?.forEachIndexed { i, name ->
+                DropdownMenuItem(
+                    text = { Text(name) },
+                    trailingIcon = if (on && now.midiStyle.toInt() == i) {
+                        { Icon(ChippyIcons.Check, null) }
+                    } else null,
+                    onClick = {
+                        menu = false
+                        store.send { setMidiStyle(i.toUInt()) }
+                    },
+                )
+            }
+        }
+    }
 }

@@ -96,6 +96,17 @@ info, PSF tags, vgmstream stream names).
   each passage move to a lower string, played higher up (or the highest to
   a higher string), to find a more comfortable way to play a riff. Both are
   remembered for each track and part until Chippy closes, never saved.
+* **MIDI mode** (`Shift+M`, or the keyboard button beside the guitar): a
+  chiptune whose notes can be found (the same tracks as the guitar tab)
+  plays them as MIDI through the SoundFont, crossfading from the chip and
+  back again as it is turned on and off. Hold the button (or right-click
+  it) to pick the instruments: the original ones (each chip channel's
+  nearest General MIDI instrument), piano, strings, rock band, jazz combo,
+  brass band or music box, each giving the tune, the bass and the parts in
+  between instruments of their own. The mode stays on from track to track;
+  tracks without notes to find play as they are. The notes are worked out
+  in the background the first time (the chip plays meanwhile, the button's
+  dot pulsing), and the MIDI follows the chip's loudness and its fade.
 * Lyrics and the tab slide up over the player, the transport still below
   them, and slide back down with the arrow, a drag or `Esc`. Their buttons
   are greyed out when a track has no lyrics, or its notes can't be found.
@@ -205,7 +216,8 @@ In the playlist, swipe a track away to remove it; its menu shows it in the
 browser, its properties, or exports it. The buttons beside the playlist's
 at the top of the player show the playing track's lyrics and guitar tab
 (greyed out when there are none), over the player with a small transport
-below them.
+below them. The keyboard button beside them turns MIDI mode on and off; a
+long press picks its instruments.
 
 At the first start Chippy asks for *All files access*, as the file browser
 reads folders anywhere in shared storage (it starts in *Internal storage*;

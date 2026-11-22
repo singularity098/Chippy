@@ -105,6 +105,18 @@ pub enum PlayState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum MidiState {
+    /// Plays as it is.
+    Off,
+    /// Its notes can't be played as MIDI.
+    Unsupported,
+    /// Finding the notes (the chip plays meanwhile).
+    Preparing,
+    Playing,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum RepeatMode {
     Off,
     All,
@@ -138,6 +150,13 @@ pub struct NowState {
     pub has_lyrics: bool,
     /// The track's notes can be found, for a guitar tab.
     pub has_notes: bool,
+    /// MIDI mode: chiptunes whose notes can be found play them as MIDI
+    /// through the SoundFont, in one of `midi_styles` (instruments).
+    pub midi_mode: bool,
+    pub midi_style: u32,
+    pub midi_styles: Vec<String>,
+    /// What the playing track does about it.
+    pub midi_state: MidiState,
     pub volume: f32,
     pub muted: bool,
     /// Where playback is, as this state was sent (for the media session).

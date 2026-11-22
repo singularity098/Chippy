@@ -250,6 +250,15 @@ impl Engine {
     pub fn pick_soundfont(&self, index: u32) {
         self.act(|c| c.pick_soundfont(index as i32));
     }
+    /// MIDI mode on or off (the playing track crossfades).
+    pub fn toggle_midi_mode(&self) {
+        self.act(|c| c.toggle_midi_mode());
+    }
+    /// MIDI mode on, with the instruments of style `index` (of
+    /// `NowState.midi_styles`).
+    pub fn set_midi_style(&self, index: u32) {
+        self.act(|c| c.set_midi_style(index));
+    }
     /// Where the folder picker for a setting ("music", "soundfont",
     /// "export") should open.
     pub fn picker_start(&self, which: String) -> Option<String> {

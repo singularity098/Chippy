@@ -326,6 +326,7 @@ export component MainWindow inherits Window {
             if e.text == "s" { Now.toggle-shuffle(); return accept; }
             if e.text == "r" { Now.cycle-repeat(); return accept; }
             if e.text == "m" { Now.toggle-mute(); return accept; }
+            if e.text == "M" { Now.toggle-midi-mode(); return accept; }
             if e.text == "l" { Now.show-lyrics(); return accept; }
             if e.text == "t" { Now.show-tabs(); return accept; }
             if e.text == "[" { Now.cycle-soundfont(-1); return accept; }

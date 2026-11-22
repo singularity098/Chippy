@@ -13,7 +13,7 @@ use super::{ss, App};
 use crate::export::{self, Format, Progress};
 use crate::midimode;
 use crate::tabs::{Available, TabView};
-use crate::{Export, Info, InfoField, Lyrics, Now, TabCell, TabLine, Tabs};
+use crate::{Export, Info, InfoField, Lyrics, Now, TabBar, TabCell, TabLine, Tabs};
 use chippy_core::lyrics;
 use chippy_core::notes::style::Style;
 
@@ -46,6 +46,8 @@ pub enum Picked {
     SoundfontDir(PathBuf),
     ExportDir(PathBuf),
     Open(Vec<PathBuf>),
+    /// Where to save the guitar tab.
+    SaveTab(PathBuf),
     /// Cancelled, or no picker could be shown.
     Nothing(Option<String>),
 }
@@ -169,6 +171,7 @@ impl App {
                 self.sync_export();
             }
             Picked::Open(files) => self.open_paths(files),
+            Picked::SaveTab(path) => self.save_tab_to(path),
             Picked::Nothing(Some(e)) => self.toast(&e, true),
             Picked::Nothing(None) => {}
         }
@@ -313,11 +316,11 @@ impl App {
         (ok, rows.len())
     }
 
-    /// The format to export to: the one chosen, unless that is MIDI and
-    /// none of the tracks' notes can be found.
+    /// The format to export to: the one chosen, unless that is the notes
+    /// and none of the tracks' notes can be found.
     fn export_format(&self) -> Format {
         match Format::from_index(self.settings.export_format) {
-            Format::Midi if self.midi_count().0 == 0 => Format::Flac,
+            f if f.is_notes() && self.midi_count().0 == 0 => Format::Flac,
             f => f,
         }
     }
@@ -334,20 +337,8 @@ impl App {
             String::new()
         }));
         let format = self.export_format();
-        e.set_format(match format {
-            Format::Wav => 0,
-            Format::Flac => 1,
-            Format::Mp3 => 2,
-            Format::Opus => 3,
-            Format::Midi => 4,
-        });
-        e.set_format_detail(ss(match format {
-            Format::Wav => "Uncompressed, 16-bit.",
-            Format::Flac => "Lossless and compressed, 16-bit.",
-            Format::Mp3 => "Lossy; plays everywhere.",
-            Format::Opus => "Lossy; best quality for its size.",
-            Format::Midi => "The notes, for tabs and sheet music.",
-        }));
+        e.set_format(format.index() as i32);
+        e.set_format_detail(ss(format.detail()));
         e.set_bitrate(match format {
             Format::Opus => s.export_opus_kbps,
             _ => s.export_mp3_kbps,
@@ -360,10 +351,10 @@ impl App {
     }
 
     pub(super) fn set_export_format(&mut self, i: i32) {
-        if i == 4 && self.midi_count().0 == 0 {
+        if Format::from_index(i.max(0) as u32).is_notes() && self.midi_count().0 == 0 {
             return;
         }
-        self.settings.export_format = i.clamp(0, 4) as u32;
+        self.settings.export_format = i.clamp(0, 6) as u32;
         self.mark_dirty();
         self.sync_export();
     }
@@ -403,7 +394,7 @@ impl App {
             .rows
             .iter()
             .filter_map(|&i| self.queue.items.get(i))
-            .filter(|item| format != Format::Midi || export::midi_possible(&item.track))
+            .filter(|item| !format.is_notes() || export::midi_possible(&item.track))
             .map(|item| {
                 let m = item
                     .meta
@@ -428,6 +419,7 @@ impl App {
             Format::Opus => self.settings.export_opus_kbps,
             _ => self.settings.export_mp3_kbps,
         };
+        let shown = self.tabs.view.shown_for_export(&tracks, format);
         let cancel = Arc::new(AtomicBool::new(false));
         self.export.cancel = Some(cancel.clone());
         self.export.total = tracks.len();
@@ -439,6 +431,7 @@ impl App {
                 format,
                 kbps,
                 opts,
+                shown,
             },
             cancel,
             self.export_tx.clone(),
@@ -702,6 +695,99 @@ impl App {
         }
     }
 
+    pub(super) fn select_tab_bar(&mut self, i: i32, extend: bool) {
+        self.tabs.view.select_bar(i.max(0) as usize, extend);
+        self.sync_tabs();
+    }
+
+    pub(super) fn seek_tab_bar(&mut self, i: i32) {
+        if let Some(ms) = self.tabs.view.bar_start(i.max(0) as usize) {
+            self.seek(ms);
+        }
+    }
+
+    pub(super) fn set_tab_sig(&mut self, i: i32) {
+        self.tabs.view.set_sig(i.max(0) as usize);
+        self.tabs.line = -1;
+        self.sync_tabs();
+    }
+
+    pub(super) fn step_tab_speed(&mut self, d: i32) {
+        self.tabs.view.step_speed(d);
+        self.tabs.line = -1;
+        self.sync_tabs();
+    }
+
+    pub(super) fn shift_tab_bars(&mut self, d: i32) {
+        self.tabs.view.shift_bars(d);
+        self.tabs.line = -1;
+        self.sync_tabs();
+    }
+
+    pub(super) fn reset_tab_meter(&mut self) {
+        self.tabs.view.reset_meter();
+        self.tabs.line = -1;
+        self.sync_tabs();
+    }
+
+    /// Asks where to save the tab (MusicXML or Guitar Pro).
+    pub(super) fn save_tab(&mut self) {
+        if self.picker_open || self.tabs.view.meter().is_none() {
+            return;
+        }
+        self.save_tab_desktop();
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn save_tab_desktop(&mut self) {
+        self.picker_open = true;
+        let title = self.tab_title();
+        let start = self.settings.export_dir.clone().filter(|d| d.is_dir());
+        spawn_picker(self.pick_tx.clone(), move || {
+            let mut d = rfd::FileDialog::new()
+                .set_title("Save the tab")
+                .add_filter("MusicXML (sheet music and tab)", &["musicxml"])
+                .add_filter("Guitar Pro 5", &["gp5"])
+                .set_file_name(format!("{}.musicxml", export::safe_name(&title)));
+            if let Some(s) = start {
+                d = d.set_directory(s);
+            }
+            match d.save_file() {
+                Some(p) => Picked::SaveTab(p),
+                None => Picked::Nothing(None),
+            }
+        });
+    }
+
+    /// The title of the track in the tab.
+    fn tab_title(&self) -> String {
+        let t = self.ui().global::<Tabs>().get_title().to_string();
+        t.trim_start_matches("Guitar tab: ").to_string()
+    }
+
+    fn save_tab_to(&mut self, mut path: PathBuf) {
+        let format = match path.extension().and_then(|e| e.to_str()) {
+            Some(e) if e.eq_ignore_ascii_case("gp5") => Format::GuitarPro,
+            Some(e) if e.eq_ignore_ascii_case("musicxml") || e.eq_ignore_ascii_case("xml") => {
+                Format::MusicXml
+            }
+            _ => {
+                path.set_extension("musicxml");
+                Format::MusicXml
+            }
+        };
+        let Some(score) = self.tabs.view.score(&self.tab_title()) else {
+            return;
+        };
+        match export::write_notes(&score, format, &path) {
+            Ok(()) => {
+                let name = path.file_name().map(|n| n.to_string_lossy().to_string());
+                self.toast(&format!("Saved {}", name.unwrap_or_default()), false);
+            }
+            Err(e) => self.toast(&format!("Couldn't save the tab: {e:#}"), true),
+        }
+    }
+
     pub(super) fn seek_tab_line(&mut self, i: i32) {
         if let Some(l) = self.tabs.view.lines().get(i.max(0) as usize) {
             self.seek(l.start_ms as u64);
@@ -723,6 +809,8 @@ impl App {
         t.set_tuning(v.tuning_index() as i32);
         let strings: Vec<SharedString> = v.strings().iter().map(ss).collect();
         t.set_strings(ModelRc::new(VecModel::from(strings)));
+        let selected = v.selection();
+        let nudged = v.nudged_bars();
         let lines: Vec<TabLine> = v
             .lines()
             .iter()
@@ -738,13 +826,40 @@ impl App {
                         })
                         .collect::<Vec<_>>(),
                 )),
+                bars: ModelRc::new(VecModel::from(
+                    l.segments
+                        .iter()
+                        .map(|&(x0, x1, i)| TabBar {
+                            x0,
+                            x1,
+                            index: i as i32,
+                            line: l.bars.iter().any(|b| b.1 == i),
+                            label: ss((i + 1).to_string()),
+                            selected: selected.is_some_and(|(a, b)| (a..=b).contains(&i)),
+                            nudged: nudged.contains(&i),
+                        })
+                        .collect::<Vec<_>>(),
+                )),
             })
             .collect();
         t.set_lines(ModelRc::new(VecModel::from(lines)));
         t.set_detail(ss(v.detail()));
         let adjust = v.adjust();
         t.set_octave(adjust.octave);
-        t.set_position(adjust.position);
+        t.set_position(v.steps());
+        t.set_adjusted(v.adjusted());
+        t.set_selection(ss(match selected {
+            Some((a, b)) if a == b => format!("Bar {}", a + 1),
+            Some((a, b)) => format!("Bars {}–{}", a + 1, b + 1),
+            None => String::new(),
+        }));
+        t.set_has_bars(v.meter().is_some());
+        t.set_meter_text(ss(v.meter_text()));
+        let sigs: Vec<SharedString> = TabView::sig_names().iter().map(ss).collect();
+        t.set_sigs(ModelRc::new(VecModel::from(sigs)));
+        t.set_sig(v.sig_index() as i32);
+        t.set_speed(v.speed());
+        t.set_meter_adjusted(v.meter_adjusted());
         t.set_can_up(v.can_nudge(true));
         t.set_can_down(v.can_nudge(false));
         let title = t.get_title().to_string();

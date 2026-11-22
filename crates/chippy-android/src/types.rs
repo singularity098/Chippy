@@ -213,6 +213,10 @@ pub enum ExportFormat {
     Mp3,
     Opus,
     Midi,
+    /// The notes as sheet music and tab.
+    MusicXml,
+    /// The notes as tab, for Guitar Pro.
+    GuitarPro,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -273,6 +277,24 @@ pub struct TabLine {
     pub notes: Vec<TabNote>,
     /// Where the playhead is when, in time order: straight between them.
     pub marks: Vec<TabMark>,
+    /// The bars across the line.
+    pub bars: Vec<TabBar>,
+}
+
+/// A bar across a line of tab: from `x0` to `x1` (0..1), with its bar line
+/// at `x0` if it starts on this line.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TabBar {
+    pub x0: f32,
+    pub x1: f32,
+    pub index: u32,
+    pub line: bool,
+    /// Its number, "12".
+    pub label: String,
+    /// Chosen, to nudge along the neck on its own.
+    pub selected: bool,
+    /// Nudged on its own.
+    pub nudged: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -304,12 +326,29 @@ pub struct TabsState {
     /// The tab as text, to copy.
     pub text: String,
     /// Moved by hand, for this track and part (until the app closes):
-    /// octaves up (down if negative), and steps up the neck.
+    /// octaves up (down if negative), and steps up the neck (of the chosen
+    /// bars, if any are).
     pub octave: i32,
     pub position: i32,
     /// Whether it can be moved further up, or down, the neck.
     pub can_up: bool,
     pub can_down: bool,
+    /// Something to put back (the part, or the chosen bars).
+    pub adjusted: bool,
+    /// The bars chosen to nudge on their own: "Bar 12", "Bars 3–5"; "".
+    pub selection: String,
+    /// There are bars (they could be found).
+    pub has_bars: bool,
+    /// "4/4, ♩ = 120 · guessed from the notes".
+    pub meter_text: String,
+    /// The time signatures to choose from ("As found" first), and the one
+    /// used.
+    pub sigs: Vec<String>,
+    pub sig: u32,
+    /// The beat made faster (by powers of two) or slower.
+    pub speed: i32,
+    /// The bars were changed by hand.
+    pub meter_adjusted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]

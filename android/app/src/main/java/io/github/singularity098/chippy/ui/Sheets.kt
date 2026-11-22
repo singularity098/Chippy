@@ -5,6 +5,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -65,6 +66,7 @@ import io.github.singularity098.chippy.Store
 import io.github.singularity098.chippy.core.LyricsInfo
 import io.github.singularity098.chippy.core.NowState
 import io.github.singularity098.chippy.core.PlayState
+import io.github.singularity098.chippy.core.TabBar
 import io.github.singularity098.chippy.core.TabLine
 import io.github.singularity098.chippy.core.TabsState
 import kotlin.math.floor
@@ -406,9 +408,21 @@ private val Digit = 10.dp
 /** Left of the notes: the strings' names and the bar. */
 private val TabLeft = 30.dp
 
-/** One line of tab: the strings, the frets, and the playhead if playing. */
+/**
+ * One line of tab: the strings, the frets, the bar lines, and the playhead
+ * if playing. A tap on a bar chooses it (a long press, the bars up to it); a
+ * double tap plays from it. Without bars, a tap plays from the line.
+ */
 @Composable
-private fun TabLineView(line: TabLine, strings: List<String>, digits: Int, playhead: Float?, onClick: () -> Unit) {
+private fun TabLineView(
+    line: TabLine,
+    strings: List<String>,
+    digits: Int,
+    playhead: Float?,
+    onClick: () -> Unit,
+    onBar: (UInt, Boolean) -> Unit,
+    onBarSeek: (UInt) -> Unit,
+) {
     val measurer = rememberTextMeasurer()
     val look = LocalLook.current
     val lineColor = MaterialTheme.colorScheme.outlineVariant
@@ -423,7 +437,19 @@ private fun TabLineView(line: TabLine, strings: List<String>, digits: Int, playh
             .padding(horizontal = 12.dp, vertical = 2.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(back)
-            .clickable(onClick = onClick)
+            .pointerInput(line, digits) {
+                val barAt = { x: Float ->
+                    val f = (x - TabLeft.toPx()) / (digits * Digit.toPx())
+                    line.bars.firstOrNull { f >= it.x0 && f < it.x1 }
+                        ?: line.bars.lastOrNull()?.takeIf { f >= it.x1 }
+                        ?: line.bars.firstOrNull()?.takeIf { f < it.x0 }
+                }
+                detectTapGestures(
+                    onTap = { o -> barAt(o.x)?.let { onBar(it.index, false) } ?: onClick() },
+                    onDoubleTap = { o -> barAt(o.x)?.let { onBarSeek(it.index) } ?: onClick() },
+                    onLongPress = { o -> barAt(o.x)?.let { onBar(it.index, true) } },
+                )
+            }
             .padding(vertical = 6.dp),
     ) {
         Text(
@@ -451,6 +477,27 @@ private fun TabLineView(line: TabLine, strings: List<String>, digits: Int, playh
                 drawText(m, topLeft = Offset((left - m.size.width) / 2f, y - m.size.height / 2f))
             }
             drawLine(lineColor, Offset(left, top), Offset(left, top + (n - 1) * g), 2f)
+            // Bar lines and numbers, and the chosen bars marked above and
+            // below the strings.
+            val number = TextStyle(fontSize = 9.sp, color = faint)
+            val marked = TextStyle(fontSize = 9.sp, color = look.accent)
+            for (bar in line.bars) {
+                val x0 = left + bar.x0 * span
+                val x1 = left + bar.x1 * span
+                if (bar.line && bar.x0 > 0f) {
+                    drawLine(faint, Offset(x0, top), Offset(x0, top + (n - 1) * g), 1.5.dp.toPx())
+                }
+                if (bar.x0 > 0f || bar.selected || bar.nudged) {
+                    val m = measurer.measure(bar.label, if (bar.selected || bar.nudged) marked else number)
+                    drawText(m, topLeft = Offset(x0 + 2.dp.toPx(), top - m.size.height - 1.dp.toPx()))
+                }
+                if (bar.selected) {
+                    val w = 3.dp.toPx()
+                    drawLine(look.accent, Offset(x0 + w, top - 4.dp.toPx()), Offset(x1 - w, top - 4.dp.toPx()), w)
+                    val bottom = top + (n - 1) * g + 4.dp.toPx()
+                    drawLine(look.accent, Offset(x0 + w, bottom), Offset(x1 - w, bottom), w)
+                }
+            }
             for (note in line.notes) {
                 val m = measurer.measure(note.fret.toString(), fret)
                 val x = left + note.x * span
@@ -489,6 +536,22 @@ fun TabsSheet(store: Store, state: TabsState, onClose: () -> Unit) {
             if (state.lines.isNotEmpty()) {
                 TextButton(onClick = { clipboard.setText(AnnotatedString(state.text)) }) {
                     Text(stringResource(R.string.copy))
+                }
+            }
+            if (state.lines.isNotEmpty() && state.hasBars) {
+                var saving by remember { mutableStateOf(false) }
+                Box {
+                    TextButton(onClick = { saving = true }) { Text(stringResource(R.string.tab_save)) }
+                    DropdownMenu(expanded = saving, onDismissRequest = { saving = false }) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.tab_save_musicxml)) },
+                            onClick = { saving = false; store.send { saveTab(false) } },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.tab_save_gp)) },
+                            onClick = { saving = false; store.send { saveTab(true) } },
+                        )
+                    }
                 }
             }
         },
@@ -554,7 +617,11 @@ fun TabsSheet(store: Store, state: TabsState, onClose: () -> Unit) {
                     enabled = ready && state.octave < 3,
                 ) { Icon(ChippyIcons.Plus, stringResource(R.string.tab_octave_up)) }
                 Spacer(Modifier.width(8.dp))
-                Text(stringResource(R.string.tab_neck), style = labelStyle, color = labelColor)
+                Text(
+                    state.selection.ifEmpty { stringResource(R.string.tab_neck) },
+                    style = labelStyle,
+                    color = if (state.selection.isEmpty()) labelColor else LocalLook.current.accent,
+                )
                 IconButton(
                     onClick = { store.send { nudgeTab(-1) } },
                     enabled = ready && state.canDown,
@@ -571,8 +638,61 @@ fun TabsSheet(store: Store, state: TabsState, onClose: () -> Unit) {
                 Spacer(Modifier.weight(1f))
                 IconButton(
                     onClick = { store.send { resetTabAdjust() } },
-                    enabled = ready && (state.octave != 0 || state.position != 0),
-                ) { Icon(ChippyIcons.Refresh, stringResource(R.string.tab_reset)) }
+                    enabled = ready && state.adjusted,
+                ) {
+                    Icon(
+                        ChippyIcons.Refresh,
+                        stringResource(if (state.selection.isEmpty()) R.string.tab_reset else R.string.tab_reset_bars),
+                    )
+                }
+            }
+            // Where the bars fall, put right by hand: the time signature,
+            // the beat twice or half as fast, the bar lines a beat earlier
+            // or later.
+            if (state.hasBars) {
+                Row(Modifier.padding(bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.tab_bars), label, style = labelStyle, color = labelColor)
+                    Dropdown(
+                        state.sigs,
+                        state.sig.toInt(),
+                        enabled = ready,
+                        modifier = Modifier.width(104.dp),
+                    ) { i -> store.send { setTabSig(i.toUInt()) } }
+                    IconButton(
+                        onClick = { store.send { stepTabSpeed(-1) } },
+                        enabled = ready && state.speed > -2,
+                    ) { Icon(ChippyIcons.Minus, stringResource(R.string.tab_speed_down)) }
+                    Text(
+                        when (state.speed) { 1 -> "×2"; 2 -> "×4"; -1 -> "½"; -2 -> "¼"; else -> "×1" },
+                        style = labelStyle,
+                        color = if (state.speed != 0) LocalLook.current.accent else labelColor,
+                    )
+                    IconButton(
+                        onClick = { store.send { stepTabSpeed(1) } },
+                        enabled = ready && state.speed < 2,
+                    ) { Icon(ChippyIcons.Plus, stringResource(R.string.tab_speed_up)) }
+                    IconButton(
+                        onClick = { store.send { shiftTabBars(-1) } },
+                        enabled = ready,
+                    ) { Icon(ChippyIcons.ChevronLeft, stringResource(R.string.tab_bars_earlier)) }
+                    IconButton(
+                        onClick = { store.send { shiftTabBars(1) } },
+                        enabled = ready,
+                    ) { Icon(ChippyIcons.ChevronRight, stringResource(R.string.tab_bars_later)) }
+                    Spacer(Modifier.weight(1f))
+                    IconButton(
+                        onClick = { store.send { resetTabMeter() } },
+                        enabled = ready && state.meterAdjusted,
+                    ) { Icon(ChippyIcons.Refresh, stringResource(R.string.tab_bars_reset)) }
+                }
+                Text(
+                    state.meterText,
+                    Modifier.padding(start = 40.dp, bottom = 6.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = labelColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
         if (state.busy || state.lines.isEmpty()) {
@@ -597,14 +717,22 @@ fun TabsSheet(store: Store, state: TabsState, onClose: () -> Unit) {
             LaunchedEffect(digits) { store.send { setTabWidth(digits.toFloat()) } }
             LazyColumn(Modifier.fillMaxSize(), state = list) {
                 itemsIndexed(state.lines) { i, line ->
-                    TabLineView(line, state.strings, digits, if (i == current) playhead else null) {
-                        store.send { seekTo(line.startMs) }
-                    }
+                    TabLineView(
+                        line,
+                        state.strings,
+                        digits,
+                        if (i == current) playhead else null,
+                        onClick = { store.send { seekTo(line.startMs) } },
+                        onBar = { bar, extend -> store.send { selectTabBar(bar, extend) } },
+                        onBarSeek = { bar -> store.send { seekTabBar(bar) } },
+                    )
                 }
-                if (state.detail.isNotEmpty()) {
+                if (state.detail.isNotEmpty() || state.hasBars) {
                     item {
                         Text(
-                            state.detail,
+                            listOf(state.detail, if (state.hasBars) stringResource(R.string.tab_bars_hint) else "")
+                                .filter { it.isNotEmpty() }
+                                .joinToString(" "),
                             Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,

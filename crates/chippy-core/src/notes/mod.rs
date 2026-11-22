@@ -19,10 +19,14 @@ use crate::vfs::Location;
 mod brr;
 mod chips;
 pub mod gm;
+pub mod gp5;
 pub mod instrument;
+pub mod meter;
 pub mod midi;
 mod module;
+pub mod musicxml;
 mod nes;
+pub mod score;
 mod sgc;
 mod sid;
 pub mod smf;
@@ -113,6 +117,9 @@ pub struct Transcription {
     pub samples: Vec<SampleInfo>,
     /// Things worth knowing about how good the result is.
     pub notes: Vec<String>,
+    /// Where the bars fall, when the file says (MIDI files, and tracker
+    /// modules' rows and patterns); see [`meter::find`].
+    pub meter: Option<meter::Meter>,
 }
 
 /// Finds the notes in `loc` (subtrack `sub` of a multi-track file), over its

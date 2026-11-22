@@ -325,9 +325,50 @@ impl Engine {
         self.act(|c| c.nudge_tab(d));
     }
 
-    /// The tab back as it fits best.
+    /// The tab back as it fits best (the chosen bars, if any are).
     pub fn reset_tab_adjust(&self) {
         self.act(|c| c.reset_tab_adjust());
+    }
+
+    /// Chooses bar `index` to nudge along the neck on its own (again:
+    /// none); with `extend`, the bars from the one chosen before to it.
+    pub fn select_tab_bar(&self, index: u32, extend: bool) {
+        self.act(|c| c.select_tab_bar(index as usize, extend));
+    }
+
+    pub fn clear_tab_selection(&self) {
+        self.act(|c| c.clear_tab_selection());
+    }
+
+    /// Plays from the start of bar `index`.
+    pub fn seek_tab_bar(&self, index: u32) {
+        self.act(|c| c.seek_tab_bar(index as usize));
+    }
+
+    /// The time signature, as one of [`TabsState::sigs`] (0: as found).
+    pub fn set_tab_sig(&self, index: u32) {
+        self.act(|c| c.set_tab_sig(index as usize));
+    }
+
+    /// The beat twice as fast (1) or half as fast (-1).
+    pub fn step_tab_speed(&self, d: i32) {
+        self.act(|c| c.step_tab_speed(d));
+    }
+
+    /// The bar lines a beat later (1) or earlier (-1).
+    pub fn shift_tab_bars(&self, d: i32) {
+        self.act(|c| c.shift_tab_bars(d));
+    }
+
+    /// The bars back as found.
+    pub fn reset_tab_meter(&self) {
+        self.act(|c| c.reset_tab_meter());
+    }
+
+    /// Saves every part as tab in bars, in the export folder: Guitar Pro
+    /// 5, or MusicXML.
+    pub fn save_tab(&self, guitar_pro: bool) {
+        self.act(|c| c.save_tab(guitar_pro));
     }
 
     /// How many fret numbers (a digit and its padding) fit across a line

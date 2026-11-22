@@ -47,24 +47,33 @@ fun ExportDialog(store: Store, state: ExportState?, onPickFolder: () -> Unit, on
         title = { Text(stringResource(R.string.export_title, s.what)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                val formats = listOf(
-                    ExportFormat.WAV to "WAV", ExportFormat.FLAC to "FLAC",
-                    ExportFormat.MP3 to "MP3", ExportFormat.OPUS to "Opus",
-                    ExportFormat.MIDI to "MIDI",
+                // The sound, or the notes (MIDI, sheet music or tab).
+                val notes = listOf(ExportFormat.MIDI, ExportFormat.MUSIC_XML, ExportFormat.GUITAR_PRO)
+                val rows = listOf(
+                    listOf(
+                        ExportFormat.WAV to "WAV", ExportFormat.FLAC to "FLAC",
+                        ExportFormat.MP3 to "MP3", ExportFormat.OPUS to "Opus",
+                    ),
+                    listOf(
+                        ExportFormat.MIDI to "MIDI", ExportFormat.MUSIC_XML to "MusicXML",
+                        ExportFormat.GUITAR_PRO to "Guitar Pro",
+                    ),
                 )
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    formats.forEachIndexed { i, (f, label) ->
-                        SegmentedButton(
-                            selected = s.format == f,
-                            onClick = { store.send { setExportFormat(f) } },
-                            shape = SegmentedButtonDefaults.itemShape(i, formats.size),
-                            enabled = !s.running && (f != ExportFormat.MIDI || s.midiOk),
-                            icon = {},
-                        ) { Text(label) }
+                for (formats in rows) {
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        formats.forEachIndexed { i, (f, label) ->
+                            SegmentedButton(
+                                selected = s.format == f,
+                                onClick = { store.send { setExportFormat(f) } },
+                                shape = SegmentedButtonDefaults.itemShape(i, formats.size),
+                                enabled = !s.running && (f !in notes || s.midiOk),
+                                icon = {},
+                            ) { Text(label, maxLines = 1) }
+                        }
                     }
                 }
                 Text(s.formatDetail, style = MaterialTheme.typography.bodyMedium)
-                if (s.format == ExportFormat.MIDI && s.midiNote.isNotEmpty()) {
+                if (s.format in notes && s.midiNote.isNotEmpty()) {
                     Text(
                         s.midiNote,
                         style = MaterialTheme.typography.bodySmall,

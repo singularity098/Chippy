@@ -28,9 +28,25 @@ export struct TabCell {
     fret: string,
 }
 
+// A bar across a line of tab: from x0 to x1 (0..1), with its bar line at
+// x0 if it starts on this line.
+export struct TabBar {
+    x0: float,
+    x1: float,
+    index: int,
+    line: bool,
+    // Its number, "12".
+    label: string,
+    // Chosen, to nudge along the neck on its own.
+    selected: bool,
+    // Nudged on its own.
+    nudged: bool,
+}
+
 export struct TabLine {
     start: string,
     cells: [TabCell],
+    bars: [TabBar],
 }
 
 export global Lyrics {
@@ -80,6 +96,20 @@ export global Tabs {
     in property <int> position;
     in property <bool> can-up;
     in property <bool> can-down;
+    // Something to put back (the part, or the chosen bars).
+    in property <bool> adjusted;
+    // The bars chosen to nudge on their own: "Bar 12", "Bars 3–5"; "".
+    in property <string> selection;
+    // The bars: "4/4, ♩ = 120 · guessed from the notes"; the time
+    // signatures to choose from ("As found" first) and the one used; the
+    // beat made faster or slower (powers of two); and whether any of it
+    // was changed by hand.
+    in property <bool> has-bars;
+    in property <string> meter-text;
+    in property <[string]> sigs;
+    in property <int> sig;
+    in property <int> speed;
+    in property <bool> meter-adjusted;
     callback close;
     callback shift-octave(int);
     callback nudge(int);
@@ -88,6 +118,16 @@ export global Tabs {
     callback set-part(int);
     callback set-tuning(int);
     callback seek-line(int);
+    // A click on a bar chooses it (with Shift, the bars up to it); a
+    // double-click plays from it.
+    callback select-bar(int, bool);
+    callback seek-bar(int);
+    callback set-sig(int);
+    callback step-speed(int);
+    callback shift-bars(int);
+    callback reset-meter;
+    // Saves the tab as MusicXML or Guitar Pro.
+    callback save;
     // How many fret numbers fit across a line, as the panel is sized.
     callback set-width(int);
 }
@@ -96,9 +136,10 @@ export global Export {
     in property <bool> shown;
     // "24 tracks" or the one track's title.
     in property <string> what;
-    // 0 WAV, 1 FLAC, 2 MP3, 3 Opus, 4 MIDI.
+    // 0 WAV, 1 FLAC, 2 MP3, 3 Opus; the notes: 4 MIDI, 5 MusicXML, 6
+    // Guitar Pro.
     in property <int> format;
-    // Some track's notes can be found (else MIDI is greyed out).
+    // Some track's notes can be found (else the notes are greyed out).
     in property <bool> midi-ok: true;
     // "MIDI: 3 of 12 tracks" and the like, when only some can.
     in property <string> midi-note;
@@ -256,24 +297,37 @@ export component ExportDialog inherits Modal {
     heading: "Export " + Export.what;
     icon: Icons.export-line;
     card-width: 600px;
-    card-height: 470px;
+    card-height: 530px;
     closable: !Export.running;
     close => { Export.close(); }
     VerticalLayout {
         spacing: 12px;
         vertical-stretch: 1;
         SettingRow {
-            label: "Format";
-            detail: Export.format-detail;
+            label: "Sound";
+            detail: Export.format < 4 ? Export.format-detail : "Or the sound itself.";
             HorizontalLayout {
                 spacing: 6px;
                 alignment: end;
-                for name[i] in ["WAV", "FLAC", "MP3", "Opus", "MIDI"]: Chip {
+                for name[i] in ["WAV", "FLAC", "MP3", "Opus"]: Chip {
                     text: name;
                     selected: i == Export.format;
-                    enabled: i != 4 || Export.midi-ok;
-                    tip: i == 4 && !Export.midi-ok ? "The notes of these tracks can't be found" : "";
                     clicked => { if !Export.running { Export.set-format(i); } }
+                }
+            }
+        }
+        SettingRow {
+            label: "Notes";
+            detail: Export.format >= 4 ? Export.format-detail : "Or the notes: MIDI, sheet music or tab.";
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: end;
+                for name[i] in ["MIDI", "MusicXML", "Guitar Pro"]: Chip {
+                    text: name;
+                    selected: i + 4 == Export.format;
+                    enabled: Export.midi-ok;
+                    tip: !Export.midi-ok ? "The notes of these tracks can't be found" : "";
+                    clicked => { if !Export.running { Export.set-format(i + 4); } }
                 }
             }
         }
@@ -300,7 +354,9 @@ export component ExportDialog inherits Modal {
         }
         Text {
             text: Export.format == 4
-                ? "One file per track, named by track number and title. The notes are worked out from what the tune does to its sound chip, or from a module's patterns, one MIDI track per channel, with instruments guessed from the samples. MIDI files are copied as they are." + (Export.midi-note == "" ? "" : " " + Export.midi-note)
+                ? "One file per track, named by track number and title. The notes are worked out from what the tune does to its sound chip, or from a module's patterns, one MIDI track per channel, with instruments guessed from the samples, in bars (as the file has them, or worked out from the notes). MIDI files are copied as they are." + (Export.midi-note == "" ? "" : " " + Export.midi-note)
+                : Export.format > 4
+                ? "One file per track, named by track number and title: each pitched part as tab in bars, on a guitar (or a bass, if it is low), its times rounded to sixteenths and triplets. The track shown in the guitar tab goes as it is shown there: its instrument, its bars and its fingering as you moved them." + (Export.midi-note == "" ? "" : " " + Export.midi-note)
                 : "One file per track, named by track number and title, with its tags. Looping chiptunes end as they do when played: at their length, with the fade.";
             color: Theme.text-faint;
             font-size: Theme.font-small;
@@ -661,8 +717,8 @@ component TabAdjust inherits HorizontalLayout {
     Rectangle { width: 10px; }
     Text {
         horizontal-stretch: 0;
-        text: "Neck";
-        color: Theme.text-dim;
+        text: Tabs.selection == "" ? "Neck" : Tabs.selection;
+        color: Tabs.selection == "" ? Theme.text-dim : Theme.accent;
         font-size: Theme.font-small;
         vertical-alignment: center;
     }
@@ -672,7 +728,7 @@ component TabAdjust inherits HorizontalLayout {
         icon-size: 14px;
         icon: Icons.chevron-left;
         enabled: root.enabled && Tabs.can-down;
-        tip: "Move the shapes down the neck, towards the nut";
+        tip: Tabs.selection == "" ? "Move the shapes down the neck, towards the nut" : "Move these bars' shapes down the neck, towards the nut";
         clicked => { Tabs.nudge(-1); }
     }
     Text {
@@ -690,7 +746,7 @@ component TabAdjust inherits HorizontalLayout {
         icon-size: 14px;
         icon: Icons.chevron-right;
         enabled: root.enabled && Tabs.can-up;
-        tip: "Move the shapes up the neck, to higher frets";
+        tip: Tabs.selection == "" ? "Move the shapes up the neck, to higher frets" : "Move these bars' shapes up the neck, to higher frets";
         clicked => { Tabs.nudge(1); }
     }
     IconButton {
@@ -698,9 +754,111 @@ component TabAdjust inherits HorizontalLayout {
         size: 30px;
         icon-size: 14px;
         icon: Icons.refresh-line;
-        enabled: root.enabled && (Tabs.octave != 0 || Tabs.position != 0);
-        tip: "Back to how it fits best";
+        enabled: root.enabled && Tabs.adjusted;
+        tip: Tabs.selection == "" ? "Back to how it fits best" : "These bars back to how they fit best";
         clicked => { Tabs.reset-adjust(); }
+    }
+}
+
+// Where the bars fall, put right by hand: the time signature, the beat
+// twice as fast or half as fast, and the bar lines a beat earlier or later.
+component TabBars inherits HorizontalLayout {
+    in property <bool> enabled;
+    spacing: 4px;
+    Text {
+        horizontal-stretch: 0;
+        text: "Bars";
+        color: Theme.text-dim;
+        font-size: Theme.font-small;
+        vertical-alignment: center;
+    }
+    Dropdown {
+        width: 124px;
+        list-width: 140px;
+        items: Tabs.sigs;
+        current: Tabs.sig;
+        enabled: root.enabled;
+        tip: "The time signature";
+        picked(i) => { Tabs.set-sig(i); }
+    }
+    Rectangle { width: 6px; }
+    Text {
+        horizontal-stretch: 0;
+        text: "Speed";
+        color: Theme.text-dim;
+        font-size: Theme.font-small;
+        vertical-alignment: center;
+    }
+    IconButton {
+        y: (parent.height - self.height) / 2;
+        size: 30px;
+        icon-size: 14px;
+        icon: Icons.minus;
+        enabled: root.enabled && Tabs.speed > -2;
+        tip: "Half as many beats, each twice as long";
+        clicked => { Tabs.step-speed(-1); }
+    }
+    Text {
+        width: 26px;
+        text: Tabs.speed == 0 ? "×1" : Tabs.speed == 1 ? "×2" : Tabs.speed == 2 ? "×4" : Tabs.speed == -1 ? "½" : "¼";
+        color: Tabs.speed != 0 ? Theme.accent : Theme.text-faint;
+        font-size: Theme.font-small;
+        font-weight: Theme.regular;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    IconButton {
+        y: (parent.height - self.height) / 2;
+        size: 30px;
+        icon-size: 14px;
+        icon: Icons.plus;
+        enabled: root.enabled && Tabs.speed < 2;
+        tip: "Twice as many beats, each half as long";
+        clicked => { Tabs.step-speed(1); }
+    }
+    Rectangle { width: 6px; }
+    Text {
+        horizontal-stretch: 0;
+        text: "Bar lines";
+        color: Theme.text-dim;
+        font-size: Theme.font-small;
+        vertical-alignment: center;
+    }
+    IconButton {
+        y: (parent.height - self.height) / 2;
+        size: 30px;
+        icon-size: 14px;
+        icon: Icons.chevron-left;
+        enabled: root.enabled;
+        tip: "The bar lines a beat earlier";
+        clicked => { Tabs.shift-bars(-1); }
+    }
+    IconButton {
+        y: (parent.height - self.height) / 2;
+        size: 30px;
+        icon-size: 14px;
+        icon: Icons.chevron-right;
+        enabled: root.enabled;
+        tip: "The bar lines a beat later";
+        clicked => { Tabs.shift-bars(1); }
+    }
+    IconButton {
+        y: (parent.height - self.height) / 2;
+        size: 30px;
+        icon-size: 14px;
+        icon: Icons.refresh-line;
+        enabled: root.enabled && Tabs.meter-adjusted;
+        tip: "The bars back as found";
+        clicked => { Tabs.reset-meter(); }
+    }
+    Rectangle { width: 6px; }
+    Text {
+        horizontal-stretch: 1;
+        text: Tabs.meter-text;
+        color: Theme.text-faint;
+        font-size: Theme.font-small;
+        vertical-alignment: center;
+        overflow: elide;
     }
 }
 
@@ -789,6 +947,10 @@ export component TabsSheet inherits Sheet {
         alignment: center;
         enabled: !Tabs.busy && Tabs.lines.length > 0;
     }
+    if Tabs.has-bars: TabBars {
+        height: 34px;
+        enabled: !Tabs.busy && Tabs.lines.length > 0;
+    }
     Rectangle {
         vertical-stretch: 1;
         scroll := ScrollView {
@@ -850,6 +1012,42 @@ export component TabsSheet inherits Sheet {
                             vertical-alignment: center;
                         }
                     }
+                    // Bar lines, the bars' numbers, and the chosen bars
+                    // marked above and below the strings.
+                    for bar in line.bars: Rectangle {
+                        property <length> x0: root.left + bar.x0 * root.digits * root.digit;
+                        property <length> x1: root.left + bar.x1 * root.digits * root.digit;
+                        if bar.line && bar.x0 > 0: Rectangle {
+                            x: parent.x0 - 1px;
+                            y: row.top;
+                            width: 2px;
+                            height: (Tabs.strings.length - 1) * root.gap + 1px;
+                            background: Theme.text-faint;
+                        }
+                        Text {
+                            x: parent.x0 + (bar.x0 > 0 ? 3px : 44px);
+                            y: 3px;
+                            text: bar.label;
+                            color: bar.selected || bar.nudged ? Theme.accent : Theme.text-faint;
+                            font-size: Theme.font-small - 2px;
+                        }
+                        if bar.selected: Rectangle {
+                            x: parent.x0 + 2px;
+                            y: row.top - 9px;
+                            width: parent.x1 - parent.x0 - 4px;
+                            height: 3px;
+                            border-radius: 1.5px;
+                            background: Theme.paint;
+                        }
+                        if bar.selected: Rectangle {
+                            x: parent.x0 + 2px;
+                            y: row.top + (Tabs.strings.length - 1) * root.gap + 7px;
+                            width: parent.x1 - parent.x0 - 4px;
+                            height: 3px;
+                            border-radius: 1.5px;
+                            background: Theme.paint;
+                        }
+                    }
                     if row.now: Rectangle {
                         x: root.left + Tabs.playhead * root.digits * root.digit - 1px;
                         y: row.top - 8px;
@@ -858,9 +1056,22 @@ export component TabsSheet inherits Sheet {
                         background: Theme.paint;
                         border-radius: 1px;
                     }
-                    TouchArea {
+                    if line.bars.length == 0: TouchArea {
                         mouse-cursor: pointer;
                         clicked => { Tabs.seek-line(li); }
+                    }
+                    for bar in line.bars: TouchArea {
+                        property <bool> shift;
+                        x: root.left + bar.x0 * root.digits * root.digit;
+                        width: (bar.x1 - bar.x0) * root.digits * root.digit;
+                        mouse-cursor: pointer;
+                        pointer-event(e) => {
+                            if e.kind == PointerEventKind.down {
+                                self.shift = e.modifiers.shift;
+                            }
+                        }
+                        clicked => { Tabs.select-bar(bar.index, self.shift); }
+                        double-clicked => { Tabs.seek-bar(bar.index); }
                     }
                 }
             }
@@ -897,6 +1108,11 @@ export component TabsSheet inherits Sheet {
             text: "Copy";
             tip: "Copy the tab as text";
             clicked => { copier.select-all(); copier.copy(); copier.clear-selection(); }
+        }
+        if Tabs.lines.length > 0 && Tabs.has-bars: BigButton {
+            text: "Save…";
+            tip: "Save every part as tab in bars: MusicXML (sheet music and tab) or Guitar Pro";
+            clicked => { Tabs.save(); }
         }
     }
 }

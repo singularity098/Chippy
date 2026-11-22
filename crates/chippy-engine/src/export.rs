@@ -1,11 +1,15 @@
 //! Exporting tracks to audio files: WAV, FLAC, MP3 or Opus, one file per
 //! track, tagged. Tracks are decoded exactly as they play (looping
 //! chiptunes end at their length, with the fade), on a thread of their own.
-//! Or to MIDI: the notes, for the formats whose notes can be found (see
-//! `chippy_core::notes`).
+//! Or to the notes, for the formats whose notes can be found (see
+//! `chippy_core::notes`): MIDI along the track's bars, or tab in bars as
+//! MusicXML or Guitar Pro 5. The track shown in the guitar tab view goes
+//! out as it shows it (its bars and fingering as put right by hand).
 
 use anyhow::{anyhow, bail, Context, Result};
 use chippy_core::decode::{open_decoder, DecodeOptions, Decoder};
+use chippy_core::notes::meter::{self, Meter};
+use chippy_core::notes::score::Score;
 use chippy_core::{notes, TrackMeta, TrackRef};
 use crossbeam_channel::Sender;
 use std::io::{BufWriter, Seek, SeekFrom, Write};
@@ -23,6 +27,10 @@ pub enum Format {
     Opus,
     /// The notes, not the sound (see `chippy_core::notes`).
     Midi,
+    /// The notes as sheet music and tab.
+    MusicXml,
+    /// The notes as tab, for Guitar Pro.
+    GuitarPro,
 }
 
 impl Format {
@@ -32,7 +40,39 @@ impl Format {
             2 => Format::Mp3,
             3 => Format::Opus,
             4 => Format::Midi,
+            5 => Format::MusicXml,
+            6 => Format::GuitarPro,
             _ => Format::Flac,
+        }
+    }
+    pub fn index(self) -> u32 {
+        match self {
+            Format::Wav => 0,
+            Format::Flac => 1,
+            Format::Mp3 => 2,
+            Format::Opus => 3,
+            Format::Midi => 4,
+            Format::MusicXml => 5,
+            Format::GuitarPro => 6,
+        }
+    }
+    /// The notes rather than the sound: only for tracks whose notes can be
+    /// found.
+    pub fn is_notes(self) -> bool {
+        matches!(self, Format::Midi | Format::MusicXml | Format::GuitarPro)
+    }
+    /// What it is for, in a few words.
+    pub fn detail(self) -> &'static str {
+        match self {
+            Format::Wav => "Uncompressed, 16-bit.",
+            Format::Flac => "Lossless and compressed, 16-bit.",
+            Format::Mp3 => "Lossy; plays everywhere.",
+            Format::Opus => "Lossy; best quality for its size.",
+            Format::Midi => "The notes, in bars, with instruments guessed.",
+            Format::MusicXml => {
+                "The notes as sheet music and tab, for MuseScore, Guitar Pro and others."
+            }
+            Format::GuitarPro => "The notes as tab, for Guitar Pro, TuxGuitar and others.",
         }
     }
     pub fn extension(self) -> &'static str {
@@ -42,6 +82,8 @@ impl Format {
             Format::Mp3 => "mp3",
             Format::Opus => "opus",
             Format::Midi => "mid",
+            Format::MusicXml => "musicxml",
+            Format::GuitarPro => "gp5",
         }
     }
 }
@@ -52,6 +94,15 @@ pub struct Job {
     pub format: Format,
     pub kbps: u32,
     pub opts: DecodeOptions,
+    /// Tracks set up by hand in the tab view: their bars, and their tab.
+    pub shown: Vec<Shown>,
+}
+
+/// A track as the guitar tab view shows it.
+pub struct Shown {
+    pub track: TrackRef,
+    pub meter: Option<Meter>,
+    pub score: Option<Score>,
 }
 
 pub enum Progress {
@@ -121,16 +172,9 @@ fn run(job: Job, cancel: &AtomicBool, tx: &Sender<Progress>) {
     });
 }
 
-/// "07 Title.flac", made safe for file systems and unique in the folder.
-fn file_name(
-    i: usize,
-    width: usize,
-    meta: &TrackMeta,
-    format: Format,
-    used: &mut std::collections::HashSet<String>,
-) -> String {
-    let title: String = meta
-        .title
+/// A title made safe to name a file with (up to 120 characters).
+pub fn safe_name(title: &str) -> String {
+    let title: String = title
         .chars()
         .map(|c| match c {
             '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
@@ -139,7 +183,18 @@ fn file_name(
         })
         .collect();
     let title = title.trim().trim_end_matches('.');
-    let title: String = title.chars().take(120).collect();
+    title.chars().take(120).collect()
+}
+
+/// "07 Title.flac", made safe for file systems and unique in the folder.
+fn file_name(
+    i: usize,
+    width: usize,
+    meta: &TrackMeta,
+    format: Format,
+    used: &mut std::collections::HashSet<String>,
+) -> String {
+    let title = safe_name(&meta.title);
     let base = if title.is_empty() {
         format!("{:0width$}", i + 1)
     } else {
@@ -261,8 +316,10 @@ fn export_track(
     cancel: &AtomicBool,
     tx: &Sender<Progress>,
 ) -> Result<()> {
+    let shown = job.shown.iter().find(|s| &s.track == track);
     match job.format {
-        Format::Midi => write_midi(track, meta, path),
+        Format::Midi => write_midi(track, meta, path, shown),
+        Format::MusicXml | Format::GuitarPro => write_tab(track, meta, path, job.format, shown),
         _ => export_audio(track, meta, path, job, cancel, tx),
     }
 }
@@ -276,9 +333,9 @@ fn export_audio(
     tx: &Sender<Progress>,
 ) -> Result<()> {
     let rate = match job.format {
-        Format::Wav | Format::Flac | Format::Midi => None,
         Format::Mp3 => Some(44_100),
         Format::Opus => Some(48_000),
+        _ => None,
     };
     let mut pcm = Pcm::open(track, &job.opts, rate)?;
     // MP3 takes 48 kHz as is.
@@ -302,7 +359,7 @@ fn export_audio(
         Format::Flac => write_flac(&mut pcm, path, meta, &mut report)?,
         Format::Mp3 => write_mp3(&mut pcm, path, job.kbps, &mut report)?,
         Format::Opus => write_opus(&mut pcm, path, job.kbps, meta, &mut report)?,
-        Format::Midi => bail!("MIDI is not audio"),
+        _ => bail!("the notes are not audio"),
     }
     // FLAC and Opus carry their tags from the start.
     if matches!(job.format, Format::Wav | Format::Mp3) {
@@ -318,18 +375,63 @@ pub fn midi_possible(track: &TrackRef) -> bool {
     notes::supported(&track.loc.name())
 }
 
-/// The notes of a tune as a MIDI file, over the length it plays for; a
-/// MIDI file is copied as it is.
-fn write_midi(track: &TrackRef, meta: &TrackMeta, path: &Path) -> Result<()> {
+/// The notes of a tune as a MIDI file, over the length it plays for, in
+/// its bars; a MIDI file is copied as it is (unless its bars were changed
+/// by hand).
+fn write_midi(
+    track: &TrackRef,
+    meta: &TrackMeta,
+    path: &Path,
+    shown: Option<&Shown>,
+) -> Result<()> {
+    let by_hand = shown.and_then(|s| s.meter.as_ref());
     let bytes = match track.loc.extension().as_str() {
-        "mid" | "midi" | "kar" | "smf" => track.loc.read()?.to_vec(),
+        "mid" | "midi" | "kar" | "smf" if by_hand.is_none() => track.loc.read()?.to_vec(),
         _ => {
             let t = notes::transcribe(&track.loc, track.sub, meta.length_ms)?;
             if t.parts.is_empty() {
                 bail!("no notes found");
             }
-            notes::midi::write(&t, &meta.title)
+            let end = t.end_ms().max(meta.length_ms.unwrap_or(0) as f64);
+            match by_hand.cloned().or_else(|| meter::find(&t, end)) {
+                Some(m) => notes::midi::write_in(&t, &meta.title, &m),
+                None => notes::midi::write(&t, &meta.title),
+            }
         }
+    };
+    std::fs::write(path, bytes).with_context(|| format!("cannot write {}", path.display()))
+}
+
+/// The notes of a tune as tab in bars: MusicXML or Guitar Pro 5.
+fn write_tab(
+    track: &TrackRef,
+    meta: &TrackMeta,
+    path: &Path,
+    format: Format,
+    shown: Option<&Shown>,
+) -> Result<()> {
+    let score = match shown.and_then(|s| s.score.clone()) {
+        Some(s) => s,
+        None => {
+            let t = notes::transcribe(&track.loc, track.sub, meta.length_ms)?;
+            let end = t.end_ms().max(meta.length_ms.unwrap_or(0) as f64);
+            let m =
+                meter::find(&t, end).ok_or_else(|| anyhow!("too few notes to find the bars"))?;
+            crate::tabs::default_score(&t, &meta.title, &m)
+                .ok_or_else(|| anyhow!("no notes found"))?
+        }
+    };
+    if score.is_empty() {
+        bail!("no notes found");
+    }
+    write_notes(&score, format, path)
+}
+
+/// Writes `score` to `path` as `format` (MusicXML or Guitar Pro).
+pub fn write_notes(score: &Score, format: Format, path: &Path) -> Result<()> {
+    let bytes = match format {
+        Format::GuitarPro => notes::gp5::write(score),
+        _ => notes::musicxml::write(score).into_bytes(),
     };
     std::fs::write(path, bytes).with_context(|| format!("cannot write {}", path.display()))
 }
@@ -758,6 +860,7 @@ mod tests {
                 format,
                 kbps: 160,
                 opts: DecodeOptions::default(),
+                shown: Vec::new(),
             };
             run(job, &AtomicBool::new(false), &tx);
             let finished = rx.try_iter().find_map(|p| match p {
@@ -828,7 +931,7 @@ mod midi_tests {
             ..Default::default()
         };
         let out = dir.path().join("test.mid");
-        write_midi(&track, &meta, &out).unwrap();
+        write_midi(&track, &meta, &out, None).unwrap();
         let bytes = std::fs::read(&out).unwrap();
         assert!(bytes.starts_with(b"MThd"));
         // The tempo track and the two pulse channels.
@@ -840,8 +943,32 @@ mod midi_tests {
             &TrackRef::file(chippy_core::Location::Fs(wav)),
             &meta,
             &dir.path().join("tone.mid"),
+            None,
         )
         .unwrap_err();
         assert!(format!("{err}").contains("notes"), "{err}");
+    }
+
+    #[test]
+    fn exports_a_chiptune_as_tab() {
+        let dir = tempfile::tempdir().unwrap();
+        let nsf =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../third_party/game-music-emu/test.nsf");
+        let track = TrackRef::file(chippy_core::Location::Fs(nsf));
+        let meta = TrackMeta {
+            title: "Test".into(),
+            length_ms: Some(10_000),
+            ..Default::default()
+        };
+        let xml = dir.path().join("test.musicxml");
+        write_tab(&track, &meta, &xml, Format::MusicXml, None).unwrap();
+        let text = std::fs::read_to_string(&xml).unwrap();
+        assert!(text.contains("<score-partwise"));
+        assert!(text.contains("<fret>"));
+        assert!(text.matches("<measure number=").count() > 2);
+        let gp = dir.path().join("test.gp5");
+        write_tab(&track, &meta, &gp, Format::GuitarPro, None).unwrap();
+        let bytes = std::fs::read(&gp).unwrap();
+        assert_eq!(&bytes[1..25], b"FICHIER GUITAR PRO v5.10");
     }
 }

@@ -41,8 +41,10 @@ pub(crate) fn decode(
             loop_byte,
         ),
         1 => (
-            d.chunks_exact(2)
-                .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
+            d.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&c| i16::from_le_bytes(c) as f32 / 32768.0)
                 .collect(),
             loop_byte / 2,
         ),

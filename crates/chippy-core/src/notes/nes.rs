@@ -3,9 +3,13 @@
 //! Drivers update the APU once per frame, so the channels' state is looked
 //! at after each call of the play routine; the envelope, length and linear
 //! counters the hardware runs between calls are modelled too.
+//!
+//! Cartridge sound chips are read too: the MMC5's two pulses here (they are
+//! the 2A03's), the others in [`super::nesx`].
 
 use anyhow::Result;
 
+use super::nesx::{self, Expansion};
 use super::{hz_to_key, Drums, Part, Transcription, Voice};
 use crate::decode::gme::{capture, ChipWrite};
 use crate::vfs::Location;
@@ -165,6 +169,11 @@ pub fn transcribe(loc: &Location, track: u32, max_ms: Option<u64>) -> Result<Tra
     // The play routine's rate, as it ran (NTSC, PAL or the tune's own).
     let tick_ms = (played_ms / ticks as f64).clamp(1.0, 100.0);
 
+    let data = loc.read()?;
+    let flags = nesx::flags(&data);
+    let mut expansion = Expansion::new(flags);
+    let mut mmc5 = Apu::default();
+    let mut mmc5_voices: [Voice; 2] = Default::default();
     let mut apu = Apu::default();
     let mut voices: [Voice; 3] = Default::default();
     let mut drums = Drums::default();
@@ -186,26 +195,23 @@ pub fn transcribe(loc: &Location, track: u32, max_ms: Option<u64>) -> Result<Tra
                     drums.hit(t, SAMPLE_KEYS[i % SAMPLE_KEYS.len()], 110);
                 }
             }
+            3 => {
+                let (addr, data) = (w.addr as u16, w.data as u8);
+                match addr {
+                    0x5000..=0x5007 if flags & nesx::MMC5 != 0 => {
+                        mmc5.write((addr - 0x5000) as usize, data)
+                    }
+                    0x5015 if flags & nesx::MMC5 != 0 => mmc5.write(0x15, data & 3),
+                    _ => expansion.write(t, addr, data),
+                }
+            }
             1 => {
                 apu.clock_frame();
-                for (c, v) in voices.iter_mut().enumerate().take(2) {
-                    let vol = apu.volume(c);
-                    let timer = apu.timer(c);
-                    let attack = apu.attack_of(c, vol);
-                    let restarted = apu.restarted[c] && apu.regs[c * 4] & 0x10 == 0;
-                    if apu.len[c] > 0 && vol > 0 && timer >= 8 {
-                        let pitch = hz_to_key(CPU_HZ / (16.0 * (timer + 1) as f64));
-                        if !v.sounding() || attack || restarted {
-                            v.attack(t, pitch, velocity(vol));
-                            apu.started(c);
-                        } else {
-                            v.pitch(t, pitch);
-                            // Swelling: as loud as it gets.
-                            v.velocity(velocity(vol));
-                        }
-                    } else {
-                        v.release(t);
-                    }
+                pulses(&mut apu, &mut voices[..2], t);
+                if flags & nesx::MMC5 != 0 {
+                    mmc5.clock_frame();
+                    pulses(&mut mmc5, &mut mmc5_voices, t);
+                    mmc5.restarted = [false; 4];
                 }
                 let timer = apu.timer(2);
                 let v = &mut voices[2];
@@ -235,25 +241,51 @@ pub fn transcribe(loc: &Location, track: u32, max_ms: Option<u64>) -> Result<Tra
     }
     let end = tick as f64 * tick_ms;
     let [p1, p2, tri] = voices;
+    let mut parts = vec![
+        part("Pulse 1", 80, p1.finish(end)),
+        part("Pulse 2", 80, p2.finish(end)),
+        part("Triangle", 33, tri.finish(end)),
+    ];
+    if flags & nesx::MMC5 != 0 {
+        let [m1, m2] = mmc5_voices;
+        parts.push(part("MMC5 Pulse 1", 80, m1.finish(end)));
+        parts.push(part("MMC5 Pulse 2", 80, m2.finish(end)));
+    }
+    parts.extend(expansion.finish(end));
+    parts.push(Part::drums("Drums (noise, samples)", drums.finish()));
     let mut t = Transcription {
         system: cap.system,
-        parts: vec![
-            part("Pulse 1", 80, p1.finish(end)),
-            part("Pulse 2", 80, p2.finish(end)),
-            part("Triangle", 33, tri.finish(end)),
-            Part::drums("Drums (noise, samples)", drums.finish()),
-        ],
+        parts,
         ..Default::default()
     };
-    let data = loc.read()?;
-    if data.starts_with(b"NESM\x1a") && data.get(0x7B).is_some_and(|&x| x != 0) {
-        t.notes.push(
-            "This tune also uses a cartridge sound chip (VRC6, VRC7, FDS, MMC5, N163 or \
-             5B), whose channels aren't read yet."
-                .into(),
-        );
+    if flags & nesx::FDS != 0 {
+        t.notes
+            .push("The FDS channel's pitch modulation (its vibrato) isn't followed.".into());
     }
     Ok(t)
+}
+
+/// The pulse channels' state after a tick of the play routine.
+fn pulses(apu: &mut Apu, voices: &mut [Voice], t: f64) {
+    for (c, v) in voices.iter_mut().enumerate().take(2) {
+        let vol = apu.volume(c);
+        let timer = apu.timer(c);
+        let attack = apu.attack_of(c, vol);
+        let restarted = apu.restarted[c] && apu.regs[c * 4] & 0x10 == 0;
+        if apu.len[c] > 0 && vol > 0 && timer >= 8 {
+            let pitch = hz_to_key(CPU_HZ / (16.0 * (timer + 1) as f64));
+            if !v.sounding() || attack || restarted {
+                v.attack(t, pitch, velocity(vol));
+                apu.started(c);
+            } else {
+                v.pitch(t, pitch);
+                // Swelling: as loud as it gets.
+                v.velocity(velocity(vol));
+            }
+        } else {
+            v.release(t);
+        }
+    }
 }
 
 fn part(name: &str, program: u8, notes: Vec<super::Note>) -> Part {
@@ -277,5 +309,77 @@ mod tests {
         assert_eq!(first, [69, 73, 78, 73, 68, 73]);
         assert!(p1.len() > 30);
         assert!(!t.parts[1].notes.is_empty());
+    }
+
+    /// An NSF whose play routine (60 Hz) writes each frame's (address,
+    /// value) pairs, using the cartridge chips `chips`.
+    fn synth_nsf(chips: u8, frames: &[&[(u16, u8)]]) -> Vec<u8> {
+        #[rustfmt::skip]
+        let play = [
+            0xA2, 0x00, 0xA0, 0x00,       // LDX #0; LDY #0
+            0xB1, 0x00, 0x85, 0x02, 0xC8, // loop: LDA ($00),Y; STA $02; INY
+            0xB1, 0x00, 0xF0, 0x0B,       // LDA ($00),Y; BEQ done
+            0x85, 0x03, 0xC8, 0xB1, 0x00, // STA $03; INY; LDA ($00),Y
+            0xC8, 0x81, 0x02,             // INY; STA ($02,X)
+            0x4C, 0x04, 0x80,             // JMP loop
+            0xC8, 0x98, 0x18, 0x65, 0x00, // done: INY; TYA; CLC; ADC $00
+            0x85, 0x00, 0x90, 0x02,       // STA $00; BCC +2
+            0xE6, 0x01, 0x60,             // INC $01; RTS
+        ];
+        let mut rom = vec![0u8; 0x100];
+        rom[..play.len()].copy_from_slice(&play);
+        // init: point $00 at the frames.
+        rom[0x30..0x39].copy_from_slice(&[0xA9, 0x00, 0x85, 0x00, 0xA9, 0x81, 0x85, 0x01, 0x60]);
+        for f in frames {
+            for &(a, v) in *f {
+                rom.extend([a as u8, (a >> 8) as u8, v]);
+            }
+            rom.extend([0, 0]);
+        }
+        rom.extend(std::iter::repeat_n(0, 2000));
+        let mut h = vec![0u8; 0x80];
+        h[..5].copy_from_slice(b"NESM\x1a");
+        h[5] = 1;
+        h[6] = 1;
+        h[7] = 1;
+        h[8..10].copy_from_slice(&0x8000u16.to_le_bytes());
+        h[10..12].copy_from_slice(&0x8030u16.to_le_bytes());
+        h[12..14].copy_from_slice(&0x8000u16.to_le_bytes());
+        h[0x6E..0x70].copy_from_slice(&16_639u16.to_le_bytes());
+        h[0x7B] = chips;
+        h.extend(rom);
+        h
+    }
+
+    #[test]
+    fn cartridge_chips_through_libgme() {
+        use crate::notes::nesx;
+        let rest: &[(u16, u8)] = &[];
+        let mut frames: Vec<&[(u16, u8)]> = vec![&[
+            // VRC6 pulse 1: 440 Hz.
+            (0x9000, 0x0F),
+            (0x9001, 253),
+            (0x9002, 0x80),
+            // MMC5 pulse 1: 440 Hz, constant volume.
+            (0x5015, 0x01),
+            (0x5000, 0x3F),
+            (0x5002, 253),
+            (0x5003, 0x08),
+        ]];
+        frames.extend([rest; 29]);
+        frames.push(&[(0x9002, 0x00), (0x5015, 0x00)]);
+        frames.extend([rest; 10]);
+        let nsf = synth_nsf(nesx::VRC6 | nesx::MMC5, &frames);
+        let t = crate::notes::transcribe_bytes("t.nsf", &nsf, None, 1000);
+        for name in ["VRC6 Pulse 1", "MMC5 Pulse 1"] {
+            let p = crate::notes::part(&t, name);
+            // The first play call is a frame in.
+            assert_eq!(crate::notes::keys_at(p), vec![(69, 2)], "{name}");
+            assert!(
+                (p.notes[0].dur_ms - 500.0).abs() < 20.0,
+                "{name}: {:?}",
+                p.notes
+            );
+        }
     }
 }

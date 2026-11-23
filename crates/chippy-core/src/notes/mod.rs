@@ -26,6 +26,7 @@ pub mod midi;
 mod module;
 pub mod musicxml;
 mod nes;
+mod nesx;
 pub mod score;
 mod sgc;
 mod sid;

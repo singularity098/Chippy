@@ -22,12 +22,12 @@ pub(crate) trait Chip {
     fn finish(self: Box<Self>, end: f64) -> Vec<Part>;
 }
 
-fn velocity(vol: u8, max: u8) -> u8 {
+pub(crate) fn velocity(vol: u8, max: u8) -> u8 {
     (40 + vol.min(max) as u32 * 87 / max.max(1) as u32) as u8
 }
 
 /// A part's notes, given a bass instrument when it plays low.
-fn part(name: String, program: u8, notes: Vec<super::Note>) -> Part {
+pub(crate) fn part(name: String, program: u8, notes: Vec<super::Note>) -> Part {
     let mut keys: Vec<u8> = notes.iter().map(|n| n.key).collect();
     let low = super::instrument::median(&mut keys).is_some_and(|k| k < 48);
     Part::new(name, if low { 38 } else { program }, notes)
@@ -36,13 +36,13 @@ fn part(name: String, program: u8, notes: Vec<super::Note>) -> Part {
 /// Rising-edge detection of a channel's loudness: a new note's attack is a
 /// jump up in volume, not each step of a swell.
 #[derive(Default, Clone, Copy)]
-struct Edge {
+pub(crate) struct Edge {
     last: u8,
     rising: bool,
 }
 
 impl Edge {
-    fn attack(&mut self, level: u8) -> bool {
+    pub fn attack(&mut self, level: u8) -> bool {
         let rising = level > self.last;
         let attack = rising && !self.rising;
         self.rising = rising;
@@ -52,7 +52,7 @@ impl Edge {
 }
 
 /// Plays a note at `hz` on `voice`: a new attack, or a change of pitch.
-fn sound(voice: &mut Voice, t: f64, hz: f64, attack: bool, vel: u8) {
+pub(crate) fn sound(voice: &mut Voice, t: f64, hz: f64, attack: bool, vel: u8) {
     if !(20.0..=12_000.0).contains(&hz) {
         return voice.release(t);
     }
@@ -614,11 +614,20 @@ impl Chip for Psg {
 /// The YM2413's built-in instruments, as General MIDI programs (0 is the
 /// tune's own instrument).
 const OPLL_PROGRAMS: [u8; 16] = [81, 40, 24, 0, 73, 71, 68, 56, 16, 60, 81, 6, 11, 38, 32, 27];
+/// The VRC7's: bell, guitar, piano, flute, clarinet, rattling bell,
+/// trumpet, reed organ, soft bell, xylophone, vibraphone, brass, bass
+/// guitar, synthesizer, chorus.
+const VRC7_PROGRAMS: [u8; 16] = [
+    81, 14, 24, 0, 73, 71, 14, 56, 20, 10, 13, 11, 61, 33, 81, 52,
+];
 
 /// Yamaha YM2413 (OPLL): nine FM channels with preset instruments, the
 /// last three of which can become five drums.
 pub(crate) struct Opll {
     clock: f64,
+    name: &'static str,
+    programs: &'static [u8; 16],
+    channels: usize,
     regs: [u8; 0x40],
     voices: [Voice; 9],
     uses: [Vec<(f64, u8)>; 9],
@@ -629,10 +638,24 @@ impl Opll {
     pub fn new(clock: f64) -> Opll {
         Opll {
             clock,
+            name: "FM",
+            programs: &OPLL_PROGRAMS,
+            channels: 9,
             regs: [0; 0x40],
             voices: Default::default(),
             uses: Default::default(),
             drums: Drums::default(),
+        }
+    }
+
+    /// Konami's VRC7 (NES cartridges): six channels of an OPLL with
+    /// instruments of its own, and no rhythm.
+    pub fn vrc7() -> Opll {
+        Opll {
+            name: "VRC7",
+            programs: &VRC7_PROGRAMS,
+            channels: 6,
+            ..Opll::new(3_579_545.0)
         }
     }
 
@@ -650,7 +673,7 @@ impl Chip for Opll {
         self.regs[r] = data;
         let rhythm = self.regs[0x0E] & 0x20 != 0;
         match r {
-            0x0E if rhythm => {
+            0x0E if rhythm && self.channels == 9 => {
                 let on = data & !old & 0x1F;
                 for (bit, key) in [(4, 36), (3, 38), (2, 45), (1, 49), (0, 42)] {
                     if on & (1 << bit) != 0 {
@@ -660,7 +683,7 @@ impl Chip for Opll {
             }
             0x10..=0x18 | 0x20..=0x28 => {
                 let c = r & 15;
-                if c > 8 || (rhythm && c >= 6) {
+                if c >= self.channels || (rhythm && c >= 6) {
                     return;
                 }
                 let key = self.regs[0x20 + c] & 0x10 != 0;
@@ -672,7 +695,7 @@ impl Chip for Opll {
                     let hz = self.hz(c);
                     sound(&mut self.voices[c], t, hz, true, 100);
                     let inst = self.regs[0x30 + c] >> 4;
-                    self.uses[c].push((t, OPLL_PROGRAMS[inst as usize]));
+                    self.uses[c].push((t, self.programs[inst as usize]));
                 } else if v.sounding() {
                     let hz = self.hz(c);
                     self.voices[c].pitch(t, hz_to_key(hz));
@@ -683,16 +706,20 @@ impl Chip for Opll {
     }
 
     fn finish(self: Box<Self>, end: f64) -> Vec<Part> {
+        let name = self.name;
         let mut parts: Vec<Part> = self
             .voices
             .into_iter()
             .zip(self.uses)
+            .take(self.channels)
             .enumerate()
             .map(|(i, (v, uses))| {
-                Part::new(format!("FM {}", i + 1), 81, v.finish(end)).with_programs(&uses)
+                Part::new(format!("{name} {}", i + 1), 81, v.finish(end)).with_programs(&uses)
             })
             .collect();
-        parts.push(Part::drums("Drums (FM rhythm)", self.drums.finish()));
+        if self.channels == 9 {
+            parts.push(Part::drums("Drums (FM rhythm)", self.drums.finish()));
+        }
         parts
     }
 }

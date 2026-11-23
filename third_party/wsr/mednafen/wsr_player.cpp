@@ -142,6 +142,8 @@ namespace rePlayer::mednafen
 				}
 
 				g_buffer.fil = (MDFN_IEN_WSWAN::WSwan_SoundFlush((int16*)(g_buffer.ptr), (g_buffer.len >> 2))) << 2;
+				if (MDFN_IEN_WSWAN::WSwan_WriteHook)
+					MDFN_IEN_WSWAN::WSwan_WriteHook(MDFN_IEN_WSWAN::WSwan_WriteHookUser, MDFN_IEN_WSWAN::v30mz_timestamp, 0x10000, 0);
 				MDFN_IEN_WSWAN::v30mz_timestamp = 0;
 
 				remain = g_buffer.fil - g_buffer.cur;

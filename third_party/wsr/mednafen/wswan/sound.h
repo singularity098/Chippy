@@ -40,6 +40,13 @@ void WSwan_SetChannelMute(uint32 mute);
 
 void WSwan_SoundWrite(uint32, uint8);
 uint8 WSwan_SoundRead(uint32);
+
+// Chippy: called with each sound register write (the CPU clock's
+// timestamp, the port, the value), and with port 0x10000 when the
+// timestamp is about to go back to 0 (its value then is the time run).
+typedef void (*WSwan_WriteHookFn)(void* user, uint32 ts, uint32 port, uint8 v);
+extern WSwan_WriteHookFn WSwan_WriteHook;
+extern void* WSwan_WriteHookUser;
 void WSwan_SoundReset(void);
 void WSwan_SoundCheckRAMWrite(uint32 A);
 

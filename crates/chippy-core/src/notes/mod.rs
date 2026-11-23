@@ -35,6 +35,7 @@ mod spc;
 pub mod style;
 pub mod tab;
 mod vgm;
+mod wsr;
 
 pub use spc::SampleInfo;
 
@@ -135,6 +136,7 @@ pub fn transcribe(loc: &Location, sub: Option<u32>, max_ms: Option<u64>) -> Resu
         "vgm" | "vgz" | "gym" => vgm::transcribe(loc, max_ms)?,
         "ay" | "gbs" | "hes" | "kss" | "sap" => chips::transcribe_gme(loc, &ext, track, max_ms)?,
         "sgc" => sgc::transcribe(loc, sub, max_ms)?,
+        "wsr" => wsr::transcribe(loc, sub, max_ms)?,
         e if crate::formats::SID.contains(&e) => sid::transcribe(loc, sub, max_ms)?,
         e if crate::formats::MODULES.contains(&e) => module::transcribe(loc, max_ms)?,
         e if crate::formats::MIDI.contains(&e) => {
@@ -168,6 +170,7 @@ pub fn supported(name: &str) -> bool {
             | "kss"
             | "sap"
             | "sgc"
+            | "wsr"
     ) || crate::formats::SID.contains(&e)
         || crate::formats::MODULES.contains(&e)
         || crate::formats::MIDI.contains(&e)

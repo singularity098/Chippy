@@ -260,6 +260,76 @@ pub fn open(loc: &Location, sub: Option<u32>, opts: &DecodeOptions) -> Result<Ti
     Ok(Timed::new(engine, length, fade))
 }
 
+/// The second copy of the core (for notes) is global too: one at a time.
+static NOTES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Runs song `sub` (silently) for `ms`, or its listed length, handing `f`
+/// each sound register write: (ms into the song, port, value). Uses the
+/// core's second copy, so it can run while a song plays.
+pub(crate) fn capture(
+    loc: &Location,
+    sub: Option<u32>,
+    ms: Option<u64>,
+    f: &mut dyn FnMut(f64, u32, u8),
+) -> Result<()> {
+    const RATE: u32 = 24_000;
+    /// The V30's clock, per ms.
+    const CLOCKS_PER_MS: f64 = 3072.0;
+    struct State<'a> {
+        clocks: u64,
+        f: &'a mut dyn FnMut(f64, u32, u8),
+    }
+    unsafe extern "C" fn hook(user: *mut std::os::raw::c_void, ts: u32, port: u32, v: u8) {
+        let st = unsafe { &mut *(user as *mut State) };
+        if port == 0x10000 {
+            st.clocks += ts as u64;
+        } else {
+            (st.f)((st.clocks + ts as u64) as f64 / CLOCKS_PER_MS, port, v);
+        }
+    }
+    /// Unhooks and closes however capturing ends.
+    struct Close;
+    impl Drop for Close {
+        fn drop(&mut self) {
+            unsafe {
+                ffi::wsrn_set_hook(None, std::ptr::null_mut());
+                ffi::wsrn_close();
+            }
+        }
+    }
+
+    let data = loc.read()?;
+    let first = first_song(&data)?;
+    let list = listed(loc);
+    let entry = sub.and_then(|i| list.get(i as usize));
+    let song = entry.map(|e| e.song).unwrap_or(first);
+    let opts = DecodeOptions::default();
+    let ms = ms.unwrap_or_else(|| {
+        entry
+            .and_then(|e| e.length_ms)
+            .unwrap_or(opts.default_length_ms)
+            + entry.and_then(|e| e.fade_ms).unwrap_or(opts.fade_ms)
+    });
+    let _one = NOTES.lock().unwrap_or_else(|e| e.into_inner());
+    if unsafe { ffi::wsrn_open(data.as_ptr(), data.len() as u32, RATE) } != 0 {
+        bail!("the WonderSwan core could not load this file");
+    }
+    let _close = Close;
+    let mut st = State { clocks: 0, f };
+    unsafe {
+        ffi::wsrn_set_hook(Some(hook), (&mut st as *mut State).cast());
+        ffi::wsrn_reset(song);
+    }
+    let mut buf = vec![0i16; 2048];
+    let total = ms * RATE as u64 / 1000;
+    let mut done = 0;
+    while done < total {
+        unsafe { ffi::wsrn_render(buf.as_mut_ptr(), 1024) };
+        done += 1024;
+    }
+    Ok(())
+}
+
 pub fn track_list(loc: &Location, opts: &DecodeOptions) -> Result<Vec<SubTrack>> {
     first_song(&loc.read()?)?;
     let list = listed(loc);
@@ -363,6 +433,11 @@ mod tests {
         assert_eq!(d.duration_ms(), Some(1000));
         // The core is global: a second song cannot open meanwhile.
         assert!(open(&loc, None, &opts).is_err());
+        // But its notes can be found: that uses a second copy of the core.
+        let t = crate::notes::transcribe(&loc, Some(0), Some(1000)).unwrap();
+        let w = crate::notes::part(&t, "Wave 1");
+        assert_eq!(w.notes.iter().map(|n| n.key).collect::<Vec<_>>(), vec![69]);
+        assert!(w.notes[0].start_ms < 20.0, "{:?}", w.notes);
         let mut buf = vec![0f32; 48_000];
         let n = d.read(&mut buf).unwrap();
         let hz = pitch(&buf[n / 2..n * 2], 48_000);

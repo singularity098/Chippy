@@ -323,8 +323,13 @@ void WSwan_SoundUpdate(void)
  last_ts = v30mz_timestamp;
 }
 
+WSwan_WriteHookFn WSwan_WriteHook = nullptr;
+void* WSwan_WriteHookUser = nullptr;
+
 void WSwan_SoundWrite(uint32 A, uint8 V)
 {
+ if(WSwan_WriteHook)
+  WSwan_WriteHook(WSwan_WriteHookUser, v30mz_timestamp, A, V);
  WSwan_SoundUpdate();
 
  if(A >= 0x80 && A <= 0x87)

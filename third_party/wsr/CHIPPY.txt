@@ -1,3 +1,7 @@
 Mednafen's WonderSwan core (GPL-2.0-or-later), trimmed for WSR playback, as vendored
 by rePlayer (https://github.com/arnaud-neny/rePlayer, source/Replays/WonderSwan).
 crates/wsr-sys/shim.cpp drives it through mednafen/wsr_player.cpp.
+
+Chippy's changes: a hook for sound register writes (WSwan_WriteHook in
+wswan/sound.h, called by WSwan_SoundWrite and when wsr_player.cpp resets the
+CPU timestamp), for finding a song's notes.

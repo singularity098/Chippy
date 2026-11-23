@@ -258,7 +258,9 @@ impl Machine for Bus {
 
     fn port_out(&mut self, a: u16, v: u8) {
         let port = a as u8;
-        if (0x40..=0x7f).contains(&port) || port == 0x06 {
+        // The PSG, the Game Gear's stereo, and the FM unit's address and
+        // data (not played, but its notes can be found).
+        if (0x40..=0x7f).contains(&port) || port == 0x06 || port == 0xf0 || port == 0xf1 {
             self.writes.push((self.now, port, v));
         }
     }
@@ -359,10 +361,10 @@ impl SgcEngine {
     }
 
     fn apply(&mut self, port: u8, v: u8) {
-        if port == 0x06 {
-            self.psg.stereo = v;
-        } else {
-            self.psg.write(v);
+        match port {
+            0x06 => self.psg.stereo = v,
+            0xf0 | 0xf1 => {}
+            _ => self.psg.write(v),
         }
     }
 
@@ -456,7 +458,8 @@ pub fn open(loc: &Location, sub: Option<u32>, opts: &DecodeOptions) -> Result<Ti
 }
 
 /// Runs song `sub` for `ms` without making sound, handing `f` each PSG
-/// write: (ms into the song, port, value). Returns the system's name.
+/// and FM unit write: (ms into the song, port, value). Returns the
+/// system's name.
 pub(crate) fn capture(
     loc: &Location,
     sub: Option<u32>,

@@ -609,6 +609,69 @@ impl Chip for Psg {
     }
 }
 
+// ------------------------------------------------------------------ SCC
+
+/// Konami's SCC (K051649): five wavetable channels, with registers
+/// numbered as on the MSX cartridge: waves at $00-$7F (the fifth channel
+/// shares the fourth's), periods at $80-$89, volumes $8A-$8E, and the
+/// channels' enable bits at $8F.
+pub(crate) struct Scc {
+    clock: f64,
+    regs: [u8; 0x90],
+    edge: [Edge; 5],
+    voices: [Voice; 5],
+}
+
+impl Scc {
+    pub fn new(clock: f64) -> Scc {
+        Scc {
+            clock,
+            regs: [0; 0x90],
+            edge: Default::default(),
+            voices: Default::default(),
+        }
+    }
+
+    fn update(&mut self, t: f64, c: usize) {
+        let on = self.regs[0x8F] & (1 << c) != 0;
+        let vol = if on { self.regs[0x8A + c] & 15 } else { 0 };
+        let period = self.regs[0x80 + c * 2] as u32 | ((self.regs[0x81 + c * 2] & 15) as u32) << 8;
+        // Periods this short are above hearing: a way to mute.
+        let vol = if period < 8 { 0 } else { vol };
+        let attack = self.edge[c].attack(vol);
+        let v = &mut self.voices[c];
+        if vol == 0 {
+            return v.release(t);
+        }
+        // A 32-step wave.
+        let hz = self.clock / (32.0 * (period + 1) as f64);
+        sound(v, t, hz, attack, velocity(vol, 15));
+    }
+}
+
+impl Chip for Scc {
+    fn write(&mut self, t: f64, addr: u16, data: u8) {
+        let a = addr as usize;
+        if !(0x80..0x90).contains(&a) {
+            return;
+        }
+        self.regs[a] = data;
+        match a {
+            0x80..=0x89 => self.update(t, (a - 0x80) / 2),
+            0x8A..=0x8E => self.update(t, a - 0x8A),
+            _ => (0..5).for_each(|c| self.update(t, c)),
+        }
+    }
+
+    fn finish(self: Box<Self>, end: f64) -> Vec<Part> {
+        self.voices
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| part(format!("SCC {}", i + 1), 80, v.finish(end)))
+            .collect()
+    }
+}
+
 // ---------------------------------------------------------------- YM2413
 
 /// The YM2413's built-in instruments, as General MIDI programs (0 is the
@@ -798,6 +861,7 @@ impl Chip for Opm {
 /// Yamaha YM3812 (OPL2) and YMF262 (OPL3): nine FM channels per register
 /// bank (two banks on OPL3), and five rhythm drums.
 pub(crate) struct Opl {
+    name: &'static str,
     /// The chip's sample rate: clock / 72 (OPL2) or / 288 (OPL3).
     rate: f64,
     regs: [[u8; 0x100]; 2],
@@ -807,7 +871,12 @@ pub(crate) struct Opl {
 
 impl Opl {
     pub fn new(rate: f64, banks: usize) -> Opl {
+        Opl::named("FM", rate, banks)
+    }
+
+    pub fn named(name: &'static str, rate: f64, banks: usize) -> Opl {
         Opl {
+            name,
             rate,
             regs: [[0; 0x100]; 2],
             voices: (0..9 * banks).map(|_| Voice::default()).collect(),
@@ -869,9 +938,12 @@ impl Chip for Opl {
             .voices
             .into_iter()
             .enumerate()
-            .map(|(i, v)| part(format!("FM {}", i + 1), 81, v.finish(end)))
+            .map(|(i, v)| part(format!("{} {}", self.name, i + 1), 81, v.finish(end)))
             .collect();
-        parts.push(Part::drums("Drums (FM rhythm)", self.drums.finish()));
+        parts.push(Part::drums(
+            format!("Drums ({} rhythm)", self.name),
+            self.drums.finish(),
+        ));
         parts
     }
 }
@@ -895,9 +967,15 @@ pub fn transcribe_gme(
         )],
         "gbs" => vec![Box::new(Dmg::new())],
         "hes" => vec![Box::new(Huc::new(3_579_545.0))],
+        // The PSG and Sega PSG (by APU write), then the SCC and the FM
+        // chips (MSX-MUSIC or the Master System's FM unit, and
+        // MSX-AUDIO), by OUT port.
         "kss" => vec![
             Box::new(Ay::new("AY", 1_789_772.5)),
             Box::new(Psg::new(3_579_545.0)),
+            Box::new(Scc::new(3_579_545.0)),
+            Box::new(Opll::new(3_579_545.0)),
+            Box::new(Opl::named("MSX-AUDIO", 3_579_545.0 / 72.0, 1)),
         ],
         "sap" => vec![
             Box::new(Pokey::new("POKEY", 1_789_790.0)),
@@ -906,17 +984,39 @@ pub fn transcribe_gme(
         _ => bail!("can't find the notes in .{ext} files"),
     };
     let mut writes = 0usize;
+    let mut latch = [0u8; 2];
     let cap = capture(loc, track, RATE, max_ms, CHUNK, |frame, w| {
         let block = frame as f64 * 1000.0 / RATE as f64;
-        for w in w.iter().filter(|w| w.kind == 0) {
-            writes += 1;
+        for w in w.iter().filter(|w| w.kind == 0 || w.kind == 3) {
             let t = if w.ms >= 0.0 { w.ms } else { block };
-            let (chip, addr) = match ext {
-                "kss" if w.addr == 16 => (1, 0),
-                "sap" if w.addr >= 10 => (1, w.addr - 10),
-                _ => (0, w.addr),
+            let data = w.data as u8;
+            let (chip, addr) = match (ext, w.kind, w.addr) {
+                (_, 0, _) => {
+                    writes += 1;
+                    match ext {
+                        "kss" if w.addr == 16 => (1, 0),
+                        "sap" if w.addr >= 10 => (1, w.addr - 10),
+                        _ => (0, w.addr),
+                    }
+                }
+                ("kss", _, 0x100..) => (2, w.addr - 0x100),
+                // FM address ports: MSX-MUSIC, the Sega FM unit, MSX-AUDIO.
+                ("kss", _, 0x7C | 0xF0) => {
+                    latch[0] = data;
+                    continue;
+                }
+                ("kss", _, 0xC0) => {
+                    latch[1] = data;
+                    continue;
+                }
+                ("kss", _, 0x7D | 0xF1) => (3, latch[0] as i32),
+                ("kss", _, 0xC1) => (4, latch[1] as i32),
+                _ => continue,
             };
-            chips[chip].write(t, addr as u16, w.data as u8);
+            if w.kind == 3 {
+                writes += 1;
+            }
+            chips[chip].write(t, addr as u16, data);
         }
     })?;
     let end = cap.frames as f64 * 1000.0 / RATE as f64;
@@ -928,11 +1028,6 @@ pub fn transcribe_gme(
     if writes == 0 {
         t.notes
             .push("The tune wrote nothing to its sound chip.".into());
-    }
-    if ext == "kss" {
-        t.notes.push(
-            "Only the PSG (AY-3-8910) and Sega PSG are read: SCC and FM sound chips aren't.".into(),
-        );
     }
     Ok(t)
 }
@@ -1099,5 +1194,93 @@ mod tests {
         assert_eq!(keys_at(a), vec![(69, 2), (81, 22), (76, 52)]);
         assert!(a.notes[1].legato);
         assert_eq!(keys_at(part(&t, "AY B")), vec![(45, 2)]);
+    }
+
+    /// An MSX KSS whose play routine (60 Hz) makes each frame's writes:
+    /// `Out(port, value)`, or `Scc(register, value)` to the SCC's memory.
+    enum Kw {
+        Out(u8, u8),
+        Scc(u8, u8),
+    }
+
+    fn synth_kss(frames: &[&[Kw]]) -> Vec<u8> {
+        #[rustfmt::skip]
+        let play = [
+            0x2A, 0x00, 0xC0,       // LD HL,(PTR)
+            0x7E, 0x23, 0xB7,       // loop: LD A,(HL); INC HL; OR A
+            0x28, 0x14, 0xFE, 0x01, // JR Z,done; CP 1
+            0x4E, 0x23, 0x46, 0x23, // LD C,(HL); INC HL; LD B,(HL); INC HL
+            0x20, 0x04,             // JR NZ,mem
+            0xED, 0x41, 0x18, 0xEF, // OUT (C),B; JR loop
+            0xE5, 0x26, 0x98, 0x69, // mem: PUSH HL; LD H,$98; LD L,C
+            0x70, 0xE1, 0x18, 0xE7, // LD (HL),B; POP HL; JR loop
+            0x22, 0x00, 0xC0, 0xC9, // done: LD (PTR),HL; RET
+        ];
+        let mut code = vec![0u8; 0x80];
+        code[..play.len()].copy_from_slice(&play);
+        // init: PTR = the frames.
+        code[0x40..0x47].copy_from_slice(&[0x21, 0x80, 0x40, 0x22, 0x00, 0xC0, 0xC9]);
+        for f in frames {
+            for w in *f {
+                match *w {
+                    Kw::Out(p, v) => code.extend([1, p, v]),
+                    Kw::Scc(r, v) => code.extend([2, r, v]),
+                }
+            }
+            code.push(0);
+        }
+        code.extend(std::iter::repeat_n(0, 2000));
+        let mut f = b"KSCC".to_vec();
+        f.extend(0x4000u16.to_le_bytes());
+        f.extend((code.len() as u16).to_le_bytes());
+        f.extend(0x4040u16.to_le_bytes());
+        f.extend(0x4000u16.to_le_bytes());
+        f.extend([0, 0, 0, 0]);
+        f.extend(code);
+        f
+    }
+
+    #[test]
+    fn kss_psg_scc_and_fm_through_libgme() {
+        use Kw::*;
+        let rest: &[Kw] = &[];
+        let mut frames: Vec<&[Kw]> = vec![&[
+            // SCC channel 1: 3579545 / (32 * 254) = 440.4 Hz.
+            Scc(0x80, 253),
+            Scc(0x81, 0),
+            Scc(0x8A, 15),
+            Scc(0x8F, 1),
+            // MSX-MUSIC channel 1: fnum 289, block 4, key on.
+            Out(0x7C, 0x10),
+            Out(0x7D, 0x21),
+            Out(0x7C, 0x20),
+            Out(0x7D, 0x19),
+            // The PSG's channel A: period 254.
+            Out(0xA0, 7),
+            Out(0xA1, 0x3E),
+            Out(0xA0, 0),
+            Out(0xA1, 254),
+            Out(0xA0, 8),
+            Out(0xA1, 15),
+        ]];
+        frames.extend([rest; 29]);
+        frames.push(&[
+            Scc(0x8F, 0),
+            Out(0x7C, 0x20),
+            Out(0x7D, 0x09),
+            Out(0xA0, 8),
+            Out(0xA1, 0),
+        ]);
+        frames.extend([rest; 10]);
+        let t = super::super::transcribe_bytes("t.kss", &synth_kss(&frames), None, 1000);
+        for name in ["SCC 1", "FM 1", "AY A"] {
+            let p = super::super::part(&t, name);
+            assert_eq!(keys(p), vec![69], "{name}");
+            assert!(
+                (p.notes[0].dur_ms - 500.0).abs() < 5.0,
+                "{name}: {:?}",
+                p.notes
+            );
+        }
     }
 }

@@ -801,6 +801,7 @@ impl App {
         p.set_single_tap(s.single_tap);
         p.set_hover_opens(s.hover_opens_browser);
         p.set_folder_playlist(s.open_folder_as_playlist);
+        p.set_browser_playlist(s.browser_folder_playlist);
         p.set_restore_session(s.restore_session);
         p.set_embedded_art(s.prefer_embedded_art);
         p.set_usf_hle(s.usf_hle);
@@ -914,6 +915,7 @@ impl App {
             "single-tap" => s.single_tap = v,
             "hover-opens" => s.hover_opens_browser = v,
             "folder-playlist" => s.open_folder_as_playlist = v,
+            "browser-playlist" => s.browser_folder_playlist = v,
             "restore-session" => {
                 s.restore_session = v;
                 if v {
@@ -1608,9 +1610,9 @@ impl App {
                         }
                     }
                 }
-                self.play_from_listing(i);
+                self.play_from_listing(i, self.settings.browser_folder_playlist);
             }
-            EntryKind::Track => self.play_from_listing(i),
+            EntryKind::Track => self.play_from_listing(i, self.settings.browser_folder_playlist),
             EntryKind::Image | EntryKind::Other => {
                 self.toast(
                     &format!("{} is not something Chippy can play", e.name),
@@ -1620,10 +1622,17 @@ impl App {
         }
     }
 
-    /// Plays entry `i` of the listing, with every other playable entry of
-    /// the listing (filter or not) as the playlist, in listed order. A
-    /// search result plays with the rest of its own folder.
-    fn play_from_listing(&mut self, i: usize) {
+    /// Plays entry `i` of the listing: alone, or (`whole`) with every
+    /// other playable entry of the listing as the playlist, in listed
+    /// order (a search result with the rest of its own folder).
+    fn play_from_listing(&mut self, i: usize, whole: bool) {
+        if !whole {
+            if let Some(t) = self.entries[i].track.clone() {
+                self.set_queue(vec![t], Some(0));
+                self.play_index(0);
+                return;
+            }
+        }
         if self.in_results {
             let e = &self.entries[i];
             let folder = e
@@ -1717,6 +1726,7 @@ impl App {
                                 .iter()
                                 .position(|e| e.kind.is_playable())
                                 .unwrap_or(0),
+                            true,
                         );
                     }
                     return;
@@ -1729,7 +1739,7 @@ impl App {
                             .iter()
                             .position(|e| e.track.as_ref().is_some_and(|t| t.loc == loc))
                         {
-                            self.play_from_listing(i);
+                            self.play_from_listing(i, true);
                             return;
                         }
                     }

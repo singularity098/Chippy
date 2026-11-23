@@ -184,6 +184,8 @@ pub struct SettingsState {
     pub browser_dir: String,
     pub show_all: bool,
     pub folder_playlist: bool,
+    /// Playing from the browser brings the rest of the listing along.
+    pub browser_playlist: bool,
     pub restore_session: bool,
     pub embedded_art: bool,
     pub usf_hle: bool,

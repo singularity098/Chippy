@@ -217,7 +217,8 @@ impl Engine {
     // ----------------------------------------------------------- settings
 
     /// A switch in Settings: "show-all", "folder-playlist",
-    /// "restore-session", "embedded-art", "usf-hle", "gme-accuracy".
+    /// "browser-playlist", "restore-session", "embedded-art", "usf-hle",
+    /// "gme-accuracy".
     pub fn set_flag(&self, id: String, on: bool) {
         self.act(|c| c.set_flag(&id, on));
     }

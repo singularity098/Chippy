@@ -49,6 +49,10 @@ pub struct Settings {
     /// A file opened from outside (command line, file manager) brings the
     /// other music of its folder along as the playlist.
     pub open_folder_as_playlist: bool,
+    /// A file played from the file browser brings the rest of the listing
+    /// (its folder, archive or multi-track file) along as the playlist;
+    /// otherwise it plays on its own.
+    pub browser_folder_playlist: bool,
     /// Open folders and play files with one tap (touch screens).
     pub single_tap: bool,
     /// The file browser comes in when the mouse rests on the left edge.
@@ -131,6 +135,7 @@ impl Default for Settings {
             restore_session: true,
             show_all_files: false,
             open_folder_as_playlist: true,
+            browser_folder_playlist: true,
             // Touch first on Android: a tap plays, and nothing hovers.
             single_tap: cfg!(target_os = "android"),
             hover_opens_browser: !cfg!(target_os = "android"),

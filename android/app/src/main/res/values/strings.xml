@@ -117,6 +117,8 @@
     <string name="resume_detail">The playlist and the track come back, paused, when Chippy starts.</string>
     <string name="show_all">Show every file</string>
     <string name="show_all_detail">Not only folders, archives and music.</string>
+    <string name="browser_playlist">Files played from the browser bring their folder</string>
+    <string name="browser_playlist_detail">The rest of the folder, archive or multi-track file joins the playlist. Off: the file plays on its own.</string>
     <string name="chiptunes">Chiptunes</string>
     <string name="untimed_length">Length of untimed tracks</string>
     <string name="fade_out">Fade-out</string>

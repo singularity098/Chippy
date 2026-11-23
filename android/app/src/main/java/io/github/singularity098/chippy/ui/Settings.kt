@@ -135,6 +135,11 @@ fun SettingsScreen(
                     store.send { setFlag("show-all", it) }
                 }
             }
+            item {
+                SwitchRow(stringResource(R.string.browser_playlist), stringResource(R.string.browser_playlist_detail), s.browserPlaylist) {
+                    store.send { setFlag("browser-playlist", it) }
+                }
+            }
 
             // ----------------------------------------------------- chiptunes
             item { SectionTitle(stringResource(R.string.chiptunes)) }

@@ -15,6 +15,7 @@ export global Prefs {
     in property <bool> single-tap;
     in property <bool> hover-opens;
     in property <bool> folder-playlist;
+    in property <bool> browser-playlist;
     in property <bool> restore-session;
     in property <bool> embedded-art;
     in property <bool> usf-hle;
@@ -36,8 +37,8 @@ export global Prefs {
     callback remove-music-dir(int);
     callback set-home-dir(int);
     // Toggles by id: show-all, single-tap, hover-opens, folder-playlist,
-    // restore-session, embedded-art, usf-hle, gme-accuracy, fullscreen,
-    // native-wayland.
+    // browser-playlist, restore-session, embedded-art, usf-hle,
+    // gme-accuracy, fullscreen, native-wayland.
     callback set-flag(string, bool);
     // Steppers by id: default-length, fade, loops, bars, zoom.
     callback step(string, int);
@@ -248,6 +249,11 @@ export component SettingsPanel inherits Rectangle {
                             label: "Panels open on hover";
                             detail: "Resting the mouse on the left or right edge brings in its panel.";
                             Toggle { checked: Prefs.hover-opens; toggled(v) => { root.interacted(); Prefs.set-flag("hover-opens", v); } }
+                        }
+                        SettingRow {
+                            label: "Files played from the browser bring their folder";
+                            detail: "The rest of the folder, archive or multi-track file joins the playlist. Off: the file plays on its own.";
+                            Toggle { checked: Prefs.browser-playlist; toggled(v) => { root.interacted(); Prefs.set-flag("browser-playlist", v); } }
                         }
                         SettingRow {
                             label: "Files opened from outside bring their folder";

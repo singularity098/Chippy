@@ -579,6 +579,7 @@ impl Core {
                 .unwrap_or_default(),
             show_all: s.show_all_files,
             folder_playlist: s.open_folder_as_playlist,
+            browser_playlist: s.browser_folder_playlist,
             restore_session: s.restore_session,
             embedded_art: s.prefer_embedded_art,
             usf_hle: s.usf_hle,
@@ -1028,6 +1029,7 @@ impl Core {
                 self.refresh();
             }
             "folder-playlist" => s.open_folder_as_playlist = v,
+            "browser-playlist" => s.browser_folder_playlist = v,
             "restore-session" => {
                 s.restore_session = v;
                 if v {
@@ -1635,19 +1637,26 @@ impl Core {
                         }
                     }
                 }
-                self.play_from_listing(i);
+                self.play_from_listing(i, self.settings.browser_folder_playlist);
             }
-            EntryKind::Track => self.play_from_listing(i),
+            EntryKind::Track => self.play_from_listing(i, self.settings.browser_folder_playlist),
             EntryKind::Image | EntryKind::Other => {
                 self.toast(format!("{} is not something Chippy can play", e.name), true);
             }
         }
     }
 
-    /// Plays entry `i` of the listing, with every other playable entry of
-    /// the listing as the playlist, in listed order. A search result plays
-    /// with the rest of its own folder.
-    fn play_from_listing(&mut self, i: usize) {
+    /// Plays entry `i` of the listing: alone, or (`whole`) with every
+    /// other playable entry of the listing as the playlist, in listed
+    /// order (a search result with the rest of its own folder).
+    fn play_from_listing(&mut self, i: usize, whole: bool) {
+        if !whole {
+            if let Some(t) = self.entries[i].track.clone() {
+                self.set_queue(vec![t], Some(0));
+                self.play_index(0);
+                return;
+            }
+        }
         if self.in_results {
             let e = &self.entries[i];
             let folder = e

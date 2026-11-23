@@ -57,8 +57,10 @@ info, PSF tags, vgmstream stream names).
   drawn dimmer than names. By default only folders, archives and music are
   listed; the eye button shows every file.
 * **Double-click a track** and the whole folder's music becomes the
-  playlist, in order, starting from that track. Right-click for *Add to
-  playlist*.
+  playlist, in order, starting from that track (or, with *Files played
+  from the browser bring their folder* off in Settings, the track plays on
+  its own). Right-click for *Add to playlist*. Files opened from outside
+  Chippy have a setting of their own for bringing their folder.
 * **Archives** (`.zip`, `.7z`, `.tar`, `.tar.gz`, `.rar`, and `.rsn` SNES
   music packs) open like folders.
 * **Multi-track files** (NSF, NSFE, GBS, HES, KSS, AY, SAP, SID, SGC, WSR
@@ -249,7 +251,7 @@ side by side. The file browser (the folder button, top left) and the
 settings (the gear, top right) open as pages of their own, and the back
 button or gesture closes them; in the browser, back retraces the folders
 you opened first. A tap opens a folder or plays a track with the rest of
-its folder; a long press adds it to the playlist instead. The field above
+its folder (a setting makes it play alone); a long press adds it to the playlist instead. The field above
 the listing filters the folder, or searches everything below it (*Below*).
 In the playlist, swipe a track away to remove it; its menu shows it in the
 browser, its properties, or exports it. The buttons beside the playlist's

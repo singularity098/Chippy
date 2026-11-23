@@ -13,7 +13,7 @@
 //! rest of the fingering follows to stay comfortable. A stretch of it (a
 //! bar, say) can be nudged on its own the same way.
 
-use super::Note;
+use crate::Note;
 
 /// An instrument's open strings, lowest first, as MIDI keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

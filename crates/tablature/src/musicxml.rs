@@ -2,7 +2,7 @@
 //! notes and a staff of tab below it (the strings and frets). MuseScore,
 //! Guitar Pro, TuxGuitar, Sibelius and the rest read it.
 
-use super::score::{Event, Score, Track, Value, DIVISIONS};
+use crate::score::{Event, Score, Track, Value, DIVISIONS};
 use std::fmt::Write;
 
 fn escape(s: &str) -> String {
@@ -314,11 +314,11 @@ fn write_event(x: &mut String, e: &Event, staff: u8, voice: u8, strings: usize) 
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::super::meter::{beats_in, Bar, Meter};
-    use super::super::score::{build, PartTab};
-    use super::super::tab::{self, TUNINGS};
-    use super::super::Note;
     use super::*;
+    use crate::meter::{beats_in, Bar, Meter};
+    use crate::score::{build, PartTab};
+    use crate::tab::{self, TUNINGS};
+    use crate::Note;
 
     fn note(t: f64, dur: f64, key: u8) -> Note {
         Note {

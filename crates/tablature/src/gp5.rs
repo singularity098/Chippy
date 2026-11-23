@@ -5,8 +5,8 @@
 //! The layout follows what Guitar Pro itself writes, with every option
 //! Chippy doesn't use left at its default (as PyGuitarPro writes them).
 
-use super::meter::compound;
-use super::score::{Event, Head, Score};
+use crate::meter::compound;
+use crate::score::{Event, Head, Score};
 
 #[derive(Default)]
 struct Out(Vec<u8>);
@@ -334,7 +334,7 @@ fn write_beat(o: &mut Out, e: &Event, strings: u8, tempo: Option<i32>) {
         o.int_byte_string("");
     }
     // Strings 1 (highest) to 7, as bits from the top.
-    let mut notes: Vec<(u8, &super::score::Played)> = e
+    let mut notes: Vec<(u8, &crate::score::Played)> = e
         .notes
         .iter()
         .filter(|n| n.string < strings)
@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn writes_a_file() {
-        let score = super::super::musicxml::tests::sample();
+        let score = crate::musicxml::tests::sample();
         let b = write(&score);
         assert_eq!(b[0], 24);
         assert_eq!(&b[1..25], b"FICHIER GUITAR PRO v5.10");

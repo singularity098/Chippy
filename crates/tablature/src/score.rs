@@ -9,8 +9,8 @@
 //! so a run of eighths reads as eighths rather than as sixteenths and
 //! rests; longer gaps are rests.
 
-use super::meter::{beats_in, Meter};
-use super::tab::{Tab, Tuning};
+use crate::meter::{beats_in, Meter};
+use crate::tab::{Tab, Tuning};
 
 /// Ticks to a quarter note.
 pub const DIVISIONS: u32 = 24;
@@ -442,10 +442,10 @@ impl Score {
 
 #[cfg(test)]
 mod tests {
-    use super::super::meter::Bar;
-    use super::super::tab::{self, TUNINGS};
-    use super::super::Note;
     use super::*;
+    use crate::meter::Bar;
+    use crate::tab::{self, TUNINGS};
+    use crate::Note;
 
     pub(crate) fn even(beat: f64, n: usize, sig: (u8, u8)) -> Meter {
         let per = beats_in(sig);

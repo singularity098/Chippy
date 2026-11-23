@@ -1106,6 +1106,7 @@ dependencies = [
  "sevenz-rust",
  "sidplayfp-sys",
  "symphonia",
+ "tablature",
  "tar",
  "tempfile",
  "twosf-sys",
@@ -5904,6 +5905,10 @@ checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "tablature"
+version = "0.1.0"
 
 [[package]]
 name = "tar"

@@ -12,7 +12,7 @@
 //! wrong (twice or half the speed, a bar line a beat early), so a
 //! [`MeterAdjust`] puts it right by hand.
 
-use super::{Part, Transcription};
+use crate::Part;
 
 /// One bar: when it starts, when each of its beats does, and its time
 /// signature.
@@ -281,7 +281,7 @@ impl Ruler<'_> {
 /// The bars of a Standard MIDI file: its time signatures (`(tick, (beats,
 /// note value))`) at `ppq` ticks a quarter note, timed through `ms`, up to
 /// `end_tick`.
-pub(crate) fn from_ticks(
+pub fn from_ticks(
     sigs: &[(u64, (u8, u8))],
     ppq: u64,
     end_tick: u64,
@@ -315,7 +315,7 @@ pub(crate) fn from_ticks(
 
 /// The bars of a tracker module, from when each row started: (ms, order
 /// position, row number), in playing order.
-pub(crate) fn from_rows(rows: &[(f64, i32, i32)], end_ms: f64) -> Option<Meter> {
+pub fn from_rows(rows: &[(f64, i32, i32)], end_ms: f64) -> Option<Meter> {
     if rows.len() < 8 {
         return None;
     }
@@ -391,14 +391,6 @@ pub(crate) fn from_rows(rows: &[(f64, i32, i32)], end_ms: f64) -> Option<Meter> 
         end_ms: end_ms.max(rows.last().unwrap().0 + row_ms),
         exact: true,
     })
-}
-
-/// The bars of a track: as its file says, or worked out from its notes.
-pub fn find(t: &Transcription, end_ms: f64) -> Option<Meter> {
-    match &t.meter {
-        Some(m) => Some(m.clone()),
-        None => guess(&t.parts, end_ms),
-    }
 }
 
 /// A note start, weighed for finding the beat (`w`) and the bar (`accent`).
@@ -811,8 +803,8 @@ pub fn guess(parts: &[Part], end_ms: f64) -> Option<Meter> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::Note;
     use super::*;
+    use crate::Note;
 
     fn note(t: f64, key: u8, dur: f64) -> Note {
         Note {

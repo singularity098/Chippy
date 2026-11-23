@@ -357,6 +357,9 @@ crates/
                    resampling, spectrum, album art, exporting
   chippy-core/     no UI: virtual file system (folders, archives, multi-track
                    files), decoders, tags, album art, playlist, settings
+  tablature/       no audio, no UI, no dependencies: notes, beats and bars,
+                   guitar tab fingering, MusicXML and Guitar Pro 5 writing
+                   (chippy-core re-exports it as notes::{tab, score, ...})
   uniffi-bindgen/  generates chippy-android's Kotlin bindings
   gme-sys/         builds third_party/game-music-emu
   vgmstream-sys/   builds third_party/vgmstream, with mpg123, libvorbis and

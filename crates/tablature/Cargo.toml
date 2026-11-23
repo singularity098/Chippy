@@ -1,0 +1,9 @@
+[package]
+name = "tablature"
+description = "Notes, bars and guitar tablature, written out as MusicXML or Guitar Pro 5: no audio, no interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

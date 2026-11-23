@@ -20,98 +20,42 @@ mod brr;
 mod chips;
 mod gba;
 pub mod gm;
-pub mod gp5;
 pub mod instrument;
-pub mod meter;
 pub mod midi;
 mod module;
-pub mod musicxml;
 mod nds;
 mod nes;
 mod nesx;
 mod psx;
 mod sampled;
-pub mod score;
 mod sgc;
 mod sid;
 pub mod smf;
 mod spc;
 pub mod style;
-pub mod tab;
 mod vgm;
 mod wsr;
 
 pub use spc::SampleInfo;
 
-/// One note, in milliseconds from the start of the track.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Note {
-    pub start_ms: f64,
-    pub dur_ms: f64,
-    /// MIDI note number (60 is middle C).
-    pub key: u8,
-    pub velocity: u8,
-    /// Reached by a pitch change without a new attack (a slide or legato).
-    pub legato: bool,
-}
+// The notes, bars and tab themselves live in the `tablature` crate, shared
+// with anything else that works with tab; they are re-exported here so the
+// rest of Chippy finds them where it always has.
+pub use tablature::{gp5, key_name, musicxml, score, tab, Note, Part};
 
-/// One line of music: a chip channel, or the drums.
-#[derive(Clone, Debug, Default)]
-pub struct Part {
-    pub name: String,
-    /// Unpitched: keys are General MIDI percussion.
-    pub drums: bool,
-    /// A General MIDI program to play the part with.
-    pub program: u8,
-    /// Changes of program later on (ms, program), in time order: a channel
-    /// that switches samples switches instrument.
-    pub programs: Vec<(f64, u8)>,
-    pub notes: Vec<Note>,
-}
+/// Beats and bars ([`tablature::meter`]), and [`meter::find`] to get them
+/// for a transcribed track.
+pub mod meter {
+    pub use tablature::meter::*;
 
-impl Part {
-    pub fn new(name: impl Into<String>, program: u8, notes: Vec<Note>) -> Part {
-        Part {
-            name: name.into(),
-            program,
-            notes,
-            ..Default::default()
+    use super::Transcription;
+
+    /// The bars of a track: as its file says, or worked out from its notes.
+    pub fn find(t: &Transcription, end_ms: f64) -> Option<Meter> {
+        match &t.meter {
+            Some(m) => Some(m.clone()),
+            None => guess(&t.parts, end_ms),
         }
-    }
-
-    pub fn drums(name: impl Into<String>, notes: Vec<Note>) -> Part {
-        Part {
-            name: name.into(),
-            drums: true,
-            notes,
-            ..Default::default()
-        }
-    }
-
-    /// Sets the programs from the instrument each note started with
-    /// ((ms, program) in time order): the first is the part's own, and each
-    /// change after it a program change.
-    pub fn with_programs(mut self, uses: &[(f64, u8)]) -> Part {
-        self.programs.clear();
-        let mut cur = None;
-        for &(t, p) in uses {
-            match cur {
-                None => self.program = p,
-                Some(c) if c != p => self.programs.push((t, p)),
-                _ => {}
-            }
-            cur = Some(p);
-        }
-        self
-    }
-
-    /// The program sounding at `ms`.
-    pub fn program_at(&self, ms: f64) -> u8 {
-        self.programs
-            .iter()
-            .take_while(|(t, _)| *t <= ms)
-            .last()
-            .map_or(self.program, |&(_, p)| p)
     }
 }
 
@@ -218,13 +162,6 @@ impl Transcription {
 /// The note nearest a frequency, as a fractional MIDI note number.
 pub(crate) fn hz_to_key(hz: f64) -> f64 {
     69.0 + 12.0 * (hz / 440.0).log2()
-}
-
-pub fn key_name(key: u8) -> String {
-    const NAMES: [&str; 12] = [
-        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-    ];
-    format!("{}{}", NAMES[key as usize % 12], key as i32 / 12 - 1)
 }
 
 /// How far a held note's pitch must move (in semitones) before it counts as
@@ -421,9 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn names_keys() {
-        assert_eq!(key_name(60), "C4");
-        assert_eq!(key_name(69), "A4");
+    fn hz_to_key_finds_a4() {
         assert!((hz_to_key(440.0) - 69.0).abs() < 1e-9);
     }
 }

@@ -8,6 +8,8 @@
 use anyhow::{bail, Result};
 
 use super::chips::{self, Chip};
+use super::nes::Nes;
+use super::nesx;
 use super::{hz_to_key, Drums, Part, Transcription, Voice};
 use crate::vfs::Location;
 
@@ -28,6 +30,13 @@ struct Ym2612 {
 }
 
 impl Ym2612 {
+    fn new(clock: f64) -> Ym2612 {
+        Ym2612 {
+            clock,
+            ..Default::default()
+        }
+    }
+
     fn pitch(&self, ch: usize) -> Option<f64> {
         let f = self.fnum[ch] as f64;
         if f == 0.0 {
@@ -189,38 +198,210 @@ struct Chips {
     ym: Ym2612,
     psg: Sn76489,
     drums: Drums,
-    /// The other chips a VGM can log, made when first written to.
-    others: Vec<(u8, Box<dyn Chip>)>,
+    /// The other chips a VGM can log, made when first written to, by
+    /// command (with bit 8 set for the second of a pair).
+    others: Vec<(u16, Box<dyn Chip>)>,
 }
 
-/// The chips other than the YM2612 and SN76489 a VGM command writes to:
-/// (command, header offset of the chip's clock, default clock, maker).
-type Maker = fn(f64) -> Box<dyn Chip>;
-const OTHERS: &[(u8, usize, f64, Maker)] = &[
-    (0x51, 0x10, 3_579_545.0, |c| Box::new(chips::Opll::new(c))),
-    (0x54, 0x30, 3_579_545.0, |c| Box::new(chips::Opm::new(c))),
-    (0x5A, 0x50, 3_579_545.0, |c| {
-        Box::new(chips::Opl::new(c / 72.0, 1))
-    }),
-    (0x5E, 0x5C, 14_318_180.0, |c| {
-        Box::new(chips::Opl::new(c / 288.0, 2))
-    }),
-    (0xA0, 0x74, 1_789_772.5, |c| {
-        Box::new(chips::Ay::new("AY", c))
-    }),
-    (0xB3, 0x80, 4_194_304.0, |_| Box::new(chips::Dmg::new())),
-    (0xB9, 0xA4, 3_579_545.0, |c| Box::new(chips::Huc::new(c))),
-    (0xBB, 0xB0, 1_789_772.0, |c| {
-        Box::new(chips::Pokey::new("POKEY", c))
-    }),
+/// The chips other than the first YM2612 and SN76489 a VGM command writes
+/// to: (command, header offset of the chip's clock, default clock, maker,
+/// name). The maker gets the clock and the header's whole clock field
+/// (whose top bits flag variants).
+type Maker = fn(f64, u32) -> Box<dyn Chip>;
+const OTHERS: &[(u8, usize, f64, Maker, &str)] = &[
+    // Second chips only (the first are `Chips`' own).
+    (
+        0x50,
+        0x0C,
+        3_579_545.0,
+        |c, _| Box::new(chips::Psg::new(c)),
+        "SN76489",
+    ),
+    (
+        0x52,
+        0x2C,
+        7_670_453.0,
+        |c, _| Box::new(Ym2612Chip(Ym2612::new(c))),
+        "YM2612",
+    ),
+    (
+        0x51,
+        0x10,
+        3_579_545.0,
+        |c, _| Box::new(chips::Opll::new(c)),
+        "YM2413",
+    ),
+    (
+        0x54,
+        0x30,
+        3_579_545.0,
+        |c, _| Box::new(chips::Opm::new(c)),
+        "YM2151",
+    ),
+    (
+        0x55,
+        0x44,
+        3_993_600.0,
+        |c, _| Box::new(chips::Opn::ym2203(c)),
+        "YM2203",
+    ),
+    (
+        0x56,
+        0x48,
+        7_987_200.0,
+        |c, _| Box::new(chips::Opn::ym2608(c)),
+        "YM2608",
+    ),
+    (
+        0x58,
+        0x4C,
+        8_000_000.0,
+        |c, _| Box::new(chips::Opn::ym2610(c)),
+        "YM2610",
+    ),
+    (
+        0x5A,
+        0x50,
+        3_579_545.0,
+        |c, _| Box::new(chips::Opl::new(c / 72.0, 1)),
+        "YM3812",
+    ),
+    (
+        0x5B,
+        0x54,
+        3_579_545.0,
+        |c, _| Box::new(chips::Opl::new(c / 72.0, 1)),
+        "YM3526",
+    ),
+    (
+        0x5C,
+        0x58,
+        3_579_545.0,
+        |c, _| Box::new(chips::Opl::named("Y8950", c / 72.0, 1)),
+        "Y8950",
+    ),
+    (
+        0x5E,
+        0x5C,
+        14_318_180.0,
+        |c, _| Box::new(chips::Opl::new(c / 288.0, 2)),
+        "YMF262",
+    ),
+    (
+        0xA0,
+        0x74,
+        1_789_772.5,
+        |c, _| Box::new(chips::Ay::new("AY", c)),
+        "AY-3-8910",
+    ),
+    (
+        0xB3,
+        0x80,
+        4_194_304.0,
+        |_, _| Box::new(chips::Dmg::new()),
+        "Game Boy",
+    ),
+    // Bit 31 of the clock: with the FDS.
+    (
+        0xB4,
+        0x84,
+        1_789_772.0,
+        |_, raw| {
+            Box::new(NesChip::new(if raw & 0x8000_0000 != 0 {
+                nesx::FDS
+            } else {
+                0
+            }))
+        },
+        "NES APU",
+    ),
+    (
+        0xB9,
+        0xA4,
+        3_579_545.0,
+        |c, _| Box::new(chips::Huc::new(c)),
+        "HuC6280",
+    ),
+    (
+        0xBB,
+        0xB0,
+        1_789_772.0,
+        |c, _| Box::new(chips::Pokey::new("POKEY", c)),
+        "POKEY",
+    ),
+    // VGM clocks the SCC at half the MSX's 3.58 MHz.
+    (
+        0xD2,
+        0x9C,
+        1_789_772.0,
+        |c, _| Box::new(chips::Scc::new(c * 2.0)),
+        "K051649",
+    ),
 ];
 
+/// The YM2612 as a [`Chip`] (for a second one): port 1 in bit 8.
+struct Ym2612Chip(Ym2612);
+
+impl Chip for Ym2612Chip {
+    fn write(&mut self, t: f64, addr: u16, data: u8) {
+        self.0.write(t, (addr >> 8) as usize & 1, addr as u8, data);
+    }
+
+    fn finish(self: Box<Self>, end: f64) -> Vec<Part> {
+        self.0
+            .voices
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| Part::new(format!("FM {}", i + 1), 81, v.finish(end)))
+            .collect()
+    }
+}
+
+/// The NES APU (and FDS), whose writes are timed, ticked at 60 Hz for the
+/// counters [`Nes`] models a frame at a time.
+struct NesChip {
+    nes: Nes,
+    next: f64,
+}
+
+const NES_FRAME_MS: f64 = 1000.0 / 60.0988;
+
+impl NesChip {
+    fn new(flags: u8) -> NesChip {
+        NesChip {
+            nes: Nes::new(flags),
+            next: NES_FRAME_MS,
+        }
+    }
+
+    fn run_to(&mut self, t: f64) {
+        while self.next <= t {
+            self.nes.tick(self.next);
+            self.next += NES_FRAME_MS;
+        }
+    }
+}
+
+impl Chip for NesChip {
+    fn write(&mut self, t: f64, addr: u16, data: u8) {
+        self.run_to(t);
+        self.nes.write(t, addr, data);
+    }
+
+    fn finish(mut self: Box<Self>, end: f64) -> Vec<Part> {
+        self.run_to(end);
+        self.nes.finish(end)
+    }
+}
+
 impl Chips {
-    fn other(&mut self, d: &[u8], cmd: u8, t: f64, addr: u16, data: u8) {
-        let i = match self.others.iter().position(|(c, _)| *c == cmd) {
+    /// A write to the chip of command `cmd` (its second, with `second`).
+    fn other(&mut self, d: &[u8], cmd: u8, second: bool, t: f64, addr: u16, data: u8) {
+        let key = cmd as u16 | if second { 0x100 } else { 0 };
+        let i = match self.others.iter().position(|(c, _)| *c == key) {
             Some(i) => i,
             None => {
-                let Some(&(_, at, default, make)) = OTHERS.iter().find(|o| o.0 == cmd) else {
+                let Some(&(_, at, default, make, _)) = OTHERS.iter().find(|o| o.0 == cmd) else {
                     return;
                 };
                 // Clocks past the end of an older, shorter header read as 0.
@@ -229,13 +410,14 @@ impl Chips {
                 } else {
                     0x40
                 };
-                let clock = if at + 4 <= header_end {
-                    (u32_at(d, at) & 0x3FFF_FFFF) as f64
+                let raw = if at + 4 <= header_end {
+                    u32_at(d, at)
                 } else {
-                    0.0
+                    0
                 };
+                let clock = (raw & 0x3FFF_FFFF) as f64;
                 self.others
-                    .push((cmd, make(if clock > 0.0 { clock } else { default })));
+                    .push((key, make(if clock > 0.0 { clock } else { default }, raw)));
                 self.others.len() - 1
             }
         };
@@ -287,24 +469,70 @@ fn run_vgm(d: &[u8], chips: &mut Chips, max_ms: f64) -> Result<f64> {
                 chips.psg.write(t, arg(1), &mut chips.drums);
                 2
             }
+            // The second SN76489.
+            0x30 => {
+                chips.other(d, 0x50, true, t, 0, arg(1));
+                2
+            }
             0x52 | 0x53 => {
                 chips.ym.write(t, (op - 0x52) as usize, arg(1), arg(2));
                 3
             }
-            0x51 | 0x54 | 0x5A | 0xB3 | 0xB9 | 0xBB => {
-                chips.other(d, op, t, arg(1) as u16, arg(2));
-                3
-            }
-            0x5E | 0x5F => {
-                chips.other(d, 0x5E, t, (op as u16 - 0x5E) << 8 | arg(1) as u16, arg(2));
-                3
-            }
-            // The AY-3-8910 (bit 7 of the register: a second chip, skipped).
-            0xA0 => {
-                if arg(1) & 0x80 == 0 {
-                    chips.other(d, op, t, arg(1) as u16, arg(2));
+            // A chip of one register bank, or two (ports 0 and 1: two
+            // commands); the second chip of a pair by command $A1-$AF.
+            0x51..=0x5F | 0xA1..=0xAF => {
+                let second = op >= 0xA0;
+                let base = op & 0x5F | 0x50;
+                let (cmd, port) = match base {
+                    0x52 | 0x53 => (0x52, base - 0x52),
+                    0x56 | 0x57 => (0x56, base - 0x56),
+                    0x58 | 0x59 => (0x58, base - 0x58),
+                    0x5E | 0x5F => (0x5E, base - 0x5E),
+                    b => (b, 0),
+                };
+                if second || cmd != 0x52 {
+                    chips.other(
+                        d,
+                        cmd,
+                        second,
+                        t,
+                        (port as u16) << 8 | arg(1) as u16,
+                        arg(2),
+                    );
                 }
                 3
+            }
+            // Register, data: bit 7 of the register picks the second chip.
+            0xA0 | 0xB3 | 0xB9 | 0xBB => {
+                let reg = arg(1);
+                chips.other(d, op, reg & 0x80 != 0, t, (reg & 0x7F) as u16, arg(2));
+                3
+            }
+            // NES APU: $4000-$401F, then the FDS's $4080-$409E, and $4023.
+            0xB4 => {
+                let reg = arg(1) & 0x7F;
+                let addr = match reg {
+                    0x00..=0x1F => 0x4000 + reg as u16,
+                    0x20..=0x3E => 0x4080 + (reg - 0x20) as u16,
+                    _ => 0x4023,
+                };
+                chips.other(d, op, arg(1) & 0x80 != 0, t, addr, arg(2));
+                3
+            }
+            // K051649 (SCC): port (wave, period, volume, enable), register.
+            0xD2 => {
+                let (port, reg) = (arg(1) & 0x7F, arg(2) as u16);
+                let addr = match port {
+                    0 => Some(reg & 0x7F),
+                    1 => Some(0x80 + reg.min(9)),
+                    2 => Some(0x8A + reg.min(4)),
+                    3 => Some(0x8F),
+                    _ => None,
+                };
+                if let Some(a) = addr {
+                    chips.other(d, op, arg(1) & 0x80 != 0, t, a, arg(3));
+                }
+                4
             }
             0x61 => {
                 samples += u16::from_le_bytes([arg(1), arg(2)]) as u64;
@@ -333,14 +561,8 @@ fn run_vgm(d: &[u8], chips: &mut Chips, max_ms: f64) -> Result<f64> {
             0x92 => 6,
             0x93 => 11,
             0x94 => 2,
-            0x30..=0x3F | 0x4F => 2,
-            0x40..=0x4E
-            | 0x55..=0x59
-            | 0x5B..=0x5D
-            | 0xA1..=0xB2
-            | 0xB4..=0xB8
-            | 0xBA
-            | 0xBC..=0xBF => 3,
+            0x31..=0x3F | 0x4F => 2,
+            0x40..=0x4E | 0xB0..=0xB2 | 0xB5..=0xB8 | 0xBA | 0xBC..=0xBF => 3,
             0xC0..=0xDF => 4,
             0xE0..=0xFF => 5,
             _ => 1,
@@ -418,21 +640,22 @@ pub fn transcribe(loc: &Location, max_ms: Option<u64>) -> Result<Transcription> 
     }
     parts.push(Part::drums("Drums (PSG noise)", drums.finish()));
     let sega = parts.iter().any(|p| !p.notes.is_empty());
-    let names: Vec<&str> = others
-        .iter()
-        .map(|(cmd, _)| match cmd {
-            0x51 => "YM2413",
-            0x54 => "YM2151",
-            0x5A => "YM3812",
-            0x5E => "YMF262",
-            0xA0 => "AY-3-8910",
-            0xB3 => "Game Boy",
-            0xB9 => "HuC6280",
-            _ => "POKEY",
-        })
-        .collect();
-    for (_, c) in others {
-        parts.extend(c.finish(end));
+    let mut names: Vec<&str> = Vec::new();
+    for (key, c) in others {
+        let name = OTHERS
+            .iter()
+            .find(|o| o.0 as u16 == key & 0xFF)
+            .map_or("?", |o| o.4);
+        if !names.contains(&name) {
+            names.push(name);
+        }
+        let mut more = c.finish(end);
+        if key & 0x100 != 0 {
+            for p in &mut more {
+                p.name += " #2";
+            }
+        }
+        parts.extend(more);
     }
     let mut t = Transcription {
         system: if !names.is_empty() && !sega {
@@ -527,5 +750,74 @@ mod tests {
         let notes = std::mem::take(&mut c.psg.voices[0]).finish(end);
         assert_eq!(notes.len(), 2);
         assert!(notes.iter().all(|n| n.key == 69));
+    }
+
+    fn run(cmds: &[u8]) -> Transcription {
+        crate::notes::transcribe_bytes("t.vgm", &vgm(cmds), None, 10_000)
+    }
+
+    fn keys(t: &Transcription, name: &str) -> Vec<u8> {
+        crate::notes::part(t, name)
+            .notes
+            .iter()
+            .map(|n| n.key)
+            .collect()
+    }
+
+    #[test]
+    fn reads_the_ym2610_fm_ssg_and_samples() {
+        let t = run(&[
+            // FM channel 2: block 4, fnum 1038 (440 Hz at 8 MHz / 144).
+            0x58, 0xA5, 0x24, 0x58, 0xA1, 0x0E, 0x58, 0x28, 0xF1,
+            // SSG A: period 142 at 1 MHz.
+            0x58, 0x00, 142, 0x58, 0x07, 0x3E, 0x58, 0x08, 15,
+            // An ADPCM-A sample on channel 1.
+            0x59, 0x10, 5, 0x59, 0x18, 0, 0x59, 0x08, 0x1F, 0x59, 0x00, 0x01, 0x61, 0x22,
+            0x56, // 500 ms
+            0x58, 0x28, 0x01, 0x58, 0x08, 0,
+        ]);
+        assert_eq!(t.system, "VGM (YM2610)");
+        assert_eq!(keys(&t, "FM 2"), vec![69]);
+        assert_eq!(keys(&t, "SSG A"), vec![69]);
+        assert_eq!(crate::notes::part(&t, "Drums (ADPCM-A)").notes.len(), 1);
+    }
+
+    #[test]
+    fn reads_second_chips() {
+        let t = run(&[
+            0x54, 0x28, 0x4A, 0x54, 0x08, 0x78, // YM2151 1: A4
+            0xA4, 0x28, 0x4E, 0xA4, 0x08, 0x78, // YM2151 2: C5
+            0x61, 0x22, 0x56,
+        ]);
+        assert_eq!(keys(&t, "FM 1"), vec![69]);
+        assert_eq!(keys(&t, "FM 1 #2"), vec![72]);
+    }
+
+    #[test]
+    fn reads_the_nes_apu_and_scc() {
+        let t = run(&[
+            // NES pulse 1: timer 253 (440 Hz), constant volume 15.
+            0xB4, 0x15, 0x01, 0xB4, 0x00, 0x3F, 0xB4, 0x02, 253, 0xB4, 0x03, 0x08,
+            // SCC channel 1: period 253.
+            0xD2, 1, 0, 253, 0xD2, 1, 1, 0, 0xD2, 2, 0, 15, 0xD2, 3, 0, 1, 0x61, 0x22, 0x56, 0xB4,
+            0x15, 0x00, 0xD2, 3, 0, 0, 0x61, 0x22, 0x56,
+        ]);
+        let pulse = crate::notes::part(&t, "Pulse 1");
+        assert_eq!(
+            pulse.notes.iter().map(|n| n.key).collect::<Vec<_>>(),
+            vec![69]
+        );
+        // Seen at the first 60 Hz tick, ended at the one after the write.
+        assert!(
+            (pulse.notes[0].dur_ms - 500.0).abs() < 17.0,
+            "{:?}",
+            pulse.notes
+        );
+        let scc = crate::notes::part(&t, "SCC 1");
+        assert_eq!(
+            scc.notes.iter().map(|n| n.key).collect::<Vec<_>>(),
+            vec![69]
+        );
+        assert_eq!(scc.notes[0].dur_ms.round(), 500.0);
     }
 }

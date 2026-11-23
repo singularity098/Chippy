@@ -158,6 +158,109 @@ fn noise_key(period: u8) -> u8 {
     }
 }
 
+/// The 2A03 and any cartridge chips, turned into notes from their writes
+/// and the driver's ticks (when it would update them, once a frame).
+pub(crate) struct Nes {
+    flags: u8,
+    apu: Apu,
+    voices: [Voice; 3],
+    drums: Drums,
+    /// DPCM sample addresses, in order of first use.
+    samples: Vec<u8>,
+    mmc5: Apu,
+    mmc5_voices: [Voice; 2],
+    expansion: Expansion,
+}
+
+impl Nes {
+    /// With the cartridge chips in `flags` ([`nesx`]'s bits).
+    pub fn new(flags: u8) -> Nes {
+        Nes {
+            flags,
+            apu: Apu::default(),
+            voices: Default::default(),
+            drums: Drums::default(),
+            samples: Vec::new(),
+            mmc5: Apu::default(),
+            mmc5_voices: Default::default(),
+            expansion: Expansion::new(flags),
+        }
+    }
+
+    /// A write to `addr` (a CPU address: $4000-$4017 for the 2A03).
+    pub fn write(&mut self, t: f64, addr: u16, data: u8) {
+        let mmc5 = self.flags & nesx::MMC5 != 0;
+        match addr {
+            0x4000..=0x4017 => {
+                let a = (addr - 0x4000) as usize;
+                self.apu.write(a, data);
+                if a == 0x15 && data & 0x10 != 0 {
+                    let at = self.apu.regs[0x12];
+                    let samples = &mut self.samples;
+                    let i = samples.iter().position(|&a| a == at).unwrap_or_else(|| {
+                        samples.push(at);
+                        samples.len() - 1
+                    });
+                    self.drums.hit(t, SAMPLE_KEYS[i % SAMPLE_KEYS.len()], 110);
+                }
+            }
+            0x5000..=0x5007 if mmc5 => self.mmc5.write((addr - 0x5000) as usize, data),
+            0x5015 if mmc5 => self.mmc5.write(0x15, data & 3),
+            _ => self.expansion.write(t, addr, data),
+        }
+    }
+
+    /// A frame's end: the channels' state as the driver left it.
+    pub fn tick(&mut self, t: f64) {
+        let apu = &mut self.apu;
+        apu.clock_frame();
+        pulses(apu, &mut self.voices[..2], t);
+        if self.flags & nesx::MMC5 != 0 {
+            self.mmc5.clock_frame();
+            pulses(&mut self.mmc5, &mut self.mmc5_voices, t);
+            self.mmc5.restarted = [false; 4];
+        }
+        let timer = apu.timer(2);
+        let v = &mut self.voices[2];
+        if apu.len[2] > 0 && apu.linear > 0 && timer >= 2 {
+            let pitch = hz_to_key(CPU_HZ / (32.0 * (timer + 1) as f64));
+            if v.sounding() {
+                v.pitch(t, pitch);
+            } else {
+                v.attack(t, pitch, 100);
+            }
+        } else {
+            v.release(t);
+        }
+        let vol = apu.volume(3);
+        let attack = apu.attack_of(3, vol);
+        let on = apu.len[3] > 0 && vol > 0;
+        if on && (!apu.noise_on || attack || apu.restarted[3]) {
+            self.drums.hit(t, noise_key(apu.regs[0xE]), velocity(vol));
+            apu.started(3);
+        }
+        apu.noise_on = on;
+        apu.restarted = [false; 4];
+    }
+
+    pub fn finish(self, end: f64) -> Vec<Part> {
+        let [p1, p2, tri] = self.voices;
+        let mut parts = vec![
+            part("Pulse 1", 80, p1.finish(end)),
+            part("Pulse 2", 80, p2.finish(end)),
+            part("Triangle", 33, tri.finish(end)),
+        ];
+        if self.flags & nesx::MMC5 != 0 {
+            let [m1, m2] = self.mmc5_voices;
+            parts.push(part("MMC5 Pulse 1", 80, m1.finish(end)));
+            parts.push(part("MMC5 Pulse 2", 80, m2.finish(end)));
+        }
+        parts.extend(self.expansion.finish(end));
+        parts.push(Part::drums("Drums (noise, samples)", self.drums.finish()));
+        parts
+    }
+}
+
 pub fn transcribe(loc: &Location, track: u32, max_ms: Option<u64>) -> Result<Transcription> {
     const RATE: u32 = 44_100;
     let mut writes: Vec<ChipWrite> = Vec::new();
@@ -169,93 +272,25 @@ pub fn transcribe(loc: &Location, track: u32, max_ms: Option<u64>) -> Result<Tra
     // The play routine's rate, as it ran (NTSC, PAL or the tune's own).
     let tick_ms = (played_ms / ticks as f64).clamp(1.0, 100.0);
 
-    let data = loc.read()?;
-    let flags = nesx::flags(&data);
-    let mut expansion = Expansion::new(flags);
-    let mut mmc5 = Apu::default();
-    let mut mmc5_voices: [Voice; 2] = Default::default();
-    let mut apu = Apu::default();
-    let mut voices: [Voice; 3] = Default::default();
-    let mut drums = Drums::default();
-    let mut samples: Vec<u8> = Vec::new();
+    let flags = nesx::flags(&loc.read()?);
+    let mut nes = Nes::new(flags);
     let mut tick = 0usize;
     for w in &writes {
         let t = tick as f64 * tick_ms;
         match w.kind {
-            0 => {
-                let addr = w.addr as usize;
-                let data = w.data as u8;
-                apu.write(addr, data);
-                if addr == 0x15 && data & 0x10 != 0 {
-                    let at = apu.regs[0x12];
-                    let i = samples.iter().position(|&a| a == at).unwrap_or_else(|| {
-                        samples.push(at);
-                        samples.len() - 1
-                    });
-                    drums.hit(t, SAMPLE_KEYS[i % SAMPLE_KEYS.len()], 110);
-                }
-            }
-            3 => {
-                let (addr, data) = (w.addr as u16, w.data as u8);
-                match addr {
-                    0x5000..=0x5007 if flags & nesx::MMC5 != 0 => {
-                        mmc5.write((addr - 0x5000) as usize, data)
-                    }
-                    0x5015 if flags & nesx::MMC5 != 0 => mmc5.write(0x15, data & 3),
-                    _ => expansion.write(t, addr, data),
-                }
-            }
+            0 => nes.write(t, 0x4000 + w.addr as u16, w.data as u8),
+            3 => nes.write(t, w.addr as u16, w.data as u8),
             1 => {
-                apu.clock_frame();
-                pulses(&mut apu, &mut voices[..2], t);
-                if flags & nesx::MMC5 != 0 {
-                    mmc5.clock_frame();
-                    pulses(&mut mmc5, &mut mmc5_voices, t);
-                    mmc5.restarted = [false; 4];
-                }
-                let timer = apu.timer(2);
-                let v = &mut voices[2];
-                if apu.len[2] > 0 && apu.linear > 0 && timer >= 2 {
-                    let pitch = hz_to_key(CPU_HZ / (32.0 * (timer + 1) as f64));
-                    if v.sounding() {
-                        v.pitch(t, pitch);
-                    } else {
-                        v.attack(t, pitch, 100);
-                    }
-                } else {
-                    v.release(t);
-                }
-                let vol = apu.volume(3);
-                let attack = apu.attack_of(3, vol);
-                let on = apu.len[3] > 0 && vol > 0;
-                if on && (!apu.noise_on || attack || apu.restarted[3]) {
-                    drums.hit(t, noise_key(apu.regs[0xE]), velocity(vol));
-                    apu.started(3);
-                }
-                apu.noise_on = on;
-                apu.restarted = [false; 4];
+                nes.tick(t);
                 tick += 1;
             }
             _ => {}
         }
     }
     let end = tick as f64 * tick_ms;
-    let [p1, p2, tri] = voices;
-    let mut parts = vec![
-        part("Pulse 1", 80, p1.finish(end)),
-        part("Pulse 2", 80, p2.finish(end)),
-        part("Triangle", 33, tri.finish(end)),
-    ];
-    if flags & nesx::MMC5 != 0 {
-        let [m1, m2] = mmc5_voices;
-        parts.push(part("MMC5 Pulse 1", 80, m1.finish(end)));
-        parts.push(part("MMC5 Pulse 2", 80, m2.finish(end)));
-    }
-    parts.extend(expansion.finish(end));
-    parts.push(Part::drums("Drums (noise, samples)", drums.finish()));
     let mut t = Transcription {
         system: cap.system,
-        parts,
+        parts: nes.finish(end),
         ..Default::default()
     };
     if flags & nesx::FDS != 0 {

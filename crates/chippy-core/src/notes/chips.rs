@@ -787,6 +787,168 @@ impl Chip for Opll {
     }
 }
 
+// ------------------------------------------------------ YM2203/2608/2610
+
+/// What an OPN chip has beside its FM and SSG.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OpnExtra {
+    None,
+    /// The YM2608's six built-in rhythm sounds (port 0, $10).
+    Rhythm,
+    /// The YM2610's six ADPCM-A sample channels (port 1, $00), nearly
+    /// always drums.
+    AdpcmA,
+}
+
+/// Yamaha's OPN family: the YM2203 (three FM channels), YM2608 (OPNA) and
+/// YM2610/B (OPNB), with six; each with an AY-like SSG at port 0's
+/// registers $00-$0F. Port 1's registers come with bit 8 of the address.
+pub(crate) struct Opn {
+    /// The FM sample rate: the clock / 72 (YM2203) or / 144.
+    fs: f64,
+    channels: usize,
+    extra: OpnExtra,
+    regs: [[u8; 0x100]; 2],
+    latch: [u8; 2],
+    fnum: [u16; 6],
+    block: [u8; 6],
+    keyed: [u8; 6],
+    voices: [Voice; 6],
+    ssg: Ay,
+    drums: Drums,
+    /// ADPCM-A sample start addresses, in order of first use.
+    samples: Vec<u16>,
+}
+
+impl Opn {
+    pub fn ym2203(clock: f64) -> Opn {
+        Opn::new(clock / 72.0, 3, OpnExtra::None, clock / 4.0)
+    }
+
+    pub fn ym2608(clock: f64) -> Opn {
+        Opn::new(clock / 144.0, 6, OpnExtra::Rhythm, clock / 8.0)
+    }
+
+    pub fn ym2610(clock: f64) -> Opn {
+        Opn::new(clock / 144.0, 6, OpnExtra::AdpcmA, clock / 8.0)
+    }
+
+    fn new(fs: f64, channels: usize, extra: OpnExtra, ssg_clock: f64) -> Opn {
+        Opn {
+            fs,
+            channels,
+            extra,
+            regs: [[0; 0x100]; 2],
+            latch: [0; 2],
+            fnum: [0; 6],
+            block: [0; 6],
+            keyed: [0; 6],
+            voices: Default::default(),
+            ssg: Ay::new("SSG", ssg_clock),
+            drums: Drums::default(),
+            samples: Vec::new(),
+        }
+    }
+
+    fn hz(&self, ch: usize) -> Option<f64> {
+        let f = self.fnum[ch] as f64;
+        (f > 0.0).then(|| f * self.fs / (1u32 << (21 - self.block[ch] as u32)) as f64)
+    }
+}
+
+impl Chip for Opn {
+    fn write(&mut self, t: f64, addr: u16, data: u8) {
+        let port = ((addr >> 8) & 1) as usize;
+        let reg = (addr & 0xFF) as u8;
+        self.regs[port][reg as usize] = data;
+        match (port, reg) {
+            (0, 0x00..=0x0F) => self.ssg.write(t, reg as u16, data),
+            (0, 0x28) => {
+                let c = (data & 3) as usize;
+                if c == 3 {
+                    return;
+                }
+                let ch = c + if data & 4 != 0 && self.channels == 6 {
+                    3
+                } else {
+                    0
+                };
+                let ops = data >> 4;
+                let was = self.keyed[ch];
+                self.keyed[ch] = ops;
+                if ops == 0 {
+                    self.voices[ch].release(t);
+                } else if was == 0 {
+                    match self.hz(ch) {
+                        Some(hz) => sound(&mut self.voices[ch], t, hz, true, 100),
+                        None => self.voices[ch].release(t),
+                    }
+                }
+            }
+            (_, 0xA4..=0xA6) => self.latch[port] = data,
+            (_, 0xA0..=0xA2) => {
+                let ch = port * 3 + (reg - 0xA0) as usize;
+                if ch >= self.channels {
+                    return;
+                }
+                let hi = self.latch[port];
+                self.fnum[ch] = ((hi as u16 & 7) << 8) | data as u16;
+                self.block[ch] = (hi >> 3) & 7;
+                if self.keyed[ch] != 0 && self.voices[ch].sounding() {
+                    if let Some(hz) = self.hz(ch) {
+                        self.voices[ch].pitch(t, hz_to_key(hz));
+                    }
+                }
+            }
+            (0, 0x10) if self.extra == OpnExtra::Rhythm && data & 0x80 == 0 => {
+                // Bass drum, snare, top cymbal, hi-hat, tom, rim shot.
+                for (bit, key) in [36, 38, 49, 42, 45, 37].into_iter().enumerate() {
+                    if data & (1 << bit) != 0 {
+                        self.drums.hit(t, key, 100);
+                    }
+                }
+            }
+            (1, 0x00) if self.extra == OpnExtra::AdpcmA && data & 0x80 == 0 => {
+                const KEYS: [u8; 10] = [36, 38, 42, 46, 49, 45, 41, 39, 37, 51];
+                for ch in (0..6).filter(|c| data & (1 << c) != 0) {
+                    let r = &self.regs[1];
+                    let start = r[0x10 + ch] as u16 | (r[0x18 + ch] as u16) << 8;
+                    let i = match self.samples.iter().position(|&s| s == start) {
+                        Some(i) => i,
+                        None => {
+                            self.samples.push(start);
+                            self.samples.len() - 1
+                        }
+                    };
+                    let vol = r[0x08 + ch] & 0x1F;
+                    self.drums
+                        .hit(t, KEYS[i % KEYS.len()], velocity(vol.max(8), 31));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn finish(self: Box<Self>, end: f64) -> Vec<Part> {
+        let mut parts: Vec<Part> = self
+            .voices
+            .into_iter()
+            .take(self.channels)
+            .enumerate()
+            .map(|(i, v)| part(format!("FM {}", i + 1), 81, v.finish(end)))
+            .collect();
+        parts.extend(Box::new(self.ssg).finish(end));
+        let name = match self.extra {
+            OpnExtra::Rhythm => "Drums (rhythm)",
+            _ => "Drums (ADPCM-A)",
+        };
+        if self.extra != OpnExtra::None {
+            parts.push(Part::drums(name, self.drums.finish()));
+        }
+        parts
+    }
+}
+
 // ---------------------------------------------------------------- YM2151
 
 /// Yamaha YM2151 (OPM): eight FM channels, pitched by key code (octave and

@@ -71,12 +71,11 @@ pub fn error() -> String {
     ERROR.lock().unwrap().clone()
 }
 
-/// Whether a track's notes can be played as MIDI (MIDI files themselves
-/// already are).
+/// Whether a track's notes can be played as MIDI (MIDI files and tab files
+/// themselves already are).
 pub fn possible(track: &TrackRef) -> bool {
     let name = track.loc.name();
-    let ext = formats::extension(&name);
-    notes::supported(&name) && !formats::MIDI.contains(&ext.as_str())
+    notes::supported(&name) && !formats::plays_through_soundfont(&name)
 }
 
 /// Called by the player for each track it opens (and with None when it

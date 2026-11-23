@@ -5909,6 +5909,10 @@ dependencies = [
 [[package]]
 name = "tablature"
 version = "0.1.0"
+dependencies = [
+ "roxmltree",
+ "zip",
+]
 
 [[package]]
 name = "tar"

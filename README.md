@@ -30,6 +30,7 @@ files as if they were folders.
 | Chippy's own Z80 + SN76489 | SGC (Sega Master System / Game Gear; not the FM unit or ColecoVision) |
 | [libxmp](https://github.com/libxmp/libxmp) | Tracker modules: MOD, XM, S3M, IT, MED, MTM, 669, OKT, STM, FAR, ULT, PTM, DBM, AMF, MDL, PSM, GDM, IMF, UMX... |
 | [RustySynth](https://github.com/sinshu/rustysynth) | MIDI (MID, MIDI, KAR, RMI, SMF) through SF2 SoundFonts |
+| Chippy's own `tablature` crate, then RustySynth | Tab files: Guitar Pro 3, 4 and 5 (GP3, GP4, GP5), Guitar Pro 7 and 8 (GP), MusicXML (MUSICXML, MXL), every track through the SoundFont with its repeats and tempo changes. Guitar Pro 6's GPX isn't read yet |
 | [vgmstream](https://github.com/vgmstream/vgmstream) | Hundreds of game formats: ADX, HCA, BRSTM, BCSTM, XWB, FSB, AT3, DSP, GENH/TXTH... including multi-subsong files |
 | [Symphonia](https://github.com/pdeljanov/Symphonia) | MP3, FLAC, WAV, OGG Vorbis, M4A/AAC, ALAC, AIFF, CAF, MKV/WebM audio (Opus in them through libopus) |
 | vgmstream's FFmpeg | Opus, WMA, AC-3 |
@@ -96,6 +97,11 @@ info, PSF tags, vgmstream stream names).
   kept in view, a faint `[1:23]` beside each line says when it is sung,
   and a click jumps to a line), the file's tags, a karaoke MIDI file, or a
   `.txt` file beside it.
+* **Tab files** play like MIDI files, and the guitar tab (below) shows them
+  as written: each track's tuning and capo (*As written (D A D G B E,
+  capo 2)* among the tunings), every note on the string and fret the file
+  gives, in the file's own bars. Another tuning, *Octave* or *Neck* works
+  out a fingering of Chippy's own, as for any other track.
 * **Guitar tab** (`T`, or the guitar button): the playing track's notes laid
   out for guitar (standard, drop D, half step down), 7-string guitar (B
   standard, drop A), bass or ukulele, a part (channel) at a time, starting
@@ -357,8 +363,8 @@ crates/
                    resampling, spectrum, album art, exporting
   chippy-core/     no UI: virtual file system (folders, archives, multi-track
                    files), decoders, tags, album art, playlist, settings
-  tablature/       no audio, no UI, no dependencies: notes, beats and bars,
-                   guitar tab fingering, MusicXML and Guitar Pro 5 writing
+  tablature/       no audio, no UI: notes, beats and bars, guitar tab
+                   fingering, Guitar Pro and MusicXML read and written
                    (chippy-core re-exports it as notes::{tab, score, ...})
   uniffi-bindgen/  generates chippy-android's Kotlin bindings
   gme-sys/         builds third_party/game-music-emu

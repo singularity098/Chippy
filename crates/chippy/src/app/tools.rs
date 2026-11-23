@@ -839,7 +839,7 @@ impl App {
         let parts: Vec<SharedString> = v.part_names().iter().map(ss).collect();
         t.set_part_names(ModelRc::new(VecModel::from(parts)));
         t.set_part(v.part_index() as i32);
-        let tunings: Vec<SharedString> = TabView::tuning_names().iter().map(ss).collect();
+        let tunings: Vec<SharedString> = v.tuning_names().iter().map(ss).collect();
         t.set_tunings(ModelRc::new(VecModel::from(tunings)));
         t.set_tuning(v.tuning_index() as i32);
         let strings: Vec<SharedString> = v.strings().iter().map(ss).collect();

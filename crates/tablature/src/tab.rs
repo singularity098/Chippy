@@ -13,47 +13,59 @@
 //! rest of the fingering follows to stay comfortable. A stretch of it (a
 //! bar, say) can be nudged on its own the same way.
 
+use std::borrow::Cow;
+
 use crate::Note;
 
 /// An instrument's open strings, lowest first, as MIDI keys.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tuning {
-    pub name: &'static str,
-    pub strings: &'static [u8],
+    pub name: Cow<'static, str>,
+    pub strings: Cow<'static, [u8]>,
+}
+
+impl Tuning {
+    /// A tuning that isn't one of [`TUNINGS`]: one read from a file.
+    pub fn new(name: impl Into<String>, strings: Vec<u8>) -> Tuning {
+        Tuning {
+            name: Cow::Owned(name.into()),
+            strings: Cow::Owned(strings),
+        }
+    }
 }
 
 pub const TUNINGS: &[Tuning] = &[
     Tuning {
-        name: "Guitar (standard)",
-        strings: &[40, 45, 50, 55, 59, 64],
+        name: Cow::Borrowed("Guitar (standard)"),
+        strings: Cow::Borrowed(&[40, 45, 50, 55, 59, 64]),
     },
     Tuning {
-        name: "Guitar (drop D)",
-        strings: &[38, 45, 50, 55, 59, 64],
+        name: Cow::Borrowed("Guitar (drop D)"),
+        strings: Cow::Borrowed(&[38, 45, 50, 55, 59, 64]),
     },
     Tuning {
-        name: "Guitar (half step down)",
-        strings: &[39, 44, 49, 54, 58, 63],
+        name: Cow::Borrowed("Guitar (half step down)"),
+        strings: Cow::Borrowed(&[39, 44, 49, 54, 58, 63]),
     },
     Tuning {
-        name: "7-string guitar (B standard)",
-        strings: &[35, 40, 45, 50, 55, 59, 64],
+        name: Cow::Borrowed("7-string guitar (B standard)"),
+        strings: Cow::Borrowed(&[35, 40, 45, 50, 55, 59, 64]),
     },
     Tuning {
-        name: "7-string guitar (drop A)",
-        strings: &[33, 40, 45, 50, 55, 59, 64],
+        name: Cow::Borrowed("7-string guitar (drop A)"),
+        strings: Cow::Borrowed(&[33, 40, 45, 50, 55, 59, 64]),
     },
     Tuning {
-        name: "Bass (4 strings)",
-        strings: &[28, 33, 38, 43],
+        name: Cow::Borrowed("Bass (4 strings)"),
+        strings: Cow::Borrowed(&[28, 33, 38, 43]),
     },
     Tuning {
-        name: "Bass (5 strings)",
-        strings: &[23, 28, 33, 38, 43],
+        name: Cow::Borrowed("Bass (5 strings)"),
+        strings: Cow::Borrowed(&[23, 28, 33, 38, 43]),
     },
     Tuning {
-        name: "Ukulele",
-        strings: &[67, 60, 64, 69],
+        name: Cow::Borrowed("Ukulele"),
+        strings: Cow::Borrowed(&[67, 60, 64, 69]),
     },
 ];
 
@@ -250,6 +262,45 @@ fn moving(hand: Option<f64>, frets: Option<(f64, f64)>) -> (f64, Option<f64>) {
     }
 }
 
+/// The strings' names, lowest first ("E", "A", ...).
+fn string_names(tuning: &Tuning) -> Vec<String> {
+    tuning.strings.iter().map(|&k| name(k)).collect()
+}
+
+/// `notes` on the strings `places` gives for each (0 the lowest), as a tab
+/// file has them, on an instrument tuned `tuning`. None if a note has no
+/// string, or can't be played on it.
+pub fn written(notes: &[Note], places: &[Option<u8>], tuning: &Tuning) -> Option<Tab> {
+    if places.len() != notes.len() || notes.is_empty() {
+        return None;
+    }
+    let soft = soft_notes(notes);
+    let mut out = Vec::with_capacity(notes.len());
+    for ((n, &place), soft) in notes.iter().zip(places).zip(soft) {
+        let string = place?;
+        let open = *tuning.strings.get(string as usize)?;
+        let fret = n.key.checked_sub(open)?;
+        out.push(TabNote {
+            start_ms: n.start_ms,
+            dur_ms: n.dur_ms,
+            string,
+            fret,
+            key: n.key,
+            soft,
+        });
+    }
+    out.sort_by(|a, b| {
+        a.start_ms
+            .total_cmp(&b.start_ms)
+            .then(a.string.cmp(&b.string))
+    });
+    Some(Tab {
+        notes: out,
+        string_names: string_names(tuning),
+        ..Default::default()
+    })
+}
+
 /// Lays `notes` out on an instrument tuned `tuning`.
 pub fn arrange(notes: &[Note], tuning: &Tuning) -> Tab {
     arrange_with(notes, tuning, Adjust::default())
@@ -415,7 +466,7 @@ fn step_along(
 pub fn arrange_with(notes: &[Note], tuning: &Tuning, adjust: Adjust) -> Tab {
     let low = *tuning.strings.iter().min().unwrap_or(&40);
     let high = tuning.strings.iter().max().unwrap_or(&64) + FRETS;
-    let string_names = tuning.strings.iter().map(|&k| name(k)).collect();
+    let string_names = string_names(tuning);
     if notes.is_empty() {
         return Tab {
             string_names,

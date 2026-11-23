@@ -33,6 +33,8 @@ pub enum Codec {
     Wsr,
     /// Tracker modules (libxmp).
     Module,
+    /// Tab files (Guitar Pro, MusicXML), played through a SoundFont.
+    Tab,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +79,8 @@ pub const MODULES: &[&str] = &[
     "liq", "masi", "mgt", "rtm", "emod", "fnk", "ims", "xmf", "umx", "abk", "coco",
 ];
 pub const MIDI: &[&str] = &["mid", "midi", "kar", "rmi", "smf"];
+/// Tab files: Guitar Pro 3 to 5 and 7 to 8, MusicXML.
+pub const TAB: &[&str] = tablature::song::EXTENSIONS;
 pub const IMAGES: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "webp"];
 
 /// Extensions vgmstream accepts that are better shown as something else, or
@@ -152,6 +156,9 @@ pub fn kind_of(name: &str) -> FileKind {
     if MIDI.contains(&e) {
         return FileKind::Audio(Codec::Midi);
     }
+    if TAB.contains(&e) {
+        return FileKind::Audio(Codec::Tab);
+    }
     if IMAGES.contains(&e) {
         return FileKind::Image;
     }
@@ -165,6 +172,14 @@ pub fn kind_of_path(p: &Path) -> FileKind {
     p.file_name()
         .map(|n| kind_of(&n.to_string_lossy()))
         .unwrap_or(FileKind::Other)
+}
+
+/// Whether a file plays through the SoundFont (MIDI files and tab files).
+pub fn plays_through_soundfont(name: &str) -> bool {
+    matches!(
+        kind_of(name),
+        FileKind::Audio(Codec::Midi) | FileKind::Audio(Codec::Tab)
+    )
 }
 
 /// Whether opening this file might show a list of tracks rather than play.
@@ -206,6 +221,11 @@ mod tests {
         assert_eq!(kind_of("x.tar.gz"), FileKind::Archive(ArchiveKind::TarGz));
         assert_eq!(kind_of("cover.JPG"), FileKind::Image);
         assert_eq!(kind_of("song.adx"), FileKind::Audio(Codec::Vgmstream));
+        assert_eq!(kind_of("riff.gp5"), FileKind::Audio(Codec::Tab));
+        assert_eq!(kind_of("riff.GP"), FileKind::Audio(Codec::Tab));
+        assert_eq!(kind_of("score.mxl"), FileKind::Audio(Codec::Tab));
+        assert!(plays_through_soundfont("a.mid") && plays_through_soundfont("a.gp4"));
+        assert!(!plays_through_soundfont("a.nsf"));
         assert_eq!(kind_of("readme.txt"), FileKind::Other);
         assert_eq!(kind_of("noext"), FileKind::Other);
     }

@@ -536,12 +536,7 @@ impl Core {
                 Repeat::One => RepeatMode::One,
             },
             up_next,
-            midi: item.is_some_and(|i| {
-                matches!(
-                    formats::kind_of(&i.track.loc.name()),
-                    formats::FileKind::Audio(formats::Codec::Midi)
-                )
-            }),
+            midi: item.is_some_and(|i| formats::plays_through_soundfont(&i.track.loc.name())),
             soundfont: self
                 .settings
                 .soundfont
@@ -885,7 +880,7 @@ impl Core {
                 .map(|(_, name)| format!("With {name}"))
                 .chain(v.is_merged().then(|| "Take this merge apart".to_string()))
                 .collect(),
-            tunings: TabView::tuning_names(),
+            tunings: v.tuning_names(),
             tuning: v.tuning_index() as u32,
             strings: v.strings(),
             lines: v

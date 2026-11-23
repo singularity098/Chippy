@@ -340,6 +340,14 @@ impl MidiDecoder {
         Self::with_song(song, current_font(), rate)
     }
 
+    /// Plays notes read from a tab file ([`super::tabfile`]) at `rate`,
+    /// through the SoundFont (waiting for one being loaded, as a MIDI file
+    /// does).
+    pub fn open_notes(t: &crate::notes::Transcription, rate: u32) -> Result<Self> {
+        let song = parse(&crate::notes::midi::write(t, ""))?;
+        Self::with_song(song, wait_for_font(), rate)
+    }
+
     fn with_song(
         song: Song,
         (generation, font): (u64, Option<Arc<SoundFont>>),

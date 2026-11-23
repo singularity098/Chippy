@@ -90,6 +90,13 @@ pub fn transcribe(loc: &Location, sub: Option<u32>, max_ms: Option<u64>) -> Resu
         "gsf" | "minigsf" => gba::transcribe(loc, max_ms)?,
         e if crate::formats::SID.contains(&e) => sid::transcribe(loc, sub, max_ms)?,
         e if crate::formats::MODULES.contains(&e) => module::transcribe(loc, max_ms)?,
+        e if crate::formats::TAB.contains(&e) => {
+            let mut t = from_song(crate::decode::tabfile::read(loc)?);
+            if let Some(max) = max_ms {
+                t.cut(max as f64);
+            }
+            t
+        }
         e if crate::formats::MIDI.contains(&e) => {
             let mut t = smf::read(&loc.read()?)?;
             if let Some(max) = max_ms {
@@ -135,13 +142,26 @@ pub fn supported(name: &str) -> bool {
         || crate::formats::SID.contains(&e)
         || crate::formats::MODULES.contains(&e)
         || crate::formats::MIDI.contains(&e)
+        || crate::formats::TAB.contains(&e)
+}
+
+/// A song read from a tab file as a transcription: its parts, each on the
+/// strings it is written for, and its bars as the file has them.
+pub fn from_song(song: tablature::Song) -> Transcription {
+    Transcription {
+        system: song.format,
+        parts: song.parts,
+        samples: Vec::new(),
+        notes: Vec::new(),
+        meter: Some(song.meter),
+    }
 }
 
 impl Transcription {
     /// Drops what starts after `ms`, and ends what is still sounding there.
     pub fn cut(&mut self, ms: f64) {
         for p in &mut self.parts {
-            p.notes.retain(|n| n.start_ms < ms);
+            p.retain_notes(|n| n.start_ms < ms);
             for n in &mut p.notes {
                 n.dur_ms = n.dur_ms.min(ms - n.start_ms);
             }

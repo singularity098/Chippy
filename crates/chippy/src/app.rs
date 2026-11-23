@@ -2185,10 +2185,7 @@ impl App {
                     self.duration_ms = m.length_ms;
                 }
                 ui.set_subtitle(ss(tilde(&item.track.loc.vpath())));
-                n.set_midi(matches!(
-                    formats::kind_of(&item.track.loc.name()),
-                    formats::FileKind::Audio(formats::Codec::Midi)
-                ));
+                n.set_midi(formats::plays_through_soundfont(&item.track.loc.name()));
             }
             None => {
                 n.set_title(SharedString::new());

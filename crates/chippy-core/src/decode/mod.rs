@@ -7,6 +7,7 @@ pub mod midi;
 pub mod sgc;
 pub mod sid;
 pub mod sym;
+pub mod tabfile;
 pub mod timed;
 pub mod twosf;
 pub mod usf;
@@ -101,6 +102,7 @@ pub fn open_decoder(t: &TrackRef, opts: &DecodeOptions) -> Result<Box<dyn Decode
         )?)),
         Some(Codec::Usf) => Ok(Box::new(usf::UsfDecoder::open(&t.loc, opts)?)),
         Some(Codec::Midi) => Ok(Box::new(midi::MidiDecoder::open(&t.loc, opts)?)),
+        Some(Codec::Tab) => Ok(Box::new(tabfile::open(&t.loc, opts)?)),
         Some(Codec::Ao) => Ok(Box::new(ao::open(&t.loc, opts)?)),
         Some(Codec::Sid) => Ok(Box::new(sid::open(&t.loc, t.sub, opts)?)),
         Some(Codec::Sgc) => Ok(Box::new(sgc::open(&t.loc, t.sub, opts)?)),
@@ -145,6 +147,7 @@ pub fn read_meta(t: &TrackRef, opts: &DecodeOptions) -> Result<TrackMeta> {
         Some(Codec::Gme) => gme::meta(&t.loc, t.sub.unwrap_or(0), opts),
         Some(Codec::Usf) => usf::meta(&t.loc, opts),
         Some(Codec::Midi) => midi::meta(&t.loc),
+        Some(Codec::Tab) => tabfile::meta(&t.loc),
         Some(Codec::Ao) => ao::meta(&t.loc, opts),
         Some(Codec::Sid) => sid::meta(&t.loc, t.sub, opts),
         Some(Codec::Sgc) => sgc::meta(&t.loc, t.sub, opts),

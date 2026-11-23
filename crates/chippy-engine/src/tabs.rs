@@ -205,6 +205,62 @@ fn median_key(p: &Part) -> u8 {
     notes::instrument::median(&mut keys).unwrap_or(60)
 }
 
+/// The index, among the tunings to choose from, of the strings a part read
+/// from a tab file is written for: after [`tab::TUNINGS`].
+const WRITTEN: usize = tab::TUNINGS.len();
+
+/// A note's name without its octave ("F#").
+fn pitch_name(key: u8) -> String {
+    notes::key_name(key)
+        .trim_end_matches(|c: char| c.is_ascii_digit() || c == '-')
+        .to_string()
+}
+
+/// "As written (D A D G B E, capo 2)": the tuning a part read from a tab
+/// file is written for.
+fn written_name(p: &Part) -> String {
+    let names: Vec<String> = p
+        .strings
+        .iter()
+        .map(|&k| pitch_name(k.saturating_sub(p.capo)))
+        .collect();
+    let capo = if p.capo > 0 {
+        format!(", capo {}", p.capo)
+    } else {
+        String::new()
+    };
+    format!("As written ({}{capo})", names.join(" "))
+}
+
+/// Tuning `i` (an index into [`tab::TUNINGS`], or [`WRITTEN`]) for part `p`.
+fn tuning_of(p: &Part, i: usize) -> tab::Tuning {
+    match tab::TUNINGS.get(i) {
+        Some(t) => t.clone(),
+        None if !p.strings.is_empty() => tab::Tuning::new(written_name(p), p.strings.clone()),
+        None => tab::TUNINGS[0].clone(),
+    }
+}
+
+/// Part `p` laid out on tuning `i`, moved by hand as `a` says: on the
+/// strings and frets the tab file gives, as written, until it is moved.
+fn lay_out(p: &Part, i: usize, a: tab::Adjust) -> tab::Tab {
+    let tuning = tuning_of(p, i);
+    let mut t = match i == WRITTEN && a == tab::Adjust::default() {
+        true => tab::written(&p.notes, &p.written, &tuning),
+        false => None,
+    }
+    .unwrap_or_else(|| tab::arrange_with(&p.notes, &tuning, a));
+    if i == WRITTEN && p.capo > 0 {
+        // Frets count from the capo; the strings are named as tuned.
+        t.string_names = p
+            .strings
+            .iter()
+            .map(|&k| pitch_name(k.saturating_sub(p.capo)))
+            .collect();
+    }
+    t
+}
+
 /// The parts of `t`, laid out as `tabs` says ((part index, tuning, tab)),
 /// written out in the bars of `meter`.
 fn build_score(
@@ -213,14 +269,19 @@ fn build_score(
     meter: &Meter,
     tabs: &[(usize, usize, tab::Tab)],
 ) -> Score {
+    let tunings: Vec<tab::Tuning> = tabs
+        .iter()
+        .map(|(i, tuning, _)| tuning_of(&t.parts[*i], *tuning))
+        .collect();
     let parts: Vec<score::PartTab> = tabs
         .iter()
-        .map(|(i, tuning, tb)| {
+        .zip(&tunings)
+        .map(|((i, _, tb), tuning)| {
             let p = &t.parts[*i];
             score::PartTab {
                 name: p.name.clone(),
                 program: p.program,
-                tuning: &tab::TUNINGS[*tuning],
+                tuning,
                 tab: tb,
             }
         })
@@ -228,9 +289,9 @@ fn build_score(
     score::build(title, meter, &parts)
 }
 
-/// A track's notes as tab in bars, as the tab view first shows them
-/// (each pitched part on a guitar, or a bass if it is low), over
-/// `meter`'s bars. None if there are no pitched notes.
+/// A track's notes as tab in bars, as the tab view first shows them (each
+/// pitched part as a tab file writes it, or else on a guitar, or a bass if
+/// it is low), over `meter`'s bars. None if there are no pitched notes.
 pub fn default_score(t: &Transcription, title: &str, meter: &Meter) -> Option<Score> {
     let tabs: Vec<(usize, usize, tab::Tab)> = t
         .parts
@@ -238,12 +299,14 @@ pub fn default_score(t: &Transcription, title: &str, meter: &Meter) -> Option<Sc
         .enumerate()
         .filter(|(_, p)| !p.drums && !p.notes.is_empty())
         .map(|(i, p)| {
-            let tuning = if is_bass(p) {
+            let tuning = if !p.strings.is_empty() {
+                WRITTEN
+            } else if is_bass(p) {
                 tab::tuning_named("Bass (4 strings)").unwrap_or(0)
             } else {
                 0
             };
-            (i, tuning, tab::arrange(&p.notes, &tab::TUNINGS[tuning]))
+            (i, tuning, lay_out(p, tuning, tab::Adjust::default()))
         })
         .collect();
     (!tabs.is_empty()).then(|| build_score(t, title, meter, &tabs))
@@ -402,16 +465,26 @@ impl TabView {
             .collect()
     }
 
-    pub fn tuning_name(&self) -> &'static str {
-        tab::TUNINGS[self.tuning].name
+    pub fn tuning_name(&self) -> String {
+        match (tab::TUNINGS.get(self.tuning), self.current_part()) {
+            (Some(t), _) => t.name.to_string(),
+            (None, Some(p)) if !p.strings.is_empty() => written_name(p),
+            _ => tab::TUNINGS[0].name.to_string(),
+        }
     }
 
     pub fn tuning_index(&self) -> usize {
         self.tuning
     }
 
-    pub fn tuning_names() -> Vec<String> {
-        tab::TUNINGS.iter().map(|t| t.name.to_string()).collect()
+    /// The tunings to choose from: the usual ones, and the one the shown
+    /// part is written for if it was read from a tab file.
+    pub fn tuning_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = tab::TUNINGS.iter().map(|t| t.name.to_string()).collect();
+        if let Some(p) = self.current_part().filter(|p| !p.strings.is_empty()) {
+            names.push(written_name(p));
+        }
+        names
     }
 
     pub fn step_part(&mut self, d: i32) {
@@ -572,12 +645,12 @@ impl TabView {
     }
 
     pub fn step_tuning(&mut self, d: i32) {
-        let n = tab::TUNINGS.len() as i32;
+        let n = self.tuning_names().len() as i32;
         self.set_tuning((self.tuning as i32 + d).rem_euclid(n) as usize);
     }
 
     pub fn set_tuning(&mut self, i: usize) {
-        if i < tab::TUNINGS.len() {
+        if i < self.tuning_names().len() {
             self.tuning = i;
             self.tuning_chosen = true;
             self.arrange();
@@ -857,8 +930,12 @@ impl TabView {
     /// The tuning to show part `i` (an index into the transcription's
     /// parts) on.
     fn tuning_for(&self, p: &Part) -> usize {
-        if self.tuning_chosen {
+        let written = !p.strings.is_empty();
+        if self.tuning_chosen && (self.tuning != WRITTEN || written) {
             self.tuning
+        } else if written {
+            // As the tab file writes it.
+            WRITTEN
         } else if is_bass(p) {
             // Low parts on a bass, the rest on a guitar.
             tab::tuning_named("Bass (4 strings)").unwrap_or(0)
@@ -899,7 +976,7 @@ impl TabView {
         let adjust = self.fit_spans(&self.adjust());
         let Some(p) = self.current_part() else { return };
         let tuning = self.tuning_for(p);
-        let tab = tab::arrange_with(&p.notes, &tab::TUNINGS[tuning], adjust.clone());
+        let tab = lay_out(p, tuning, adjust.clone());
         // Steps asked for past where anything moves are forgotten, so a
         // step back the other way shows at once.
         let mut kept = tab::Adjust {
@@ -987,11 +1064,7 @@ impl TabView {
                     .get(&(track.clone(), i))
                     .map(|a| self.fit_spans(a))
                     .unwrap_or_default();
-                (
-                    i,
-                    tuning,
-                    tab::arrange_with(&p.notes, &tab::TUNINGS[tuning], a),
-                )
+                (i, tuning, lay_out(p, tuning, a))
             })
             .collect();
         Some(build_score(t, title, m, &tabs))
@@ -1005,15 +1078,16 @@ impl TabView {
     pub fn strings(&self) -> Vec<String> {
         match &self.tab {
             Some(t) => t.string_names.clone(),
-            None => tab::TUNINGS[self.tuning]
-                .strings
-                .iter()
-                .map(|&k| {
-                    let n = notes::key_name(k);
-                    n.trim_end_matches(|c: char| c.is_ascii_digit() || c == '-')
-                        .to_string()
-                })
-                .collect(),
+            None => {
+                let tuning = match self.current_part() {
+                    Some(p) => tuning_of(p, self.tuning),
+                    None => tab::TUNINGS
+                        .get(self.tuning)
+                        .unwrap_or(&tab::TUNINGS[0])
+                        .clone(),
+                };
+                tuning.strings.iter().map(|&k| pitch_name(k)).collect()
+            }
         }
     }
 
@@ -1260,5 +1334,68 @@ mod tests {
         let keys: Vec<u8> = m.notes.iter().map(|n| n.key).collect();
         assert_eq!(keys, vec![67, 70, 74, 75, 60]);
         assert_eq!(m.notes[4].dur_ms, 105.0);
+    }
+
+    /// A part read from a tab file: open D, then fret 7 on the D string
+    /// (which Chippy would play elsewhere), in drop D with a capo on 2.
+    fn written_part() -> Part {
+        Part {
+            name: "Gtr".into(),
+            program: 25,
+            notes: vec![note(0.0, 40), note(500.0, 59)],
+            strings: vec![40, 47, 52, 57, 61, 66],
+            capo: 2,
+            written: vec![Some(0), Some(2)],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn tab_files_show_as_written() {
+        let p = written_part();
+        assert_eq!(written_name(&p), "As written (D A D G B E, capo 2)");
+        let t = lay_out(&p, WRITTEN, tab::Adjust::default());
+        let places: Vec<(u8, u8)> = t.notes.iter().map(|n| (n.string, n.fret)).collect();
+        assert_eq!(places, vec![(0, 0), (2, 7)]);
+        assert_eq!(t.string_names, vec!["D", "A", "D", "G", "B", "E"]);
+        // Moved along the neck, Chippy finds a fingering of its own on the
+        // same strings.
+        let moved = lay_out(
+            &p,
+            WRITTEN,
+            tab::Adjust {
+                position: -1,
+                ..Default::default()
+            },
+        );
+        assert_eq!(moved.notes.len(), 2);
+        assert!(moved.notes.iter().all(|n| n.key == 40 || n.key == 59));
+        // Any other tuning ignores what is written.
+        let std = lay_out(&p, 0, tab::Adjust::default());
+        assert_eq!(std.string_names, vec!["E", "A", "D", "G", "B", "E"]);
+
+        // Written out, it keeps the file's tuning and frets.
+        let t = Transcription {
+            parts: vec![p],
+            ..Default::default()
+        };
+        let m = meter::guess(&t.parts, 2000.0).unwrap_or(Meter {
+            bars: vec![meter::Bar {
+                start_ms: 0.0,
+                beats: vec![0.0, 500.0, 1000.0, 1500.0],
+                sig: (4, 4),
+            }],
+            end_ms: 2000.0,
+            exact: true,
+        });
+        let s = default_score(&t, "Song", &m).unwrap();
+        assert_eq!(s.tracks[0].strings, vec![40, 47, 52, 57, 61, 66]);
+        let frets: Vec<u8> = s.tracks[0]
+            .bars
+            .iter()
+            .flatten()
+            .flat_map(|e| e.notes.iter().filter(|n| !n.tie_in).map(|n| n.fret))
+            .collect();
+        assert_eq!(frets, vec![0, 7]);
     }
 }

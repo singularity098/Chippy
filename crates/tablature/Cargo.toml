@@ -1,9 +1,11 @@
 [package]
 name = "tablature"
-description = "Notes, bars and guitar tablature, written out as MusicXML or Guitar Pro 5: no audio, no interface"
+description = "Notes, bars and guitar tablature: Guitar Pro and MusicXML read and written; no audio, no interface"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
+roxmltree = "0.20"
+zip = { version = "2", default-features = false, features = ["deflate", "deflate64"] }

@@ -2,10 +2,12 @@
 // The core is a single global machine: one song at a time. build.rs builds
 // it twice, the second time (for finding notes) with its namespaces renamed
 // and these functions called wsrn_* instead of wsr_*.
-#include <cstdint>
-#include "wsr_player_common/wsr_player_intf.h"
+// Mednafen's types.h must come before any standard header (it errors if
+// NULL, EOF etc. are already defined, as the NDK's <cstdint> does).
 #include "wswan/wswan.h"
 #include "wswan/sound.h"
+#include "wsr_player_common/wsr_player_intf.h"
+#include <cstdint>
 
 #ifndef WSR_FN
 #define WSR_FN(name) wsr_##name

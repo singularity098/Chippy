@@ -18,6 +18,7 @@ use crate::vfs::Location;
 
 mod brr;
 mod chips;
+mod gba;
 pub mod gm;
 pub mod gp5;
 pub mod instrument;
@@ -142,6 +143,7 @@ pub fn transcribe(loc: &Location, sub: Option<u32>, max_ms: Option<u64>) -> Resu
         "wsr" => wsr::transcribe(loc, sub, max_ms)?,
         e if PLAYSTATION.contains(&e) => psx::transcribe(loc, max_ms)?,
         "2sf" | "mini2sf" => nds::transcribe(loc, max_ms)?,
+        "gsf" | "minigsf" => gba::transcribe(loc, max_ms)?,
         e if crate::formats::SID.contains(&e) => sid::transcribe(loc, sub, max_ms)?,
         e if crate::formats::MODULES.contains(&e) => module::transcribe(loc, max_ms)?,
         e if crate::formats::MIDI.contains(&e) => {
@@ -183,6 +185,8 @@ pub fn supported(name: &str) -> bool {
             | "wsr"
             | "2sf"
             | "mini2sf"
+            | "gsf"
+            | "minigsf"
     ) || PLAYSTATION.contains(&e)
         || crate::formats::SID.contains(&e)
         || crate::formats::MODULES.contains(&e)

@@ -341,6 +341,9 @@ void GBAIOInit(struct GBA* gba) {
 }
 
 void GBAIOWrite(struct GBA* gba, uint32_t address, uint16_t value) {
+	if (gba->notesHook && !gba->notesInWrite8 && address >= REG_SOUND1CNT_LO && address < REG_WAVE_RAM0_LO) {
+		gba->notesHook(gba->notesUser, (uint32_t) mTimingCurrentTime(&gba->timing), address, value, 2);
+	}
 	if (address < REG_SOUND1CNT_LO && (address > REG_VCOUNT || address < REG_DISPSTAT)) {
 		gba->memory.io[address >> 1] = gba->video.renderer->writeVideoRegister(gba->video.renderer, address, value);
 		return;
@@ -621,7 +624,12 @@ void GBAIOWrite8(struct GBA* gba, uint32_t address, uint8_t value) {
 	}
 	uint16_t value16 = value << (8 * (address & 1));
 	value16 |= (gba->memory.io[(address & (SIZE_IO - 1)) >> 1]) & ~(0xFF << (8 * (address & 1)));
+	if (gba->notesHook && address >= REG_SOUND1CNT_LO && address < REG_WAVE_RAM0_LO) {
+		gba->notesHook(gba->notesUser, (uint32_t) mTimingCurrentTime(&gba->timing), address, value, 1);
+	}
+	gba->notesInWrite8 = true;
 	GBAIOWrite(gba, address & 0xFFFFFFFE, value16);
+	gba->notesInWrite8 = false;
 }
 
 void GBAIOWrite32(struct GBA* gba, uint32_t address, uint32_t value) {

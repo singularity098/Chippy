@@ -2,3 +2,6 @@ mGBA (MPL-2.0), trimmed to the GBA core for GSF playback, as vendored by rePlaye
 (https://github.com/arnaud-neny/rePlayer, source/Replays/HighlyAdvanced/mGBA),
 itself from kode54's GSF player. Chippy's shim and POSIX memory functions are in
 crates/gsf-sys.
+
+Chippy's change: struct GBA's notesHook (include/mgba/internal/gba/gba.h), told by
+src/gba/io.c of each write to the sound registers, for finding a song's notes.

@@ -123,6 +123,13 @@ struct GBA {
 
 	bool debug;
 	char debugString[0x100];
+
+	// Chippy: told of each write to the sound registers ($60-$89), with the
+	// cycle count (32 bits: it wraps) and its size in bytes, for finding a
+	// song's notes.
+	void (*notesHook)(void* user, uint64_t cycles, uint32_t address, uint32_t value, int bytes);
+	void* notesUser;
+	bool notesInWrite8;
 	GBADebugFlags debugFlags;
 };
 

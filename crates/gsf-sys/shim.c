@@ -7,6 +7,7 @@
 #include <mgba/core/config.h>
 #include <mgba-util/vfs.h>
 #include <mgba-util/memory.h>
+#include <mgba/internal/gba/gba.h>
 
 void* anonymousMemoryMap(size_t size) { return calloc(1, size); }
 void mappedMemoryFree(void* memory, size_t size) { (void)size; free(memory); }
@@ -94,6 +95,30 @@ void gsf_render(struct gsf *g, int16_t *out, unsigned frames) {
         frames -= n;
     }
 }
+
+/* For finding notes: the sound register hook (see struct GBA's notesHook),
+ * running a frame at a time, the global cycle count, and reading memory. */
+typedef void (*gsf_notes_fn)(void *user, uint64_t cycles, uint32_t address, uint32_t value, int bytes);
+
+void gsf_set_notes_hook(struct gsf *g, gsf_notes_fn f, void *user) {
+    struct GBA *gba = g->core->board;
+    gba->notesHook = f;
+    gba->notesUser = user;
+}
+
+void gsf_run_frame(struct gsf *g) {
+    g->core->runFrame(g->core);
+    g->stream.count = g->stream.pos = 0;
+}
+
+uint64_t gsf_cycles(struct gsf *g) {
+    struct GBA *gba = g->core->board;
+    return (uint32_t) mTimingCurrentTime(&gba->timing);
+}
+
+uint32_t gsf_read8(struct gsf *g, uint32_t address) { return g->core->busRead8(g->core, address); }
+
+uint32_t gsf_read32(struct gsf *g, uint32_t address) { return g->core->busRead32(g->core, address); }
 
 void gsf_close(struct gsf *g) {
     if (!g) return;

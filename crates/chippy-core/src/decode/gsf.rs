@@ -81,6 +81,99 @@ pub fn open(loc: &Location, opts: &DecodeOptions) -> Result<Timed<GsfEngine>> {
     Ok(Timed::new(GsfEngine { g, rom, rate }, length, fade).with_gain(psf::volume(&p)))
 }
 
+/// What [`capture`] tells of the running GBA.
+pub(crate) trait Watcher {
+    /// A write to the sound registers (the I/O offset, $60-$89), of
+    /// `bytes` bytes, `ms` into the tune.
+    fn write(&mut self, ms: f64, address: u32, value: u32, bytes: i32);
+    /// A video frame ended, `ms` into the tune; `mem` reads the GBA's
+    /// memory.
+    fn frame(&mut self, ms: f64, mem: &dyn Memory);
+}
+
+/// The GBA's memory, as the CPU sees it.
+pub(crate) trait Memory {
+    fn read8(&self, address: u32) -> u8;
+    fn read32(&self, address: u32) -> u32;
+}
+
+struct Bus(*mut ffi::gsf);
+
+impl Memory for Bus {
+    fn read8(&self, address: u32) -> u8 {
+        unsafe { ffi::gsf_read8(self.0, address) as u8 }
+    }
+    fn read32(&self, address: u32) -> u32 {
+        unsafe { ffi::gsf_read32(self.0, address) }
+    }
+}
+
+/// The GBA's CPU clock.
+const CLOCK_HZ: f64 = 16_777_216.0;
+
+/// Runs the tune (silently) a frame at a time for `ms`, or its tagged
+/// length and fade, telling `w` of it. Returns how long was played, ms.
+pub(crate) fn capture(loc: &Location, ms: Option<u64>, w: &mut dyn Watcher) -> Result<f64> {
+    struct Hooked<'a, 'b> {
+        w: &'a mut (dyn Watcher + 'b),
+        clock: Clock,
+    }
+    /// mGBA's 32-bit cycle count, unwrapped (calls come in time order).
+    #[derive(Default)]
+    struct Clock {
+        last: u32,
+        total: u64,
+    }
+    impl Clock {
+        fn ms(&mut self, cycles: u64) -> f64 {
+            let c = cycles as u32;
+            self.total += c.wrapping_sub(self.last) as u64;
+            self.last = c;
+            self.total as f64 * 1000.0 / CLOCK_HZ
+        }
+    }
+    unsafe extern "C" fn hook(
+        user: *mut std::os::raw::c_void,
+        cycles: u64,
+        address: u32,
+        value: u32,
+        bytes: std::os::raw::c_int,
+    ) {
+        let h = unsafe { &mut *(user as *mut Hooked) };
+        let ms = h.clock.ms(cycles);
+        h.w.write(ms, address, value, bytes);
+    }
+
+    let (rom, p) = rom(loc)?;
+    let opts = DecodeOptions::default();
+    let ms = ms.unwrap_or_else(|| {
+        let (length, fade) = psf::timing(&p, &opts);
+        length + fade
+    });
+    let engine = GsfEngine {
+        g: GsfEngine::start(&rom, 32_768)?,
+        rom,
+        rate: 32_768,
+    };
+    let g = engine.g;
+    let mut hooked = Hooked {
+        w,
+        clock: Clock {
+            last: unsafe { ffi::gsf_cycles(g) } as u32,
+            total: 0,
+        },
+    };
+    unsafe { ffi::gsf_set_notes_hook(g, Some(hook), (&mut hooked as *mut Hooked).cast()) };
+    let mut now = 0.0;
+    while now < ms as f64 {
+        unsafe { ffi::gsf_run_frame(g) };
+        now = hooked.clock.ms(unsafe { ffi::gsf_cycles(g) });
+        hooked.w.frame(now, &Bus(g));
+    }
+    unsafe { ffi::gsf_set_notes_hook(g, None, std::ptr::null_mut()) };
+    Ok(now)
+}
+
 pub fn meta(loc: &Location, opts: &DecodeOptions) -> Result<TrackMeta> {
     let p = psf::parse(&loc.read()?)?;
     let format = if loc.extension() == "minigsf" {
@@ -146,5 +239,9 @@ mod tests {
         let n = d.read(&mut buf).unwrap();
         let hz = pitch(&buf[n..n * 2], 48_000);
         assert!((hz - 440.0).abs() < 15.0, "{hz} Hz");
+        // Its notes: no m4a engine here, so from the Game Boy channel.
+        let t = crate::notes::transcribe(&loc, None, Some(1000)).unwrap();
+        let p = crate::notes::part(&t, "Pulse 1");
+        assert_eq!(p.notes.iter().map(|n| n.key).collect::<Vec<_>>(), vec![69]);
     }
 }

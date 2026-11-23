@@ -185,6 +185,9 @@ pub fn open(loc: &Location, opts: &DecodeOptions) -> Result<Timed<AoEngine>> {
     Ok(Timed::new(engine, length, fade).with_gain(gain))
 }
 
+/// What [`capture`] hands each write to.
+pub(crate) type OnWrite<'a> = dyn FnMut(f64, i32, u32, u32, &[u8]) + 'a;
+
 /// Plays the tune (silently) for `ms`, or its tagged length and fade,
 /// handing `f` each SPU (kind 1) or SPU2 (kind 2) register write: (ms into
 /// the tune, kind, register, value, the SPU's RAM). Returns the system's
@@ -192,10 +195,10 @@ pub fn open(loc: &Location, opts: &DecodeOptions) -> Result<Timed<AoEngine>> {
 pub(crate) fn capture(
     loc: &Location,
     ms: Option<u64>,
-    f: &mut dyn FnMut(f64, i32, u32, u32, &[u8]),
+    f: &mut OnWrite,
 ) -> Result<(&'static str, f64)> {
-    struct Hooked<'a> {
-        f: &'a mut dyn FnMut(f64, i32, u32, u32, &[u8]),
+    struct Hooked<'a, 'b> {
+        f: &'a mut OnWrite<'b>,
     }
     unsafe extern "C" fn hook(
         user: *mut c_void,

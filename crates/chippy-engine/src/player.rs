@@ -66,6 +66,13 @@ const SEEK_SLICE: Duration = Duration::from_millis(20);
 
 struct Playing {
     dec: Box<dyn Decoder>,
+    track: TrackRef,
+    /// The [`crate::mutes`] generation the decoder was last told about,
+    /// and the channels it was told to mute.
+    mutes: u64,
+    muted: u16,
+    /// It seeks at once (a MIDI or tab file, not an emulator).
+    cheap_seek: bool,
     resampler: Option<Resample>,
     done: bool,
     /// Where a seek is still heading. Emulators seek by playing up to the
@@ -150,6 +157,30 @@ fn run(
             None => {}
         }
         let Some(p) = &mut playing else { continue };
+        let mutes = crate::mutes::generation();
+        if mutes != p.mutes {
+            p.mutes = mutes;
+            let channels = crate::mutes::get(&p.track);
+            if channels != p.muted {
+                p.muted = channels;
+                p.dec.set_muted(channels);
+                // A MIDI or tab file seeks at once: what is queued is
+                // played again from where it is heard, so the change is
+                // heard now rather than a second later.
+                if p.seek_to.is_none() && !p.done && p.cheap_seek {
+                    let ms = {
+                        let s = shared.lock().unwrap();
+                        s.base_ms + s.frames_played * 1000 / rate.max(1) as u64
+                    };
+                    if p.dec.seek(ms).is_ok() {
+                        if let Some(r) = &mut p.resampler {
+                            r.reset();
+                        }
+                        shared.lock().unwrap().reset(ms);
+                    }
+                }
+            }
+        }
         if let Some(ms) = p.seek_to {
             let started = Instant::now();
             loop {
@@ -196,12 +227,19 @@ fn run(
 }
 
 fn open(track: &TrackRef, opts: &DecodeOptions, rate: u32, start_ms: u64) -> Result<Playing> {
-    let dec = crate::midimode::wrap(open_decoder(track, opts)?, track, opts.fade_ms);
+    let mut dec = crate::midimode::wrap(open_decoder(track, opts)?, track, opts.fade_ms);
+    let mutes = crate::mutes::generation();
+    let muted = crate::mutes::get(track);
+    dec.set_muted(muted);
     let resampler = (dec.sample_rate() != rate)
         .then(|| Resample::new(dec.sample_rate(), rate))
         .transpose()?;
     Ok(Playing {
         dec,
+        track: track.clone(),
+        mutes,
+        muted,
+        cheap_seek: chippy_core::formats::plays_through_soundfont(&track.loc.name()),
         resampler,
         done: false,
         seek_to: (start_ms > 0).then_some(start_ms),

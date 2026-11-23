@@ -239,6 +239,11 @@ impl Engine {
     pub fn remove_music_dir(&self, index: u32) {
         self.act(|c| c.remove_music_dir(index as i32));
     }
+    /// Moves music folder `index` `delta` places along the list (up if
+    /// negative).
+    pub fn move_music_dir(&self, index: u32, delta: i32) {
+        self.act(|c| c.move_music_dir(index as i32, delta));
+    }
     pub fn set_home_dir(&self, index: u32) {
         self.act(|c| c.set_home_dir(index as i32));
     }
@@ -315,6 +320,22 @@ impl Engine {
     /// apart.
     pub fn merge_tab_part(&self, index: u32) {
         self.act(|c| c.merge_tab_part(index as usize));
+    }
+
+    /// Mutes row `index` of [`TabsState::mix`], or lets it back in.
+    pub fn toggle_tab_mute(&self, index: u32) {
+        self.act(|c| c.toggle_tab_mute(index as usize));
+    }
+
+    /// Solos row `index` of [`TabsState::mix`] (with any others soloed),
+    /// or takes it out of the solo.
+    pub fn toggle_tab_solo(&self, index: u32) {
+        self.act(|c| c.toggle_tab_solo(index as usize));
+    }
+
+    /// Nothing muted or soloed.
+    pub fn clear_tab_mutes(&self) {
+        self.act(|c| c.clear_tab_mutes());
     }
 
     pub fn set_tab_tuning(&self, index: u32) {

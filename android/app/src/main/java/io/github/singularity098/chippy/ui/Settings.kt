@@ -102,8 +102,20 @@ fun SettingsScreen(
                         headlineContent = { Text(d.label) },
                         supportingContent = { Text(d.path) },
                         trailingContent = {
-                            IconButton(onClick = { store.send { removeMusicDir(i.toUInt()) } }) {
-                                Icon(ChippyIcons.Trash, stringResource(R.string.remove_folder, d.label))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (s.musicDirs.size > 1) {
+                                    IconButton(
+                                        onClick = { store.send { moveMusicDir(i.toUInt(), -1) } },
+                                        enabled = i > 0,
+                                    ) { Icon(ChippyIcons.ChevronUp, stringResource(R.string.move_folder_up, d.label)) }
+                                    IconButton(
+                                        onClick = { store.send { moveMusicDir(i.toUInt(), 1) } },
+                                        enabled = i < s.musicDirs.size - 1,
+                                    ) { Icon(ChippyIcons.ChevronDown, stringResource(R.string.move_folder_down, d.label)) }
+                                }
+                                IconButton(onClick = { store.send { removeMusicDir(i.toUInt()) } }) {
+                                    Icon(ChippyIcons.Trash, stringResource(R.string.remove_folder, d.label))
+                                }
                             }
                         },
                     )

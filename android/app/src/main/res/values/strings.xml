@@ -82,6 +82,14 @@
     <string name="tab_busy">Working out the notes…</string>
     <string name="tab_previous_part">The previous part</string>
     <string name="tab_merge">Merge…</string>
+    <string name="tab_mute">Mute %1$s</string>
+    <string name="tab_solo">Solo %1$s</string>
+    <string name="tab_no_tab">%1$s (no tab)</string>
+    <string name="tab_mute_hint">M mutes a part, S plays only the parts soloed.</string>
+    <string name="tab_mute_needs_midi">Muting is heard in MIDI mode (the keyboard button), or for MIDI and tab files.</string>
+    <string name="tab_clear_mutes">Clear all</string>
+    <string name="tab_fretboard_show">Show the fretboard</string>
+    <string name="tab_fretboard_hide">Hide the fretboard</string>
     <string name="tab_next_part">The next part</string>
     <string name="tab_octave">Octave</string>
     <string name="tab_octave_down">Show it an octave lower</string>
@@ -107,9 +115,11 @@
 
     <!-- Settings -->
     <string name="music_folders">Music folders</string>
-    <string name="music_folders_hint">Folders the file browser switches between. The one picked is where it starts.</string>
+    <string name="music_folders_hint">Folders the file browser switches between, in this order (the arrows move them). The one picked is where it starts.</string>
     <string name="music_folders_none">None yet: the browser starts in your internal storage.</string>
     <string name="remove_folder">Remove %1$s</string>
+    <string name="move_folder_up">Move %1$s up</string>
+    <string name="move_folder_down">Move %1$s down</string>
     <string name="add_folder">Add folder…</string>
     <string name="browsers_folder">Browser\'s folder</string>
     <string name="playback">Playback</string>

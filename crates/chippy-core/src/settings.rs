@@ -303,9 +303,41 @@ impl Session {
     }
 }
 
+/// Moves item `i` of `v` `d` places along (towards the front if
+/// negative), stopping at the ends; false if nothing moved.
+pub fn move_item<T>(v: &mut [T], i: i32, d: i32) -> bool {
+    if i < 0 || i as usize >= v.len() {
+        return false;
+    }
+    let to = (i + d).clamp(0, v.len() as i32 - 1) as usize;
+    let from = i as usize;
+    if to == from {
+        return false;
+    }
+    if to < from {
+        v[to..=from].rotate_right(1);
+    } else {
+        v[from..=to].rotate_left(1);
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn moves_items() {
+        let mut v = vec![1, 2, 3, 4];
+        assert!(move_item(&mut v, 3, -1));
+        assert_eq!(v, [1, 2, 4, 3]);
+        assert!(move_item(&mut v, 0, 2));
+        assert_eq!(v, [2, 4, 1, 3]);
+        assert!(!move_item(&mut v, 0, -1));
+        assert!(!move_item(&mut v, 9, 1));
+        assert!(move_item(&mut v, 1, 10));
+        assert_eq!(v, [2, 1, 3, 4]);
+    }
 
     #[test]
     fn music_dirs_include_home() {

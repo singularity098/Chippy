@@ -70,6 +70,10 @@ pub trait Decoder: Send {
         self.seek(ms)?;
         Ok(true)
     }
+    /// Silences the MIDI channels whose bits are set in `channels` (bit 0
+    /// is channel 1), and lets the others play: for decoders that play
+    /// notes through the SoundFont. The others play everything.
+    fn set_muted(&mut self, _channels: u16) {}
 }
 
 /// How much of the song a [`Decoder::seek_step`] plays through at most.

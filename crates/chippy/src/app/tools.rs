@@ -13,7 +13,9 @@ use super::{ss, App};
 use crate::export::{self, Format, Progress};
 use crate::midimode;
 use crate::tabs::{Available, TabView};
-use crate::{Export, Info, InfoField, Lyrics, Now, TabBar, TabCell, TabLine, Tabs};
+use crate::{
+    Export, FretDot, Info, InfoField, Lyrics, Now, TabBar, TabCell, TabLine, TabPart, Tabs,
+};
 use chippy_core::lyrics;
 use chippy_core::notes::style::Style;
 
@@ -42,6 +44,8 @@ pub struct TabsState {
     /// What each of the merge menu's items does: merge with that part
     /// (an index into the parts), or (None) take the merge apart.
     pub merges: Vec<Option<usize>>,
+    /// The notes on the fretboard, as last sent.
+    pub dots: Vec<crate::tabs::FretDot>,
 }
 
 /// What a file picker running on its own thread came back with.
@@ -708,6 +712,69 @@ impl App {
         t.set_keep((t.get_keep() + 1) & 0x3FFF);
     }
 
+    pub(super) fn toggle_tab_mute(&mut self, i: i32) {
+        self.tabs.view.toggle_mute(i.max(0) as usize);
+        self.sync_tab_parts();
+    }
+
+    pub(super) fn toggle_tab_solo(&mut self, i: i32) {
+        self.tabs.view.toggle_solo(i.max(0) as usize);
+        self.sync_tab_parts();
+    }
+
+    pub(super) fn clear_tab_mutes(&mut self) {
+        self.tabs.view.clear_mutes();
+        self.sync_tab_parts();
+    }
+
+    /// The list of parts, with what is muted and soloed.
+    fn sync_tab_parts(&mut self) {
+        let ui = self.ui();
+        let t = ui.global::<Tabs>();
+        let v = &self.tabs.view;
+        let parts: Vec<TabPart> = v
+            .mix_parts()
+            .into_iter()
+            .map(|p| {
+                let (line, solid) = p.kind.icon();
+                TabPart {
+                    name: ss(&p.name),
+                    kind: ss(p.kind.label()),
+                    icon_line: ss(line),
+                    icon_solid: ss(solid),
+                    pick: p.pick.map_or(-1, |i| i as i32),
+                    muted: p.muted,
+                    soloed: p.soloed,
+                    audible: p.audible,
+                }
+            })
+            .collect();
+        t.set_parts(ModelRc::new(VecModel::from(parts)));
+        t.set_can_mute(v.can_mute());
+        t.set_any_muted(v.any_muted());
+    }
+
+    /// The notes on the fretboard at `pos_ms`, if they changed.
+    fn sync_fretboard(&mut self, pos_ms: u64) {
+        let dots = self.tabs.view.fret_dots(pos_ms);
+        if dots == self.tabs.dots {
+            return;
+        }
+        let model: Vec<FretDot> = dots
+            .iter()
+            .map(|d| FretDot {
+                string: d.string as i32,
+                fret: d.fret as i32,
+                name: ss(&d.name),
+                now: d.now,
+            })
+            .collect();
+        self.ui()
+            .global::<Tabs>()
+            .set_fret_dots(ModelRc::new(VecModel::from(model)));
+        self.tabs.dots = dots;
+    }
+
     pub(super) fn shift_tab_octave(&mut self, d: i32) {
         self.tabs.view.shift_octave(d);
         self.sync_tabs();
@@ -916,8 +983,12 @@ impl App {
         let title = t.get_title().to_string();
         t.set_all_text(ss(v.text(title.trim_start_matches("Guitar tab: "))));
         t.set_current(-1);
+        t.set_frets(v.fretboard().map_or(12, |f| f.frets as i32));
         self.tabs.line = -1;
         self.tabs.merges = merges;
+        self.tabs.dots.clear();
+        self.sync_tab_parts();
+        self.sync_fretboard(self.tabs.pos_ms);
     }
 
     // ---------------------------------------------------------- MIDI mode
@@ -953,6 +1024,7 @@ impl App {
         let n = ui.global::<Now>();
         n.set_midi_mode(self.settings.midi_mode);
         n.set_midi_style(style.index() as i32);
+        ui.global::<Tabs>().set_can_mute(self.tabs.view.can_mute());
         self.save_settings();
         if self.settings.midi_mode && self.soundfont_index().is_none() {
             self.toast(
@@ -1037,6 +1109,9 @@ impl App {
             if (x - self.tabs.playhead).abs() > 0.0005 {
                 self.tabs.playhead = x;
                 t.set_playhead(x);
+            }
+            if t.get_fretboard_shown() {
+                self.sync_fretboard(pos_ms);
             }
         }
     }

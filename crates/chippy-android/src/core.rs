@@ -733,6 +733,23 @@ impl Core {
         self.dirty.tabs = true;
     }
 
+    /// Mutes row `i` of [`TabsState::mix`], or lets it back in.
+    pub fn toggle_tab_mute(&mut self, i: usize) {
+        self.tabs.toggle_mute(i);
+        self.dirty.tabs = true;
+    }
+
+    /// Solos row `i` of [`TabsState::mix`], or takes it out of the solo.
+    pub fn toggle_tab_solo(&mut self, i: usize) {
+        self.tabs.toggle_solo(i);
+        self.dirty.tabs = true;
+    }
+
+    pub fn clear_tab_mutes(&mut self) {
+        self.tabs.clear_mutes();
+        self.dirty.tabs = true;
+    }
+
     pub fn set_tab_tuning(&mut self, i: usize) {
         self.tabs.set_tuning(i);
         self.dirty.tabs = true;
@@ -943,6 +960,49 @@ impl Core {
             sig: v.sig_index() as u32,
             speed: v.speed(),
             meter_adjusted: v.meter_adjusted(),
+            mix: v
+                .mix_parts()
+                .into_iter()
+                .map(|p| {
+                    let (line, solid) = p.kind.icon();
+                    TabPart {
+                        name: p.name,
+                        kind: p.kind.label().to_string(),
+                        icon_line: line.to_string(),
+                        icon_solid: solid.to_string(),
+                        pick: p.pick.map_or(-1, |i| i as i32),
+                        muted: p.muted,
+                        soloed: p.soloed,
+                        audible: p.audible,
+                    }
+                })
+                .collect(),
+            can_mute: v.can_mute(),
+            any_muted: v.any_muted(),
+            fretboard: v.fretboard().map(|f| Fretboard {
+                strings: f.strings.clone(),
+                frets: f.frets as u32,
+                notes: f
+                    .notes
+                    .iter()
+                    .map(|n| FretNote {
+                        start_ms: n.start_ms.max(0.0) as u64,
+                        end_ms: n.end_ms.max(0.0) as u64,
+                        string: n.string,
+                        fret: n.fret,
+                        name: n.name.clone(),
+                        group: n.group as u32,
+                    })
+                    .collect(),
+                groups: f
+                    .groups
+                    .iter()
+                    .map(|&(a, b)| FretGroup {
+                        start_ms: a.max(0.0) as u64,
+                        end_ms: b.max(0.0) as u64,
+                    })
+                    .collect(),
+            }),
         }
     }
 
@@ -1150,6 +1210,8 @@ impl Core {
         midimode::set(self.settings.midi_mode.then(|| self.midi_style()));
         self.mark_dirty();
         self.dirty.now = true;
+        // Whether muting parts is heard.
+        self.dirty.tabs = true;
         if self.settings.midi_mode && self.settings.soundfont.is_none() {
             self.toast(
                 "MIDI mode needs a SoundFont: choose a folder of SF2 files in Settings, under MIDI",
@@ -1308,6 +1370,14 @@ impl Core {
         }
         self.mark_dirty();
         self.dirty.browser = true;
+    }
+
+    /// Moves music folder `i` `d` places along the list (up if negative).
+    pub fn move_music_dir(&mut self, i: i32, d: i32) {
+        if chippy_core::settings::move_item(&mut self.settings.music_dirs, i, d) {
+            self.mark_dirty();
+            self.dirty.browser = true;
+        }
     }
 
     pub fn set_home_dir(&mut self, i: i32) {

@@ -4,6 +4,7 @@
 //! the fingering moved along the neck (the whole part, or chosen bars),
 //! and where playback is in the tab.
 
+use crate::instrument::{self, Kind};
 use chippy_core::meta::format_ms;
 use chippy_core::notes::meter::{self, Meter, MeterAdjust};
 use chippy_core::notes::score::{self, Score};
@@ -76,6 +77,130 @@ pub struct TabView {
     merges: HashMap<TrackRef, Vec<Vec<usize>>>,
     /// How many parts the transcription had as found.
     found_parts: usize,
+    /// Parts muted and soloed, per track, by index among the parts as
+    /// found (for as long as the app runs).
+    mutes: HashMap<TrackRef, Mutes>,
+    /// The shown part's notes on the fretboard, cut into bars.
+    fretboard: Option<Fretboard>,
+}
+
+/// Which of a track's parts (as found) are muted, and which soloed.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Mutes {
+    muted: Vec<bool>,
+    solo: Vec<bool>,
+}
+
+impl Mutes {
+    fn get(v: &[bool], i: usize) -> bool {
+        v.get(i).copied().unwrap_or(false)
+    }
+
+    fn set(v: &mut Vec<bool>, i: usize, on: bool) {
+        if v.len() <= i {
+            v.resize(i + 1, false);
+        }
+        v[i] = on;
+    }
+
+    /// Whether part `i` is heard: soloed, if any are, else not muted.
+    fn audible(&self, i: usize) -> bool {
+        if self.solo.iter().any(|&s| s) {
+            Self::get(&self.solo, i)
+        } else {
+            !Self::get(&self.muted, i)
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        !self.muted.iter().chain(&self.solo).any(|&b| b)
+    }
+}
+
+/// A row of the list of parts: a part the tab can show, or the drums
+/// (which it can't, but which can be muted and soloed).
+#[derive(Clone, Debug, PartialEq)]
+pub struct MixPart {
+    pub name: String,
+    pub kind: Kind,
+    /// Its index among the parts the tab shows (None for the drums).
+    pub pick: Option<usize>,
+    pub muted: bool,
+    pub soloed: bool,
+    /// Heard, as muting and soloing leave it.
+    pub audible: bool,
+}
+
+/// The shown part's notes laid out on the neck, through the song: each
+/// note in a group of notes (a bar, or a line of tab where there are no
+/// bars), for the fretboard to show the notes of the bar playing, and
+/// the ones sounding.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Fretboard {
+    /// String names, lowest first.
+    pub strings: Vec<String>,
+    /// How many frets to draw (the highest fret used, at least 12).
+    pub frets: u8,
+    pub notes: Vec<FretNote>,
+    /// Where each group starts and ends (ms), in time order.
+    pub groups: Vec<(f64, f64)>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FretNote {
+    pub start_ms: f64,
+    pub end_ms: f64,
+    /// 0 is the lowest string.
+    pub string: u8,
+    pub fret: u8,
+    /// The note's name, "Bb".
+    pub name: String,
+    pub group: usize,
+}
+
+/// A note on the fretboard at a moment: sounding now, or (dimmed) played
+/// elsewhere in the same bar.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FretDot {
+    pub string: u8,
+    pub fret: u8,
+    pub name: String,
+    pub now: bool,
+}
+
+/// A note's name as a guitarist reads it, without its octave: sharps for
+/// F# and C#, flats for the others ("Bb", "Eb").
+pub fn note_name(key: u8) -> &'static str {
+    const NAMES: [&str; 12] = [
+        "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B",
+    ];
+    NAMES[key as usize % 12]
+}
+
+impl Fretboard {
+    /// The notes of the group playing at `ms`: those sounding marked.
+    pub fn dots(&self, ms: f64) -> Vec<FretDot> {
+        let Some(g) = self.groups.iter().position(|&(a, b)| ms >= a && ms < b) else {
+            return Vec::new();
+        };
+        let mut out: Vec<FretDot> = Vec::new();
+        for n in self.notes.iter().filter(|n| n.group == g) {
+            let now = ms >= n.start_ms && ms < n.end_ms;
+            match out
+                .iter_mut()
+                .find(|d| d.string == n.string && d.fret == n.fret)
+            {
+                Some(d) => d.now |= now,
+                None => out.push(FretDot {
+                    string: n.string,
+                    fret: n.fret,
+                    name: n.name.clone(),
+                    now,
+                }),
+            }
+        }
+        out
+    }
 }
 
 impl Default for TabView {
@@ -104,6 +229,8 @@ impl Default for TabView {
             anchor: 0,
             merges: HashMap::new(),
             found_parts: 0,
+            mutes: HashMap::new(),
+            fretboard: None,
         }
     }
 }
@@ -323,6 +450,7 @@ impl TabView {
         self.request += 1;
         self.found = None;
         self.tab = None;
+        self.fretboard = None;
         self.lines.clear();
         self.parts.clear();
         self.found_meter = None;
@@ -351,6 +479,7 @@ impl TabView {
         self.request += 1;
         self.found = None;
         self.tab = None;
+        self.fretboard = None;
         self.lines.clear();
         self.parts.clear();
         self.found_meter = None;
@@ -971,6 +1100,7 @@ impl TabView {
 
     fn arrange(&mut self) {
         self.tab = None;
+        self.fretboard = None;
         self.lines.clear();
         self.stuck = None;
         let adjust = self.fit_spans(&self.adjust());
@@ -1022,6 +1152,218 @@ impl TabView {
                 marks: r.marks,
             })
             .collect();
+        self.fretboard = self.make_fretboard();
+    }
+
+    /// The shown part on the fretboard, a bar at a time (or a line of tab
+    /// at a time, without bars).
+    fn make_fretboard(&self) -> Option<Fretboard> {
+        let tab = self.tab.as_ref()?;
+        let groups: Vec<(f64, f64)> = match &self.meter {
+            Some(m) if !m.bars.is_empty() => {
+                let starts = m.starts();
+                starts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &a)| (a, starts.get(i + 1).copied().unwrap_or(m.end_ms.max(a))))
+                    .collect()
+            }
+            _ => self.lines.iter().map(|l| (l.start_ms, l.end_ms)).collect(),
+        };
+        let mut groups = groups;
+        // Notes before the first bar or after the last still show.
+        if let Some(first) = groups.first_mut() {
+            first.0 = first.0.min(0.0);
+        }
+        if let Some(last) = groups.last_mut() {
+            last.1 = last.1.max(self.length_ms).max(
+                tab.notes
+                    .iter()
+                    .map(|n| n.start_ms + n.dur_ms)
+                    .fold(0.0, f64::max)
+                    + 1.0,
+            );
+        }
+        let notes: Vec<FretNote> = tab
+            .notes
+            .iter()
+            .filter_map(|n| {
+                let g = groups.partition_point(|&(a, _)| a <= n.start_ms);
+                let group = g.checked_sub(1)?;
+                Some(FretNote {
+                    start_ms: n.start_ms,
+                    end_ms: n.start_ms + n.dur_ms.max(1.0),
+                    string: n.string,
+                    fret: n.fret,
+                    name: note_name(n.key).to_string(),
+                    group,
+                })
+            })
+            .collect();
+        let highest = notes.iter().map(|n| n.fret).max().unwrap_or(0);
+        Some(Fretboard {
+            strings: self.strings(),
+            frets: highest.clamp(12, 24),
+            notes,
+            groups,
+        })
+    }
+
+    /// The shown part on the fretboard, through the song.
+    pub fn fretboard(&self) -> Option<&Fretboard> {
+        self.fretboard.as_ref()
+    }
+
+    /// The notes on the fretboard at `ms`: the bar's, those sounding marked.
+    pub fn fret_dots(&self, ms: u64) -> Vec<FretDot> {
+        self.fretboard
+            .as_ref()
+            .map(|f| f.dots(ms as f64))
+            .unwrap_or_default()
+    }
+
+    // ------------------------------------------------- muting and soloing
+
+    fn mutes(&self) -> Mutes {
+        self.track
+            .as_ref()
+            .and_then(|t| self.mutes.get(t))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The drum parts as found (the tab can't show them).
+    fn drum_parts(&self) -> Vec<usize> {
+        match self.transcription() {
+            Some(t) => (0..self.found_parts.min(t.parts.len()))
+                .filter(|&i| t.parts[i].drums && !t.parts[i].notes.is_empty())
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// The parts as found that row `row` of [`TabView::mix_parts`] is.
+    fn row_sources(&self, row: usize) -> Vec<usize> {
+        if row < self.parts.len() {
+            return self.sources(row);
+        }
+        self.drum_parts()
+            .get(row - self.parts.len())
+            .map(|&i| vec![i])
+            .unwrap_or_default()
+    }
+
+    /// Every part, for the list of parts: those the tab shows (as
+    /// [`TabView::part_names`] gives them), then the drums; each with what
+    /// it is played on and whether it is muted, soloed and heard.
+    pub fn mix_parts(&self) -> Vec<MixPart> {
+        let Some(t) = self.transcription() else {
+            return Vec::new();
+        };
+        let m = self.mutes();
+        let names = self.part_names();
+        let drums = self.drum_parts();
+        let rows = self.parts.len() + drums.len();
+        (0..rows)
+            .map(|row| {
+                let sources = self.row_sources(row);
+                let (name, part) = if row < self.parts.len() {
+                    (names[row].clone(), &t.parts[self.parts[row]])
+                } else {
+                    let p = &t.parts[sources[0]];
+                    (p.name.clone(), p)
+                };
+                let all = |f: &dyn Fn(usize) -> bool| {
+                    !sources.is_empty() && sources.iter().all(|&i| f(i))
+                };
+                MixPart {
+                    name,
+                    kind: instrument::kind_of(part),
+                    pick: (row < self.parts.len()).then_some(row),
+                    muted: all(&|i| Mutes::get(&m.muted, i)),
+                    soloed: all(&|i| Mutes::get(&m.solo, i)),
+                    audible: sources.iter().any(|&i| m.audible(i)),
+                }
+            })
+            .collect()
+    }
+
+    /// Mutes row `row` of [`TabView::mix_parts`], or lets it back in.
+    pub fn toggle_mute(&mut self, row: usize) {
+        self.change_mutes(row, |m| &mut m.muted);
+    }
+
+    /// Solos row `row` of [`TabView::mix_parts`] (with any other parts
+    /// soloed), or takes it out of the solo.
+    pub fn toggle_solo(&mut self, row: usize) {
+        self.change_mutes(row, |m| &mut m.solo);
+    }
+
+    /// Nothing muted or soloed.
+    pub fn clear_mutes(&mut self) {
+        if let Some(t) = self.track.clone() {
+            self.mutes.remove(&t);
+            crate::mutes::set(&t, 0);
+        }
+    }
+
+    /// Something is muted or soloed.
+    pub fn any_muted(&self) -> bool {
+        !self.mutes().is_empty()
+    }
+
+    fn change_mutes(&mut self, row: usize, which: fn(&mut Mutes) -> &mut Vec<bool>) {
+        let Some(track) = self.track.clone() else {
+            return;
+        };
+        let sources = self.row_sources(row);
+        if sources.is_empty() {
+            return;
+        }
+        let mut m = self.mutes();
+        let v = which(&mut m);
+        let on = !sources.iter().all(|&i| Mutes::get(v, i));
+        for &i in &sources {
+            Mutes::set(v, i, on);
+        }
+        let channels = self.muted_channels(&m);
+        if m.is_empty() {
+            self.mutes.remove(&track);
+        } else {
+            self.mutes.insert(track.clone(), m);
+        }
+        crate::mutes::set(&track, channels);
+    }
+
+    /// The MIDI channels to silence for `m`: those whose parts are all
+    /// muted (or left out of a solo).
+    fn muted_channels(&self, m: &Mutes) -> u16 {
+        let Some(t) = self.transcription() else {
+            return 0;
+        };
+        let found = &t.parts[..self.found_parts.min(t.parts.len())];
+        let channels = notes::midi::channels(found);
+        let mut heard = 0u16;
+        let mut used = 0u16;
+        for (i, (p, &c)) in found.iter().zip(&channels).enumerate() {
+            if p.notes.is_empty() {
+                continue;
+            }
+            used |= 1 << c;
+            if m.audible(i) {
+                heard |= 1 << c;
+            }
+        }
+        used & !heard
+    }
+
+    /// Whether muting is heard on this track: it plays through the
+    /// SoundFont (a MIDI or tab file, or a chiptune in MIDI mode).
+    pub fn can_mute(&self) -> bool {
+        self.track.as_ref().is_some_and(|t| {
+            chippy_core::formats::plays_through_soundfont(&t.loc.name())
+                || (crate::midimode::get().is_some() && crate::midimode::possible(t))
+        })
     }
 
     /// The track shown, as set up here, for an export of `tracks` to
@@ -1309,6 +1651,87 @@ mod tests {
             velocity: 100,
             legato: false,
         }
+    }
+
+    /// A view showing `t`, as if worked out for a MIDI file.
+    fn showing(t: Transcription, name: &str) -> TabView {
+        let mut v = TabView::default();
+        let track = TrackRef::file(chippy_core::Location::Fs(name.into()));
+        v.track = Some(track);
+        v.tx.send((v.request, Ok((t, None)))).unwrap();
+        assert!(v.poll());
+        v
+    }
+
+    #[test]
+    fn mutes_and_solos_parts() {
+        let t = Transcription {
+            parts: vec![
+                Part::new("Lead Vocals", 52, vec![note(0.0, 64), note(200.0, 67)]),
+                Part::new("Bass", 33, vec![note(0.0, 40)]),
+                Part::drums("Drums", vec![note(0.0, 36)]),
+            ],
+            ..Default::default()
+        };
+        let mut v = showing(t, "/tmp/mutes-and-solos.mid");
+        let track = v.track.clone().unwrap();
+        let mix = v.mix_parts();
+        let kinds: Vec<Kind> = mix.iter().map(|p| p.kind).collect();
+        assert_eq!(kinds, vec![Kind::Vocals, Kind::Bass, Kind::Drums]);
+        assert_eq!(mix[2].pick, None);
+        assert!(v.can_mute());
+        // Written out as MIDI: channels 1 and 2, the drums on 10.
+        v.toggle_mute(1);
+        assert_eq!(crate::mutes::get(&track), 1 << 1);
+        assert!(!v.mix_parts()[1].audible && v.mix_parts()[1].muted);
+        // A solo leaves out everything else, the muted bass included.
+        v.toggle_solo(2);
+        assert_eq!(crate::mutes::get(&track), 0b11);
+        assert!(v.mix_parts()[2].audible && v.mix_parts()[2].soloed);
+        v.toggle_solo(2);
+        assert_eq!(crate::mutes::get(&track), 1 << 1);
+        v.clear_mutes();
+        assert_eq!(crate::mutes::get(&track), 0);
+        assert!(!v.any_muted());
+    }
+
+    #[test]
+    fn fretboard_shows_the_bar() {
+        let t = Transcription {
+            parts: vec![Part::new(
+                "Gtr",
+                29,
+                vec![note(0.0, 58), note(500.0, 60), note(2100.0, 64)],
+            )],
+            ..Default::default()
+        };
+        let mut v = showing(t, "/tmp/fretboard.mid");
+        v.found_meter = Some(Meter {
+            bars: (0..2)
+                .map(|b| meter::Bar {
+                    start_ms: b as f64 * 2000.0,
+                    beats: (0..4)
+                        .map(|k| b as f64 * 2000.0 + k as f64 * 500.0)
+                        .collect(),
+                    sig: (4, 4),
+                })
+                .collect(),
+            end_ms: 4000.0,
+            exact: true,
+        });
+        v.fit_meter();
+        v.arrange();
+        let dots = v.fret_dots(50);
+        assert_eq!(dots.len(), 2, "{dots:?}");
+        assert_eq!(dots.iter().filter(|d| d.now).count(), 1);
+        assert_eq!(dots.iter().find(|d| d.now).unwrap().name, "Bb");
+        // Between notes: the bar's notes, none lit.
+        assert!(v.fret_dots(300).iter().all(|d| !d.now));
+        // The next bar has only its own note.
+        let next = v.fret_dots(2150);
+        assert_eq!(next.len(), 1);
+        assert_eq!((next[0].name.as_str(), next[0].now), ("E", true));
+        assert!(v.fretboard().unwrap().frets >= 12);
     }
 
     #[test]

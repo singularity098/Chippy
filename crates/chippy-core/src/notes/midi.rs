@@ -6,7 +6,7 @@
 //! times they were played).
 
 use super::meter::{compound, Meter};
-use super::Transcription;
+use super::{Part, Transcription};
 
 const PPQ: u16 = 480;
 /// At 120 BPM a quarter note lasts 500 ms.
@@ -108,29 +108,23 @@ pub fn write_in(t: &Transcription, title: &str, meter: &Meter) -> Vec<u8> {
     write_with(t, title, tempo, &ticks)
 }
 
-fn write_with(
-    t: &Transcription,
-    title: &str,
-    conductor: Vec<(u32, u8, Vec<u8>)>,
-    ticks: &dyn Fn(f64) -> u32,
-) -> Vec<u8> {
-    let mut out = Vec::new();
-    let parts: Vec<_> = t.parts.iter().filter(|p| !p.notes.is_empty()).collect();
-    let mut header = Vec::new();
-    header.extend_from_slice(&1u16.to_be_bytes());
-    header.extend_from_slice(&(parts.len() as u16 + 1).to_be_bytes());
-    header.extend_from_slice(&PPQ.to_be_bytes());
-    chunk(&mut out, b"MThd", &header);
-
-    let mut tempo = vec![(0, 0, text(0x03, title))];
-    tempo.extend(conductor);
-    chunk(&mut out, b"MTrk", &track(&mut tempo));
-
+/// The MIDI channel each of `parts` plays on: its own, if it was read
+/// from a MIDI file, else the one [`write`] gives it (the drums on 10, the
+/// other parts on the rest in turn; parts without notes get none).
+pub fn channels(parts: &[Part]) -> Vec<u8> {
     let mut next_channel = 0u8;
-    for p in parts {
-        let ch = if p.drums {
-            DRUM_CHANNEL
-        } else {
+    parts
+        .iter()
+        .map(|p| {
+            if let Some(c) = p.channel {
+                return c & 0x0F;
+            }
+            if p.drums {
+                return DRUM_CHANNEL;
+            }
+            if p.notes.is_empty() {
+                return 0;
+            }
             let c = next_channel;
             next_channel = (next_channel + 1) % 15;
             if c >= DRUM_CHANNEL {
@@ -138,7 +132,35 @@ fn write_with(
             } else {
                 c
             }
-        };
+        })
+        .collect()
+}
+
+fn write_with(
+    t: &Transcription,
+    title: &str,
+    conductor: Vec<(u32, u8, Vec<u8>)>,
+    ticks: &dyn Fn(f64) -> u32,
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    let parts = t.parts.iter().filter(|p| !p.notes.is_empty()).count();
+    let mut header = Vec::new();
+    header.extend_from_slice(&1u16.to_be_bytes());
+    header.extend_from_slice(&(parts as u16 + 1).to_be_bytes());
+    header.extend_from_slice(&PPQ.to_be_bytes());
+    chunk(&mut out, b"MThd", &header);
+
+    let mut tempo = vec![(0, 0, text(0x03, title))];
+    tempo.extend(conductor);
+    chunk(&mut out, b"MTrk", &track(&mut tempo));
+
+    let all = channels(&t.parts);
+    for (p, &ch) in t
+        .parts
+        .iter()
+        .zip(&all)
+        .filter(|(p, _)| !p.notes.is_empty())
+    {
         let mut ev = vec![(0, 0, text(0x03, &p.name))];
         if !p.drums {
             ev.push((0, 1, vec![0xC0 | ch, p.program & 0x7F]));

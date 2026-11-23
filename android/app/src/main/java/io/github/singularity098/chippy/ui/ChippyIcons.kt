@@ -274,6 +274,21 @@ object ChippyIcons {
             weight = 2f,
         )
     }
+    val ChevronUp: ImageVector by lazy {
+        icon(
+            "ChevronUp",
+            line = "M 5.5 14.5 L 12 8 L 18.5 14.5",
+            weight = 2f,
+        )
+    }
+    val Fretboard: ImageVector by lazy {
+        icon(
+            "Fretboard",
+            line = "M 2.5 7.5 L 21.5 7.5 M 2.5 16.5 L 21.5 16.5 M 4 7.5 L 4 16.5 M 9 7.5 L 9 16.5 M 13.5 7.5 L 13.5 16.5 M 17.6 7.5 L 17.6 16.5 M 4 10.5 L 21.5 10.5 M 4 13.5 L 21.5 13.5",
+            solid = "M 13.3 12 A 2.05 2.05 0 1 1 9.2 12 A 2.05 2.05 0 1 1 13.3 12 Z",
+            weight = 1.6f,
+        )
+    }
     val Close: ImageVector by lazy {
         icon(
             "Close",
@@ -346,3 +361,12 @@ object ChippyIcons {
         )
     }
 }
+
+private val drawn = HashMap<Pair<String, String>, ImageVector>()
+
+/**
+ * An icon from path data the engine gives (what a part of the guitar tab
+ * is played on): drawn as Chippy's own icons are, once for each.
+ */
+fun pathIcon(line: String, solid: String): ImageVector =
+    drawn.getOrPut(line to solid) { icon("Instrument", line, solid, weight = 1.6f) }

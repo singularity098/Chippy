@@ -54,6 +54,9 @@ pub struct Part {
     /// The string (0 the lowest) each of `notes` is played on as written,
     /// one for each note; empty when nothing says.
     pub written: Vec<Option<u8>>,
+    /// The MIDI channel it is played on, when read from a MIDI file (else
+    /// the channel it is given when written out as MIDI).
+    pub channel: Option<u8>,
 }
 
 impl Part {

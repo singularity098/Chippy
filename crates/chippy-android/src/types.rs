@@ -357,6 +357,64 @@ pub struct TabsState {
     pub speed: i32,
     /// The bars were changed by hand.
     pub meter_adjusted: bool,
+    /// Every part, to mute and solo: those shown as tab (in the order of
+    /// `parts`), then the drums.
+    pub mix: Vec<TabPart>,
+    /// Muting is heard (the track plays through the SoundFont: a MIDI or
+    /// tab file, or a chiptune in MIDI mode).
+    pub can_mute: bool,
+    pub any_muted: bool,
+    /// The shown part on the fretboard, through the song.
+    pub fretboard: Option<Fretboard>,
+}
+
+/// A row of the guitar tab's list of parts.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TabPart {
+    pub name: String,
+    /// What it is played on, "Electric guitar".
+    pub kind: String,
+    /// Its icon, on a 24 × 24 grid: a stroked path and a filled one.
+    pub icon_line: String,
+    pub icon_solid: String,
+    /// Its index among the parts shown as tab (-1 for the drums, which
+    /// can't be).
+    pub pick: i32,
+    pub muted: bool,
+    pub soloed: bool,
+    /// Heard, as muting and soloing leave it.
+    pub audible: bool,
+}
+
+/// The shown part's notes on the neck, each in a group (a bar, or a line
+/// of tab without bars): at a moment, the fretboard shows the notes of the
+/// group playing, those sounding lit.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Fretboard {
+    /// String names, lowest first.
+    pub strings: Vec<String>,
+    pub frets: u32,
+    pub notes: Vec<FretNote>,
+    /// Where each group starts and ends (ms), in time order.
+    pub groups: Vec<FretGroup>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FretNote {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    /// 0 is the lowest string.
+    pub string: u8,
+    pub fret: u8,
+    /// "Bb".
+    pub name: String,
+    pub group: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FretGroup {
+    pub start_ms: u64,
+    pub end_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]

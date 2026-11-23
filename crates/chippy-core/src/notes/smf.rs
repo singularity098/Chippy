@@ -318,11 +318,13 @@ pub fn read(data: &[u8]) -> Result<Transcription> {
             .cloned()
             .flatten()
             .unwrap_or_else(|| format!("Channel {}", ch + 1));
-        parts.push(if ch == 9 {
+        let mut p = if ch == 9 {
             Part::drums(name, n)
         } else {
             Part::new(name, 0, n).with_programs(&programs[ch])
-        });
+        };
+        p.channel = Some(ch as u8);
+        parts.push(p);
     }
     Ok(Transcription {
         system: "MIDI".into(),

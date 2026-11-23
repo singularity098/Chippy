@@ -401,6 +401,8 @@ impl App {
         });
         on!(app, s, on_remove_music_dir, |a, i: i32| a
             .remove_music_dir(i));
+        on!(app, s, on_move_music_dir, |a, i: i32, d: i32| a
+            .move_music_dir(i, d));
         on!(app, s, on_set_home_dir, |a, i: i32| {
             if let Some(d) = a.settings.music_dirs.get(i.max(0) as usize) {
                 a.settings.music_dir = Some(d.clone());
@@ -484,6 +486,9 @@ impl App {
         on!(app, tb, on_shift_bars, |a, d: i32| a.shift_tab_bars(d));
         on!(app, tb, on_reset_meter, |a| a.reset_tab_meter());
         on!(app, tb, on_save, |a| a.save_tab());
+        on!(app, tb, on_toggle_mute, |a, i: i32| a.toggle_tab_mute(i));
+        on!(app, tb, on_toggle_solo, |a, i: i32| a.toggle_tab_solo(i));
+        on!(app, tb, on_clear_mutes, |a| a.clear_tab_mutes());
         on!(app, s, on_set_theme, |a, i: i32| {
             let names: Vec<String> = a
                 .ui()
@@ -1217,6 +1222,14 @@ impl App {
         }
         self.mark_dirty();
         self.sync_prefs();
+    }
+
+    /// Moves music folder `i` `d` places along the list (up if negative).
+    fn move_music_dir(&mut self, i: i32, d: i32) {
+        if chippy_core::settings::move_item(&mut self.settings.music_dirs, i, d) {
+            self.mark_dirty();
+            self.sync_prefs();
+        }
     }
 
     /// Switches the browser to a music folder: back to where it was in it,

@@ -23,9 +23,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -42,6 +44,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +55,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -66,8 +71,10 @@ import io.github.singularity098.chippy.Store
 import io.github.singularity098.chippy.core.LyricsInfo
 import io.github.singularity098.chippy.core.NowState
 import io.github.singularity098.chippy.core.PlayState
+import io.github.singularity098.chippy.core.Fretboard
 import io.github.singularity098.chippy.core.TabBar
 import io.github.singularity098.chippy.core.TabLine
+import io.github.singularity098.chippy.core.TabPart
 import io.github.singularity098.chippy.core.TabsState
 import kotlin.math.floor
 
@@ -386,6 +393,267 @@ private fun Dropdown(
     }
 }
 
+/** Mute (M) or solo (S) on a row of the list of parts. */
+@Composable
+private fun MixToggle(letter: String, on: Boolean, lit: Color, description: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(6.dp),
+        color = if (on) lit else Color.Transparent,
+        border = BorderStroke(1.dp, if (on) lit else MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier
+            .padding(start = 6.dp)
+            .size(width = 34.dp, height = 30.dp)
+            .semantics { contentDescription = description },
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                letter,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (on) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * The part shown, and below it on a tap every part: each with an icon for
+ * what it plays, and buttons to mute it or solo it. The drums are listed
+ * to mute and solo, but can't be shown as tab.
+ */
+@Composable
+private fun PartDropdown(
+    state: TabsState,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    store: Store,
+    onPick: (Int) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    val usable = enabled && state.mix.isNotEmpty()
+    val shown = state.mix.getOrNull(state.part.toInt())?.takeIf { it.pick >= 0 }
+    val look = LocalLook.current
+    val faint = MaterialTheme.colorScheme.onSurfaceVariant
+    Box(modifier) {
+        Surface(
+            onClick = { open = true },
+            enabled = usable,
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(40.dp),
+        ) {
+            Row(
+                Modifier.padding(start = 10.dp, end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (shown != null) {
+                    Icon(
+                        pathIcon(shown.iconLine, shown.iconSolid),
+                        shown.kind,
+                        Modifier
+                            .padding(end = 8.dp)
+                            .size(20.dp),
+                        tint = if (shown.audible) look.accent else faint,
+                    )
+                }
+                Text(
+                    shown?.name ?: "–",
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = if (usable && shown?.audible != false) look.accent else faint,
+                )
+                if (state.anyMuted) {
+                    Box(
+                        Modifier
+                            .padding(end = 6.dp)
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFF0C040)),
+                    )
+                }
+                Icon(ChippyIcons.ChevronDown, null, Modifier.size(18.dp), tint = faint)
+            }
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            state.mix.forEachIndexed { i, p ->
+                PartRow(state, p, i, store) {
+                    open = false
+                    onPick(p.pick)
+                }
+            }
+            Row(
+                Modifier
+                    .widthIn(max = 360.dp)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(if (state.canMute) R.string.tab_mute_hint else R.string.tab_mute_needs_midi),
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (state.canMute) faint else Color(0xFFF0C040),
+                )
+                if (state.anyMuted) {
+                    TextButton(onClick = { store.send { clearTabMutes() } }) {
+                        Text(stringResource(R.string.tab_clear_mutes))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** A row of the list of parts: pick it (unless it is the drums), mute it, solo it. */
+@Composable
+private fun PartRow(state: TabsState, p: TabPart, i: Int, store: Store, onPick: () -> Unit) {
+    val look = LocalLook.current
+    val faint = MaterialTheme.colorScheme.onSurfaceVariant
+    DropdownMenuItem(
+        enabled = p.pick >= 0,
+        text = {
+            Text(
+                if (p.pick >= 0) p.name else stringResource(R.string.tab_no_tab, p.name),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = if (p.audible) MaterialTheme.colorScheme.onSurface else faint.copy(alpha = 0.6f),
+            )
+        },
+        onClick = onPick,
+        leadingIcon = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (p.pick >= 0 && p.pick == state.part.toInt()) {
+                    Icon(ChippyIcons.Check, null, Modifier.size(20.dp), tint = look.accent)
+                } else {
+                    Spacer(Modifier.size(20.dp))
+                }
+                Icon(
+                    pathIcon(p.iconLine, p.iconSolid),
+                    p.kind,
+                    Modifier
+                        .padding(start = 6.dp)
+                        .size(24.dp),
+                    tint = if (p.audible) MaterialTheme.colorScheme.onSurface else faint.copy(alpha = 0.6f),
+                )
+            }
+        },
+        trailingIcon = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                MixToggle("M", p.muted, Color(0xFFE5484D), stringResource(R.string.tab_mute, p.name)) {
+                    store.send { toggleTabMute(i.toUInt()) }
+                }
+                MixToggle("S", p.soloed, Color(0xFFF0C040), stringResource(R.string.tab_solo, p.name)) {
+                    store.send { toggleTabSolo(i.toUInt()) }
+                }
+            }
+        },
+    )
+}
+
+/** A note on the fretboard at a moment. */
+private data class Dot(val string: Int, val fret: Int, val name: String, val now: Boolean)
+
+/** The notes of the bar playing at `pos`, those sounding marked. */
+private fun dotsAt(f: Fretboard, pos: Long): List<Dot> {
+    val g = f.groups.indexOfFirst { pos >= it.startMs.toLong() && pos < it.endMs.toLong() }
+    if (g < 0) return emptyList()
+    val out = LinkedHashMap<Pair<Int, Int>, Dot>()
+    for (n in f.notes) {
+        if (n.group.toInt() != g) continue
+        val key = n.string.toInt() to n.fret.toInt()
+        val now = pos >= n.startMs.toLong() && pos < n.endMs.toLong()
+        val had = out[key]
+        out[key] = if (had == null) Dot(key.first, key.second, n.name, now) else had.copy(now = had.now || now)
+    }
+    return out.values.toList()
+}
+
+/**
+ * A guitar's neck, the strings across it (the highest on top, as in the
+ * tab), with the notes of the bar playing on it: those sounding now lit,
+ * the rest dimmed, each with its name.
+ */
+@Composable
+private fun FretboardView(f: Fretboard, pos: Long) {
+    val measurer = rememberTextMeasurer()
+    val look = LocalLook.current
+    val lineColor = MaterialTheme.colorScheme.outlineVariant
+    val faint = MaterialTheme.colorScheme.onSurfaceVariant
+    val neckColor = MaterialTheme.colorScheme.surfaceContainerHigh
+    val dimDot = MaterialTheme.colorScheme.surfaceContainerHighest
+    val dots = dotsAt(f, pos)
+    val n = f.strings.size.coerceAtLeast(1)
+    val frets = f.frets.toInt().coerceAtLeast(1)
+    val gap = 20.dp
+    Canvas(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .height(gap * (n - 1) + 34.dp),
+    ) {
+        val g = gap.toPx()
+        val names = 22.dp.toPx()
+        val open = 24.dp.toPx()
+        val left = names + open
+        val fw = (size.width - left - 4.dp.toPx()) / frets
+        val top = 10.dp.toPx()
+        val h = (n - 1) * g
+        val small = TextStyle(fontSize = 11.sp, color = faint)
+        val tiny = TextStyle(fontSize = 9.sp, color = faint)
+        drawRoundRect(
+            neckColor,
+            topLeft = Offset(left, top - 6.dp.toPx()),
+            size = Size(fw * frets, h + 12.dp.toPx()),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()),
+        )
+        val inlay = 3.5.dp.toPx()
+        for (fr in listOf(3, 5, 7, 9, 15, 17, 19, 21)) {
+            if (fr <= frets) drawCircle(lineColor, inlay, Offset(left + (fr - 0.5f) * fw, top + h / 2))
+        }
+        for (fr in listOf(12, 24)) {
+            if (fr <= frets) {
+                drawCircle(lineColor, inlay, Offset(left + (fr - 0.5f) * fw, top + h / 2 - g))
+                drawCircle(lineColor, inlay, Offset(left + (fr - 0.5f) * fw, top + h / 2 + g))
+            }
+        }
+        drawLine(faint, Offset(left, top - 6.dp.toPx()), Offset(left, top + h + 6.dp.toPx()), 4.dp.toPx())
+        for (fr in 1..frets) {
+            val x = left + fr * fw
+            drawLine(lineColor, Offset(x, top - 6.dp.toPx()), Offset(x, top + h + 6.dp.toPx()), 2.dp.toPx())
+            val m = measurer.measure(fr.toString(), tiny)
+            drawText(m, topLeft = Offset(x - fw / 2 - m.size.width / 2f, top + h + 8.dp.toPx()))
+        }
+        f.strings.forEachIndexed { i, name ->
+            val y = top + (n - 1 - i) * g
+            drawLine(faint, Offset(names + 4.dp.toPx(), y), Offset(left + fw * frets, y), if (i < 2) 2f else 1.2f)
+            val m = measurer.measure(name, small)
+            drawText(m, topLeft = Offset((names - m.size.width) / 2f, y - m.size.height / 2f))
+        }
+        val r = minOf(10.dp.toPx(), g / 2 - 0.5f, fw / 2 - 1.5f)
+        for (d in dots) {
+            val cx = if (d.fret == 0) names + open / 2 else left + (d.fret - 0.5f) * fw
+            val cy = top + (n - 1 - d.string) * g
+            if (d.now) {
+                drawCircle(look.accent, r, Offset(cx, cy))
+            } else {
+                drawCircle(dimDot, r, Offset(cx, cy))
+                drawCircle(lineColor, r, Offset(cx, cy), style = androidx.compose.ui.graphics.drawscope.Stroke(1.dp.toPx()))
+            }
+            val style = TextStyle(
+                fontSize = (r * (if (d.name.length > 1) 0.95f else 1.15f)).toSp(),
+                color = if (d.now) Color.Black else faint,
+                fontWeight = FontWeight.Medium,
+            )
+            val m = measurer.measure(d.name, style)
+            drawText(m, topLeft = Offset(cx - m.size.width / 2f, cy - m.size.height / 2f))
+        }
+    }
+}
+
 /** Where the playhead is across `line` at `pos` ms, 0..1. */
 private fun playheadAt(line: TabLine, pos: Long): Float {
     val m = line.marks
@@ -551,11 +819,22 @@ fun TabsSheet(store: Store, state: TabsState, onClose: () -> Unit) {
         if (held) return@LaunchedEffect
         if (current >= 0) list.animateScrollToItem((current - 1).coerceAtLeast(0))
     }
+    // The fretboard: hidden at first.
+    var fretboard by rememberSaveable { mutableStateOf(false) }
     SheetPanel(
         store,
         stringResource(R.string.tab_title, state.title),
         onClose,
         actions = {
+            if (state.lines.isNotEmpty() && state.fretboard != null) {
+                IconButton(onClick = { fretboard = !fretboard }) {
+                    Icon(
+                        ChippyIcons.Fretboard,
+                        stringResource(if (fretboard) R.string.tab_fretboard_hide else R.string.tab_fretboard_show),
+                        tint = if (fretboard) LocalLook.current.accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             if (state.lines.isNotEmpty()) {
                 TextButton(onClick = { clipboard.setText(AnnotatedString(state.text)) }) {
                     Text(stringResource(R.string.copy))
@@ -586,11 +865,11 @@ fun TabsSheet(store: Store, state: TabsState, onClose: () -> Unit) {
         Column(Modifier.padding(start = 20.dp, end = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.tab_part), label, style = labelStyle, color = labelColor)
-                Dropdown(
-                    state.parts,
-                    state.part.toInt(),
-                    enabled = parts > 1 && !state.busy,
+                PartDropdown(
+                    state,
+                    enabled = !state.busy,
                     modifier = Modifier.weight(1f),
+                    store = store,
                 ) { i -> keepView(); store.send { setTabPart(i.toUInt()) } }
                 IconButton(
                     onClick = {
@@ -752,6 +1031,10 @@ fun TabsSheet(store: Store, state: TabsState, onClose: () -> Unit) {
                 )
             }
             return@SheetPanel
+        }
+        val board = state.fretboard
+        if (fretboard && board != null) {
+            FretboardView(board, pos)
         }
         BoxWithConstraints(Modifier.fillMaxSize()) {
             // As many digits as fit beside the strings' names: the engine

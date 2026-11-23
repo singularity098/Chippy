@@ -46,6 +46,31 @@ export struct TabBar {
     nudged: bool,
 }
 
+// A row of the guitar tab's list of parts: what it is played on (an
+// icon), whether it can be shown as tab (`pick`, its index among the parts
+// shown, or -1 for the drums), and whether it is muted, soloed and heard.
+export struct TabPart {
+    name: string,
+    // "Electric guitar", for the icon's tooltip.
+    kind: string,
+    icon-line: string,
+    icon-solid: string,
+    pick: int,
+    muted: bool,
+    soloed: bool,
+    audible: bool,
+}
+
+// A note on the fretboard: playing now, or (dimmed) elsewhere in the bar.
+export struct FretDot {
+    // 0 is the lowest string.
+    string: int,
+    fret: int,
+    // "Bb".
+    name: string,
+    now: bool,
+}
+
 export struct TabLine {
     start: string,
     cells: [TabCell],
@@ -144,6 +169,20 @@ export global Tabs {
     // and, if it is a merge, a way to take it apart; merge(i) does item i.
     in property <[string]> merge-items;
     callback merge(int);
+    // Every part (those shown as tab, then the drums), to mute and solo.
+    in property <[TabPart]> parts;
+    // Muting is heard (the track plays through the SoundFont).
+    in property <bool> can-mute;
+    in property <bool> any-muted;
+    callback toggle-mute(int);
+    callback toggle-solo(int);
+    callback clear-mutes;
+    // The fretboard, under the controls (hidden at first): the strings'
+    // names (lowest first), how many frets, and the notes of the bar
+    // playing.
+    in-out property <bool> fretboard-shown;
+    in property <int> frets: 12;
+    in property <[FretDot]> fret-dots;
 }
 
 export global Export {
@@ -878,6 +917,342 @@ component TabBars inherits HorizontalLayout {
     }
 }
 
+// Mute or solo, on one row of the list of parts.
+component MixToggle inherits Rectangle {
+    in property <string> letter;
+    in property <bool> on;
+    in property <color> lit;
+    in property <string> tip;
+    callback clicked;
+    width: 28px;
+    height: 24px;
+    border-radius: 6px;
+    background: root.on ? root.lit : touch.pressed ? Theme.pressed : touch.has-hover ? #ffffff14 : transparent;
+    border-width: 1px;
+    border-color: root.on ? root.lit : touch.has-hover ? Theme.border-hover : Theme.border-strong;
+    Text {
+        text: root.letter;
+        color: root.on ? #000000 : Theme.text-dim;
+        font-size: Theme.font-small - 1px;
+        font-weight: Theme.regular;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    Tip { text: root.tip; hover: touch.has-hover && !touch.pressed; pressed: touch.pressed; }
+}
+
+// The part shown, and the list of every part below it: each with an icon
+// for what it plays, and buttons to mute it or solo it. The drums are
+// listed to mute and solo, but can't be shown as tab.
+component PartDropdown inherits Rectangle {
+    in property <bool> enabled: true;
+    preferred-width: 160px;
+    min-width: 80px;
+    height: 34px;
+    border-radius: Theme.radius;
+    background: touch.pressed ? Theme.pressed : Theme.surface-3;
+    border-width: 1px;
+    border-color: touch.has-hover && root.enabled ? Theme.border-hover : Theme.border-strong;
+    opacity: root.enabled || Tabs.parts.length > 0 ? 1 : 0.45;
+    property <bool> has: Tabs.part >= 0 && Tabs.part < Tabs.parts.length;
+    property <TabPart> shown: Tabs.parts[Tabs.part];
+    if root.has: Icon {
+        x: 10px;
+        y: (parent.height - self.height) / 2;
+        width: 18px;
+        height: 18px;
+        line: root.shown.icon-line;
+        solid: root.shown.icon-solid;
+        weight: 1.6;
+        tint: root.shown.audible ? Theme.accent : Theme.text-faint;
+    }
+    Text {
+        x: root.has ? 34px : 12px;
+        width: parent.width - self.x - 30px - (Tabs.any-muted ? 18px : 0);
+        height: parent.height;
+        text: root.has ? root.shown.name : "–";
+        color: root.has ? (root.shown.audible ? Theme.accent : Theme.text-dim) : Theme.text-dim;
+        font-weight: Theme.regular;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    // Something is muted or soloed.
+    if Tabs.any-muted: Rectangle {
+        x: parent.width - 42px;
+        y: (parent.height - self.height) / 2;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: Theme.warn;
+    }
+    Icon {
+        x: parent.width - 26px;
+        y: (parent.height - self.height) / 2;
+        width: 14px;
+        height: 14px;
+        line: Icons.chevron-down;
+        weight: 2;
+        tint: Theme.text-dim;
+    }
+    touch := TouchArea {
+        enabled: Tabs.parts.length > 0 && !Tabs.busy;
+        mouse-cursor: self.enabled ? pointer : default;
+        clicked => { list.show(); }
+    }
+    Tip {
+        text: "Show another part (channel), or mute and solo the parts";
+        hover: touch.has-hover && !touch.pressed;
+        pressed: touch.pressed;
+    }
+    list := PopupWindow {
+        close-policy: close-on-click-outside;
+        x: 0;
+        y: root.height + 4px;
+        width: max(root.width, 380px);
+        height: min(Tabs.parts.length * 40px + 14px + 36px, 460px);
+        Rectangle {
+            background: Theme.popup;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #000000a0;
+            VerticalLayout {
+                padding: 6px;
+                spacing: 0;
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        for p[i] in Tabs.parts: Rectangle {
+                            height: 40px;
+                            border-radius: 6px;
+                            background: row.has-hover && p.pick >= 0 ? #ffffff14 : transparent;
+                            row := TouchArea {
+                                enabled: p.pick >= 0;
+                                mouse-cursor: self.enabled ? pointer : default;
+                                // Picked before closing: closing ends the list.
+                                clicked => {
+                                    Tabs.set-part(p.pick);
+                                    list.close();
+                                }
+                            }
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 6px;
+                                spacing: 8px;
+                                Icon {
+                                    y: (parent.height - self.height) / 2;
+                                    width: 16px;
+                                    height: 16px;
+                                    line: p.pick == Tabs.part ? Icons.check : "";
+                                    weight: 2.2;
+                                    tint: Theme.paint;
+                                }
+                                Icon {
+                                    y: (parent.height - self.height) / 2;
+                                    width: 22px;
+                                    height: 22px;
+                                    line: p.icon-line;
+                                    solid: p.icon-solid;
+                                    weight: 1.6;
+                                    tint: p.audible ? Theme.text : Theme.text-faint;
+                                }
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: p.pick >= 0 ? p.name : p.name + " (no tab)";
+                                    color: !p.audible ? Theme.text-faint : p.pick >= 0 ? Theme.text : Theme.text-dim;
+                                    font-size: Theme.font-small + 1px;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                MixToggle {
+                                    y: (parent.height - self.height) / 2;
+                                    letter: "M";
+                                    on: p.muted;
+                                    lit: Theme.danger;
+                                    tip: p.muted ? "Let this part back in" : "Mute this part";
+                                    clicked => { Tabs.toggle-mute(i); }
+                                }
+                                MixToggle {
+                                    y: (parent.height - self.height) / 2;
+                                    letter: "S";
+                                    on: p.soloed;
+                                    lit: Theme.warn;
+                                    tip: p.soloed ? "Take this part out of the solo" : "Solo this part (with any others soloed)";
+                                    clicked => { Tabs.toggle-solo(i); }
+                                }
+                            }
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    height: 36px;
+                    padding-left: 10px;
+                    padding-right: 6px;
+                    spacing: 8px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: Tabs.can-mute ? "M mutes a part, S plays only the parts soloed." : "Muting is heard in MIDI mode (the keyboard button), or for MIDI and tab files.";
+                        color: Tabs.can-mute ? Theme.text-faint : Theme.warn;
+                        font-size: Theme.font-small - 1px;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                        overflow: elide;
+                    }
+                    if Tabs.any-muted: Rectangle {
+                        width: 74px;
+                        y: (parent.height - 26px) / 2;
+                        height: 26px;
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: clear.has-hover ? Theme.border-hover : Theme.border-strong;
+                        background: clear.pressed ? Theme.pressed : transparent;
+                        Text {
+                            text: "Clear all";
+                            color: Theme.text-dim;
+                            font-size: Theme.font-small - 1px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        clear := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { Tabs.clear-mutes(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A guitar's neck, the strings across it (the highest on top, as in the
+// tab), with the notes of the bar playing on it: the ones sounding now
+// lit, the rest dimmed, each with its name.
+component Fretboard inherits Rectangle {
+    property <int> strings: max(1, Tabs.strings.length);
+    property <int> frets: max(1, Tabs.frets);
+    property <length> names: 26px;
+    // Room left of the nut for open strings.
+    property <length> open: 30px;
+    property <length> neck-x: root.names + root.open;
+    property <length> neck-w: max(100px, root.width - root.neck-x - 8px);
+    property <length> fret-w: root.neck-w / root.frets;
+    property <length> top: 10px;
+    property <length> gap: min(24px, max(16px, (root.height - root.top - 26px) / max(1, root.strings - 1)));
+    property <length> neck-h: (root.strings - 1) * root.gap;
+    property <length> dot: min(22px, min(root.gap - 1px, root.fret-w - 3px));
+    height: root.top + (Tabs.strings.length - 1) * 22px + 28px;
+    // The neck.
+    Rectangle {
+        x: root.neck-x;
+        y: root.top - 6px;
+        width: root.neck-w;
+        height: root.neck-h + 12px;
+        border-radius: 4px;
+        background: Theme.surface-2;
+        border-width: 1px;
+        border-color: Theme.border;
+    }
+    // Inlays: one dot at 3, 5, 7, 9, 15, 17, 19 and 21, two at 12 and 24.
+    for f in [3, 5, 7, 9, 15, 17, 19, 21]: Rectangle {
+        visible: f <= root.frets;
+        x: root.neck-x + (f - 0.5) * root.fret-w - 4px;
+        y: root.top + root.neck-h / 2 - 4px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: Theme.border-strong;
+    }
+    for f in [12, 24]: Rectangle {
+        visible: f <= root.frets;
+        x: root.neck-x + (f - 0.5) * root.fret-w - 4px;
+        y: root.top + root.neck-h / 2 - 4px;
+        width: 8px;
+        height: 8px;
+        Rectangle {
+            y: -root.gap * 1.0;
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            background: Theme.border-strong;
+        }
+        Rectangle {
+            y: root.gap * 1.0;
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            background: Theme.border-strong;
+        }
+    }
+    // The nut, the frets and their numbers.
+    Rectangle {
+        x: root.neck-x - 2px;
+        y: root.top - 6px;
+        width: 4px;
+        height: root.neck-h + 12px;
+        border-radius: 1px;
+        background: Theme.text-dim;
+    }
+    for f[i] in root.frets: Rectangle {
+        x: root.neck-x + (i + 1) * root.fret-w - 1px;
+        y: root.top - 6px;
+        width: 2px;
+        height: root.neck-h + 12px;
+        background: Theme.border-strong;
+        Text {
+            x: -root.fret-w / 2 - self.width / 2 + 1px;
+            y: parent.height + 3px;
+            text: i + 1;
+            color: Theme.text-faint;
+            font-size: Theme.font-small - 3px;
+        }
+    }
+    // The strings, highest on top, with their names.
+    for name[si] in Tabs.strings: Rectangle {
+        property <length> sy: root.top + (root.strings - 1 - si) * root.gap;
+        Text {
+            x: 0;
+            y: parent.sy - self.height / 2;
+            width: root.names;
+            text: name;
+            color: Theme.text-faint;
+            font-size: Theme.font-small - 1px;
+            horizontal-alignment: center;
+        }
+        Rectangle {
+            x: root.names + 6px;
+            y: parent.sy - self.height / 2;
+            width: root.width - root.names - 14px;
+            height: si < 2 ? 2px : 1px;
+            background: Theme.text-faint;
+        }
+    }
+    // The notes: on the fret (or left of the nut, open), each named.
+    for d in Tabs.fret-dots: Rectangle {
+        property <length> cx: d.fret == 0 ? root.names + root.open / 2 : root.neck-x + (d.fret - 0.5) * root.fret-w;
+        x: self.cx - self.width / 2;
+        y: root.top + (root.strings - 1 - d.string) * root.gap - self.height / 2;
+        width: root.dot;
+        height: root.dot;
+        border-radius: self.width / 2;
+        background: d.now ? Theme.accent : #3a3a42;
+        border-width: 1px;
+        border-color: d.now ? Theme.accent.brighter(30%) : Theme.border-strong;
+        Text {
+            text: d.name;
+            color: d.now ? Theme.on-paint : Theme.text-dim;
+            font-size: d.name.character-count > 1 ? root.dot * 0.48 : root.dot * 0.58;
+            font-weight: Theme.regular;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
 export component TabsSheet inherits Sheet {
     heading: Tabs.title;
     icon: Icons.guitar-line;
@@ -932,13 +1307,9 @@ export component TabsSheet inherits Sheet {
             tip: "The previous part (channel)";
             clicked => { Tabs.step-part(-1); }
         }
-        Dropdown {
+        PartDropdown {
             horizontal-stretch: 3;
-            items: Tabs.part-names;
-            current: Tabs.part;
-            enabled: Tabs.part-names.length > 1 && !Tabs.busy;
-            tip: "Show another part (channel)";
-            picked(i) => { Tabs.set-part(i); }
+            enabled: Tabs.parts.length > 0 && !Tabs.busy;
         }
         IconButton {
             y: (parent.height - self.height) / 2;
@@ -988,6 +1359,7 @@ export component TabsSheet inherits Sheet {
         height: 34px;
         enabled: !Tabs.busy && Tabs.lines.length > 0;
     }
+    if Tabs.fretboard-shown && !Tabs.busy && Tabs.lines.length > 0: Fretboard { }
     Rectangle {
         vertical-stretch: 1;
         scroll := ScrollView {
@@ -1140,6 +1512,14 @@ export component TabsSheet inherits Sheet {
             opacity: 0;
             read-only: true;
             text: Tabs.all-text;
+        }
+        if Tabs.lines.length > 0: IconButton {
+            y: (parent.height - self.height) / 2;
+            icon: Icons.fretboard-line;
+            icon-solid: Icons.fretboard-solid;
+            active: Tabs.fretboard-shown;
+            tip: Tabs.fretboard-shown ? "Hide the fretboard" : "Show the fretboard: the notes playing, and the rest of the bar's";
+            clicked => { Tabs.fretboard-shown = !Tabs.fretboard-shown; }
         }
         if Tabs.lines.length > 0: BigButton {
             text: "Copy";

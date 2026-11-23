@@ -217,6 +217,8 @@ pub struct Mixer {
     gain: f32,
     buf: Vec<f32>,
     old_buf: Vec<f32>,
+    /// MIDI channels silenced (see [`Decoder::set_muted`]).
+    muted: u16,
 }
 
 impl Mixer {
@@ -243,6 +245,7 @@ impl Mixer {
             gain: 1.0,
             buf: Vec::new(),
             old_buf: Vec::new(),
+            muted: 0,
         }
     }
 
@@ -305,6 +308,7 @@ impl Mixer {
             dec,
             ended: false,
         };
+        synth.dec.set_muted(self.muted);
         synth.seek(self.ms());
         if let Some(prev) = self.synth.replace(synth) {
             if self.mix > 0.0 {
@@ -476,6 +480,17 @@ impl Decoder for Mixer {
             self.sought(ms);
         }
         Ok(done)
+    }
+
+    fn set_muted(&mut self, channels: u16) {
+        self.muted = channels;
+        self.chip.set_muted(channels);
+        if let Some(s) = &mut self.synth {
+            s.dec.set_muted(channels);
+        }
+        if let Some((s, _)) = &mut self.old {
+            s.dec.set_muted(channels);
+        }
     }
 }
 

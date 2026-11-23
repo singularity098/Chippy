@@ -303,6 +303,9 @@ pub struct MidiDecoder {
     right: Vec<f32>,
     old_left: Vec<f32>,
     old_right: Vec<f32>,
+    /// MIDI channels silenced (a bit each): their notes are kept track of
+    /// but not played.
+    muted: u16,
 }
 
 fn new_synth(font: &Arc<SoundFont>, rate: u32) -> Result<Synthesizer> {
@@ -374,6 +377,7 @@ impl MidiDecoder {
             right: vec![0.0; block],
             old_left: vec![0.0; block],
             old_right: vec![0.0; block],
+            muted: 0,
         })
     }
 
@@ -391,8 +395,11 @@ impl MidiDecoder {
         }
     }
 
-    fn sound_held(held: &[[u8; 128]; 16], synth: &mut Synthesizer) {
+    fn sound_held(held: &[[u8; 128]; 16], muted: u16, synth: &mut Synthesizer) {
         for (ch, keys) in held.iter().enumerate() {
+            if muted & (1 << ch) != 0 {
+                continue;
+            }
             for (key, &vel) in keys.iter().enumerate() {
                 // Drums would come in again as fresh hits: leave them.
                 if vel > 0 && ch != 9 {
@@ -411,7 +418,7 @@ impl MidiDecoder {
             return;
         };
         Self::replay_state(&self.song, &mut synth, self.next);
-        Self::sound_held(&self.held, &mut synth);
+        Self::sound_held(&self.held, self.muted, &mut synth);
         let old = std::mem::replace(&mut self.synth, synth);
         self.old = Some((old, self.fade_frames));
     }
@@ -424,9 +431,37 @@ impl MidiDecoder {
             0xb0 if e.d1 == 120 || e.d1 == 123 => self.held[e.channel() as usize] = [0; 128],
             _ => {}
         }
+        // A muted channel's notes don't start (its other messages still
+        // go, so it plays as it should when it comes back).
+        if e.status & 0xf0 == 0x90 && e.d2 > 0 && self.muted & (1 << e.channel()) != 0 {
+            return;
+        }
         send(&mut self.synth, &e);
         if let Some((old, _)) = &mut self.old {
             send(old, &e);
+        }
+    }
+
+    /// Silences the channels set in `channels`; channels let back in sound
+    /// their held notes again.
+    fn mute(&mut self, channels: u16) {
+        let (now, before) = (channels, self.muted);
+        if now == before {
+            return;
+        }
+        self.muted = now;
+        for ch in 0..16 {
+            let bit = 1u16 << ch;
+            if now & bit != 0 && before & bit == 0 {
+                self.synth.note_off_all_channel(ch, false);
+                if let Some((old, _)) = &mut self.old {
+                    old.note_off_all_channel(ch, false);
+                }
+            }
+        }
+        let back = before & !now;
+        if back != 0 {
+            Self::sound_held(&self.held, !back, &mut self.synth);
         }
     }
 
@@ -521,10 +556,14 @@ impl Decoder for MidiDecoder {
                 _ => {}
             }
         }
-        Self::sound_held(&self.held, &mut self.synth);
+        Self::sound_held(&self.held, self.muted, &mut self.synth);
         self.next = upto;
         self.frame = target.min(self.end_frame);
         Ok(())
+    }
+
+    fn set_muted(&mut self, channels: u16) {
+        self.mute(channels);
     }
 }
 
@@ -579,6 +618,34 @@ mod tests {
         // Running status kept the note-on command.
         assert_eq!(s.events[4].status, 0x90);
         assert_eq!(s.events[4].d2, 0);
+    }
+
+    #[test]
+    fn muted_channels_are_silent() {
+        let sf = std::path::Path::new("/usr/share/sounds/sf2/TimGM6mb.sf2");
+        if !sf.exists() {
+            eprintln!("no test SoundFont; skipped");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("t.mid");
+        std::fs::write(&p, tiny_midi()).unwrap();
+        set_soundfont(Some(load_soundfont(sf).unwrap()));
+        let mut d = MidiDecoder::open(&Location::Fs(p), &DecodeOptions::default()).unwrap();
+        let energy = |b: &[f32]| b.iter().map(|s| s * s).sum::<f32>();
+        let mut buf = vec![0f32; 4800];
+        // Channel 1 muted from the start: nothing.
+        d.set_muted(1);
+        d.read(&mut buf).unwrap();
+        assert_eq!(energy(&buf), 0.0);
+        // Let back in: the held note sounds again.
+        d.set_muted(0);
+        d.read(&mut buf).unwrap();
+        assert!(energy(&buf) > 0.0, "silence after unmuting");
+        // Another channel muted: still playing.
+        d.set_muted(1 << 3);
+        d.read(&mut buf).unwrap();
+        assert!(energy(&buf) > 0.0);
     }
 
     #[test]

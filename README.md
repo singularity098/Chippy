@@ -116,6 +116,16 @@ info, PSF tags, vgmstream stream names).
   for a tune split across channels, to pan it or let its notes ring on,
   like the arpeggios of Zelda's dungeon theme; merge it again to add a
   third, or take it apart.
+  The list of parts shows what each is played on, with an icon (a
+  microphone for vocals, a Stratocaster, acoustic or bass headstock,
+  sticks on a snare for the drums, a square, saw, triangle or sine wave
+  for a chip's channels, a keyboard, a violin, a trumpet...), and lists
+  the drums too. **M** mutes a part and **S** solos it (with any others
+  soloed): heard for MIDI files, tab files, and chiptunes in MIDI mode
+  (the chip's own sound can't leave a channel out), for each track until
+  Chippy closes. The fretboard button shows a guitar's neck under the
+  controls (hidden at first): the notes of the bar playing, each named
+  (`Bb`), the ones sounding lit and the rest of the bar's greyed out.
   *Octave* shows the part an octave higher or lower; *Neck* nudges its
   shapes up or down the neck, a step at a time: the lowest-fretted notes of
   each passage move to a lower string, played higher up (or the highest to
@@ -161,8 +171,9 @@ info, PSF tags, vgmstream stream names).
 * **Bottom bar**: now playing (thumbnail, title, artist and album),
   stop/previous/play/next, shuffle, the timeline, a live spectrum, repeat
   (off/all/one) and volume.
-* **Settings (right edge, or the gear)**: music folder (typed, or picked
-  with *Choose…*), browser behaviour,
+* **Settings (right edge, or the gear)**: music folders (typed, or picked
+  with *Choose…*; the arrows put them in the order the browser lists
+  them), browser behaviour,
   the length and fade of chiptunes that loop forever, vgmstream loop count,
   emulation options, the theme (Carlita's eleven), fullscreen, artwork
   preference and spectrum bar count. Everything applies at once and is kept

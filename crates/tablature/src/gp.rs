@@ -487,92 +487,112 @@ pub fn read(data: &[u8]) -> Result<Song> {
     let mut notes: Vec<Written> = Vec::new();
     let mut tempos: Vec<Tempo> = Vec::new();
     let voices = if v5 { 2 } else { 1 };
-    for mi in 0..n_measures {
-        for (ti, th) in tracks.iter().enumerate() {
-            let n_strings = th.high_first.len();
-            for _ in 0..voices {
-                let beats = g.r.count(10_000, "beats in a bar")?;
-                let mut at = 0.0;
-                for _ in 0..beats {
-                    let flags = g.r.u8()?;
-                    if flags & 0x40 != 0 {
-                        g.r.u8()?; // empty or rest
-                    }
-                    let d = g.r.i8()?.clamp(-2, 6) as i32;
-                    let mut q = 2f64.powi(-d);
-                    if flags & 0x01 != 0 {
-                        q *= 1.5;
-                    }
-                    if flags & 0x20 != 0 {
-                        q *= tuplet(g.r.i32()?.clamp(1, 64) as u32);
-                    }
-                    if flags & 0x02 != 0 {
-                        g.chord()?;
-                    }
-                    if flags & 0x04 != 0 {
-                        g.r.int_byte_string()?;
-                    }
-                    if flags & 0x08 != 0 {
-                        g.beat_effects()?;
-                    }
-                    if flags & 0x10 != 0 {
-                        if let Some(bpm) = g.mix_table()? {
-                            tempos.push(Tempo {
+    // A file cut short keeps the bars read in full before it ends.
+    let mut complete = n_measures;
+    {
+        let mut bar = |mi: usize| -> Result<()> {
+            for (ti, th) in tracks.iter().enumerate() {
+                let n_strings = th.high_first.len();
+                for _ in 0..voices {
+                    let beats = g.r.count(10_000, "beats in a bar")?;
+                    let mut at = 0.0;
+                    for _ in 0..beats {
+                        let flags = g.r.u8()?;
+                        if flags & 0x40 != 0 {
+                            g.r.u8()?; // empty or rest
+                        }
+                        let d = g.r.i8()?.clamp(-2, 6) as i32;
+                        let mut q = 2f64.powi(-d);
+                        if flags & 0x01 != 0 {
+                            q *= 1.5;
+                        }
+                        if flags & 0x20 != 0 {
+                            q *= tuplet(g.r.i32()?.clamp(1, 64) as u32);
+                        }
+                        if flags & 0x02 != 0 {
+                            g.chord()?;
+                        }
+                        if flags & 0x04 != 0 {
+                            g.r.int_byte_string()?;
+                        }
+                        if flags & 0x08 != 0 {
+                            g.beat_effects()?;
+                        }
+                        if flags & 0x10 != 0 {
+                            if let Some(bpm) = g.mix_table()? {
+                                tempos.push(Tempo {
+                                    measure: mi,
+                                    at,
+                                    bpm: bpm as f64,
+                                });
+                            }
+                        }
+                        let bits = g.r.u8()?;
+                        for s in 1..=7u8 {
+                            if bits & (1 << (7 - s)) == 0 {
+                                continue;
+                            }
+                            let (kind, fret, vel, ghost) = g.note()?;
+                            let s = s as usize;
+                            if kind == 3 || s > n_strings {
+                                continue; // dead (muted) notes have no pitch
+                            }
+                            let vel = if ghost {
+                                (vel as f64 * GHOST) as u8
+                            } else {
+                                vel
+                            };
+                            let (key, string) = if th.track.drums {
+                                (fret, None)
+                            } else {
+                                let open = th.high_first[s - 1] as u32 + th.track.capo as u32;
+                                (
+                                    (open + fret as u32).min(127) as u8,
+                                    Some((n_strings - s) as u8),
+                                )
+                            };
+                            notes.push(Written {
+                                track: ti,
                                 measure: mi,
                                 at,
-                                bpm: bpm as f64,
+                                quarters: q,
+                                key,
+                                velocity: vel,
+                                string,
+                                tie: kind == 2,
                             });
                         }
-                    }
-                    let bits = g.r.u8()?;
-                    for s in 1..=7u8 {
-                        if bits & (1 << (7 - s)) == 0 {
-                            continue;
+                        if v5 {
+                            let f2 = g.r.i16()?;
+                            if f2 & 0x0800 != 0 {
+                                g.r.u8()?;
+                            }
                         }
-                        let (kind, fret, vel, ghost) = g.note()?;
-                        let s = s as usize;
-                        if kind == 3 || s > n_strings {
-                            continue; // dead (muted) notes have no pitch
-                        }
-                        let vel = if ghost {
-                            (vel as f64 * GHOST) as u8
-                        } else {
-                            vel
-                        };
-                        let (key, string) = if th.track.drums {
-                            (fret, None)
-                        } else {
-                            let open = th.high_first[s - 1] as u32 + th.track.capo as u32;
-                            (
-                                (open + fret as u32).min(127) as u8,
-                                Some((n_strings - s) as u8),
-                            )
-                        };
-                        notes.push(Written {
-                            track: ti,
-                            measure: mi,
-                            at,
-                            quarters: q,
-                            key,
-                            velocity: vel,
-                            string,
-                            tie: kind == 2,
-                        });
+                        at += q;
                     }
-                    if v5 {
-                        let f2 = g.r.i16()?;
-                        if f2 & 0x0800 != 0 {
-                            g.r.u8()?;
-                        }
+                }
+                if v5 {
+                    // The line break; some programs leave the file's last one off.
+                    if g.r.p < g.r.d.len() {
+                        g.r.u8()?;
                     }
-                    at += q;
                 }
             }
-            if v5 {
-                g.r.u8()?; // line break
+            Ok(())
+        };
+        for mi in 0..n_measures {
+            if let Err(e) = bar(mi) {
+                if mi == 0 {
+                    return Err(e);
+                }
+                complete = mi;
+                break;
             }
         }
     }
+    measures.truncate(complete);
+    notes.retain(|n| n.measure < complete);
+    tempos.retain(|t| t.measure < complete);
     let tracks: Vec<Track> = tracks.into_iter().map(|t| t.track).collect();
     Ok(build(song, &measures, &tracks, &notes, &tempos, bpm as f64))
 }
@@ -611,6 +631,33 @@ mod tests {
             end_ms: 8000.0,
             exact: true,
         }
+    }
+
+    #[test]
+    fn reads_files_cut_short() {
+        let lead: Vec<Note> = (0..8)
+            .map(|i| note(i as f64 * 1000.0, 64 + i as u8, 500.0))
+            .collect();
+        let lt = tab::arrange(&lead, &TUNINGS[0]);
+        let s = score(
+            "Short",
+            &meter(),
+            &[PartTab {
+                name: "Lead".into(),
+                program: 29,
+                tuning: &TUNINGS[0],
+                tab: &lt,
+            }],
+        );
+        let full = crate::gp5::write(&s);
+        // Without the last bar's line break, as some programs save them.
+        let song = read(&full[..full.len() - 1]).unwrap();
+        assert_eq!(song.meter.bars.len(), 4);
+        assert_eq!(song.parts[0].notes.len(), 8);
+        // Ending inside the last bar: the three bars before it.
+        let song = read(&full[..full.len() - 12]).unwrap();
+        assert_eq!(song.meter.bars.len(), 3);
+        assert_eq!(song.parts[0].notes.len(), 6);
     }
 
     #[test]

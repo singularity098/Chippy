@@ -77,13 +77,20 @@ info, PSF tags, vgmstream stream names).
   end as they play, at their length with the fade. Or to **MusicXML** or
   **Guitar Pro 5**: the pitched parts as tab in bars (as the guitar tab
   shows them; the track open in it, with its changes). Or to **MIDI**: the
-  notes, worked out from what a tune does to its sound chip (NES, SNES,
-  Genesis and other VGM chips, Game Boy, PC Engine, MSX, Master System, Atari,
-  Commodore 64) or read from a tracker module's patterns, a MIDI track per
+  notes, worked out from what a tune does to its sound chips (NES, with its
+  cartridge chips: VRC6, VRC7, FDS, MMC5, N163, 5B; SNES; Genesis and the
+  other chips VGM logs, OPN, OPL and OPM FM among them; Game Boy, Game Boy
+  Advance, PC Engine, MSX with its SCC and FM, ZX Spectrum and Amstrad CPC,
+  Master System, Atari, Commodore 64, WonderSwan, PlayStation 1 and 2,
+  Nintendo DS) or read from a tracker module's patterns, a MIDI track per
   channel, in the track's bars (its tempo and time signature, so the notes
-  fall on the beats in a sequencer). Sampled instruments (SNES, modules) are measured and named to pick
-  each one's General MIDI instrument, and unpitched samples become drums.
-  MIDI is greyed out for tracks whose notes can't be found.
+  fall on the beats in a sequencer). Most GBA music is mixed by Nintendo's
+  m4a (Sappy) engine, whose notes are read from the engine itself.
+  Sampled instruments (SNES, PlayStation, DS, GBA, modules) are measured
+  and named to pick each one's General MIDI instrument, and unpitched
+  samples become drums. MIDI is greyed out for tracks whose notes can't be
+  found: recorded audio (MP3, FLAC, vgmstream's formats) and the N64,
+  Saturn, Dreamcast and QSound.
 * **Lyrics** (`L`, or the speech-bubble button by the volume): from an
   `.lrc` file beside the track (timed: the line being sung is marked and
   kept in view, a faint `[1:23]` beside each line says when it is sung,

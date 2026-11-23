@@ -87,6 +87,9 @@ struct Open {
     drum: Option<u8>,
 }
 
+/// A note, and the sample it played (none on a Game Boy channel).
+type Played = (Note, Option<usize>);
+
 struct Sample {
     info: SampleInfo,
     features: instrument::Features,
@@ -99,7 +102,7 @@ struct M4a {
     prev: [Slot; SLOTS],
     open: [Option<Open>; SLOTS],
     /// Tracks in order of first note, with their notes (and samples).
-    tracks: Vec<(u32, Vec<(Note, Option<usize>)>)>,
+    tracks: Vec<(u32, Vec<Played>)>,
     drums: Vec<Note>,
     by_wav: HashMap<u32, usize>,
     samples: Vec<Sample>,

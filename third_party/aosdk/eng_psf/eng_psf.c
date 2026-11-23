@@ -24,6 +24,7 @@
 	SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include "ao_notes.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -381,6 +382,7 @@ int32 psf_gen(void *handle, int16 *buffer, uint32 samples)
 	{
 		psx_hw_slice(s->mips_cpu);
 		SPUasync(s->mips_cpu, 384);
+		ao_notes_tick();
 	}
 
     s->spu_pOutput = (char *)buffer;

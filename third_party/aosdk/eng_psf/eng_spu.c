@@ -31,6 +31,7 @@
 //       are in the newer format.  Also, CDDA and XA commands do not work - I've not found a rip using them.
 //
 
+#include "ao_notes.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -248,6 +249,7 @@ int32 spu_gen(void *handle, int16 *buffer, uint32 samples)
 		{
 		  	spu_tick(s);
 			SPUasync(s->mips_cpu, 384);
+			ao_notes_tick();
 		}
 
 		s->spu_pOutput = (char *)buffer;

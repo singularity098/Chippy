@@ -27,6 +27,8 @@ mod module;
 pub mod musicxml;
 mod nes;
 mod nesx;
+mod psx;
+mod sampled;
 pub mod score;
 mod sgc;
 mod sid;
@@ -137,6 +139,7 @@ pub fn transcribe(loc: &Location, sub: Option<u32>, max_ms: Option<u64>) -> Resu
         "ay" | "gbs" | "hes" | "kss" | "sap" => chips::transcribe_gme(loc, &ext, track, max_ms)?,
         "sgc" => sgc::transcribe(loc, sub, max_ms)?,
         "wsr" => wsr::transcribe(loc, sub, max_ms)?,
+        e if PLAYSTATION.contains(&e) => psx::transcribe(loc, max_ms)?,
         e if crate::formats::SID.contains(&e) => sid::transcribe(loc, sub, max_ms)?,
         e if crate::formats::MODULES.contains(&e) => module::transcribe(loc, max_ms)?,
         e if crate::formats::MIDI.contains(&e) => {
@@ -151,6 +154,11 @@ pub fn transcribe(loc: &Location, sub: Option<u32>, max_ms: Option<u64>) -> Resu
     t.parts.retain(|p| !p.notes.is_empty());
     Ok(t)
 }
+
+/// PlayStation and PlayStation 2 formats, read through their SPUs.
+const PLAYSTATION: &[&str] = &[
+    "psf", "minipsf", "psf1", "minipsf1", "psf2", "minipsf2", "spu",
+];
 
 /// Whether [`transcribe`] can find the notes of a file with this name.
 pub fn supported(name: &str) -> bool {
@@ -171,7 +179,8 @@ pub fn supported(name: &str) -> bool {
             | "sap"
             | "sgc"
             | "wsr"
-    ) || crate::formats::SID.contains(&e)
+    ) || PLAYSTATION.contains(&e)
+        || crate::formats::SID.contains(&e)
         || crate::formats::MODULES.contains(&e)
         || crate::formats::MIDI.contains(&e)
 }

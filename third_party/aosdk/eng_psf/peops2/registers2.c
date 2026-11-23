@@ -37,6 +37,7 @@
 //
 //*************************************************************************//
 
+#include "ao_notes.h"
 #include "stdafx.h"
 
 #define _IN_REGISTERS
@@ -74,6 +75,7 @@ EXPORT_GCC void CALLBACK SPU2write(mips_cpu_context *cpu, unsigned long reg, uns
 {
     spu2_state_t *spu = cpu->spu2;
  long r=reg&0xffff;
+ ao_notes_write(2, r, val, spu->spuMemC, sizeof(spu->spuMem));
 
  spu->regArea[r>>1] = val;
 

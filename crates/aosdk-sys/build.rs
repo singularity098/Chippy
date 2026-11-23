@@ -2,6 +2,7 @@
 use std::path::PathBuf;
 
 const SOURCES: &[&str] = &[
+    "ao_notes.c",
     "corlett.c",
     "psfmain.c",
     "eng_dsf/aica.c",

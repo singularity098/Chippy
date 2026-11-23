@@ -15,3 +15,6 @@ eng_psf2.c, psx.h, psx_hw.c: PSF2's file systems and IOP heap pointer live in th
 psx.c: a jump in a branch's delay slot is ignored (the branch wins), as Final Fantasy X's patched
   driver needs: it loops with "b loop; jr ra", which returned and leaked the stack.
 psx_hw.c: the IOP debug printing compiles again.
+ao_notes.c/.h: a thread-local hook for SPU and SPU2 register writes (with the SPU's RAM and the
+  output samples made so far), called from peops/registers.c and peops2/registers2.c, with
+  ao_notes_tick() in the PSF, PSF2 and SPU engines' sample loops: for finding a song's notes.

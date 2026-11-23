@@ -185,6 +185,68 @@ pub fn open(loc: &Location, opts: &DecodeOptions) -> Result<Timed<AoEngine>> {
     Ok(Timed::new(engine, length, fade).with_gain(gain))
 }
 
+/// Plays the tune (silently) for `ms`, or its tagged length and fade,
+/// handing `f` each SPU (kind 1) or SPU2 (kind 2) register write: (ms into
+/// the tune, kind, register, value, the SPU's RAM). Returns the system's
+/// name and how long was played, ms.
+pub(crate) fn capture(
+    loc: &Location,
+    ms: Option<u64>,
+    f: &mut dyn FnMut(f64, i32, u32, u32, &[u8]),
+) -> Result<(&'static str, f64)> {
+    struct Hooked<'a> {
+        f: &'a mut dyn FnMut(f64, i32, u32, u32, &[u8]),
+    }
+    unsafe extern "C" fn hook(
+        user: *mut c_void,
+        kind: std::os::raw::c_int,
+        reg: u32,
+        val: u32,
+        ram: *const u8,
+        ram_size: u32,
+        sample: u64,
+    ) {
+        let h = unsafe { &mut *(user as *mut Hooked) };
+        let ram = unsafe { std::slice::from_raw_parts(ram, ram_size as usize) };
+        (h.f)(sample as f64 * 1000.0 / 44_100.0, kind, reg, val, ram);
+    }
+    /// Removes the thread's hook however capturing ends.
+    struct Unhook;
+    impl Drop for Unhook {
+        fn drop(&mut self) {
+            unsafe { ffi::ao_notes_set_hook(None, std::ptr::null_mut()) };
+        }
+    }
+
+    let opts = DecodeOptions::default();
+    let mut engine = AoEngine::open(loc)?;
+    let ms = ms.unwrap_or_else(|| match psf::parse(&engine.data) {
+        Ok(p) => {
+            let (length, fade) = psf::timing(&p, &opts);
+            length + fade
+        }
+        Err(_) => opts.default_length_ms + opts.fade_ms,
+    });
+    let system = names(engine.kind, "").0;
+    let mut hooked = Hooked { f };
+    let _unhook = Unhook;
+    unsafe { ffi::ao_notes_set_hook(Some(hook), (&mut hooked as *mut Hooked).cast()) };
+    // The engine is already running: start it again, hooked from the start.
+    engine.start()?;
+    let calls = (ms as usize * 44_100 / 1000).div_ceil(FRAMES_PER_CALL);
+    for _ in 0..calls {
+        unsafe {
+            ffi::ao_decode(
+                engine.kind,
+                engine.handle,
+                engine.pending.as_mut_ptr(),
+                FRAMES_PER_CALL as u32,
+            )
+        };
+    }
+    Ok((system, (calls * FRAMES_PER_CALL) as f64 * 1000.0 / 44_100.0))
+}
+
 pub fn meta(loc: &Location, opts: &DecodeOptions) -> Result<TrackMeta> {
     let data = loc.read()?;
     let Some(kind) = kind_of(&data) else {

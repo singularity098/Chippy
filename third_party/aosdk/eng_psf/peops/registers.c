@@ -38,6 +38,7 @@
 
 */
 
+#include "ao_notes.h"
 #include "stdafx.h"
 
 #define _IN_REGISTERS
@@ -60,6 +61,7 @@ static void SetPitch(spu_state_t *spu, int ch,u16 val);
 void SPUwriteRegister(mips_cpu_context *cpu, u32 reg, u16 val)
 {
  const u32 r=reg&0xfff;
+ ao_notes_write(1, r, val, cpu->spu->spuMemC, sizeof(cpu->spu->spuMem));
  cpu->spu->regArea[(r-0xc00)>>1] = val;
 
 // printf("SPUwrite: r %x val %x\n", r, val);

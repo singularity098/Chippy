@@ -23,7 +23,24 @@ extern "C" {
     /// Renders `size` stereo frames of 16-bit samples at 44.1 kHz.
     pub fn ao_decode(kind: u32, handle: *mut c_void, buffer: *mut i16, size: u32) -> c_int;
     fn malloc(n: usize) -> *mut c_void;
+
+    /// Installs (or with `None`, removes) this thread's hook for the SPU's
+    /// (kind 1) and SPU2's (kind 2) register writes, and starts its count
+    /// of output samples from 0; see `third_party/aosdk/ao_notes.h`.
+    pub fn ao_notes_set_hook(f: Option<NotesHook>, user: *mut c_void);
 }
+
+/// (user, kind, register, value, the SPU's RAM, its size, output samples
+/// made before the write).
+pub type NotesHook = unsafe extern "C" fn(
+    user: *mut c_void,
+    kind: c_int,
+    reg: u32,
+    val: u32,
+    ram: *const u8,
+    ram_size: u32,
+    sample: u64,
+);
 
 type Reader = dyn FnMut(&str) -> Option<Vec<u8>>;
 

@@ -179,6 +179,8 @@ struct SPU_struct
    void reset();
    ~SPU_struct();
    void KeyOn(int channel);
+   // Chippy: tells the notes hook (if any) what channel `channel` did.
+   void Notify(int kind, int channel);
    void WriteByte(u32 addr, u8 val);
    void WriteWord(u32 addr, u16 val);
    void WriteLong(u32 addr, u32 val);

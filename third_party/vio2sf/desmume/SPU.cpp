@@ -359,6 +359,32 @@ void SPU_struct::KeyOn(int channel)
 	}
 	
 	thischan.double_totlength_shifted = (double)(thischan.totlength << format_shift[thischan.format]);
+	Notify(0, channel);
+}
+
+void SPU_struct::Notify(int kind, int channel)
+{
+	if (!state->notes_hook || this != state->SPU_core)
+		return;
+	channel_struct &c = channels[channel];
+	twosf_note_event e;
+	e.kind = kind;
+	e.channel = channel;
+	e.format = c.format;
+	e.vol = c.vol;
+	e.datashift = c.datashift;
+	e.duty = c.waveduty;
+	e.repeat = c.repeat;
+	e.timer = c.timer;
+	e.loopstart = c.loopstart;
+	e.length = c.length;
+	e.data = (kind == 0 && c.format != 3) ? (const unsigned char *)c.buf8 : 0;
+	{
+		u32 mask = state->MMU->MMU_MASK[1][(c.addr >> 20) & 0xFF];
+		e.data_size = e.data ? mask - (c.addr & mask) + 1 : 0;
+	}
+	e.sample = state->notes_samples;
+	state->notes_hook(state->notes_user, &e);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -387,6 +413,8 @@ void SPU_struct::WriteByte(u32 addr, u8 val)
 			thischan.status = (val >> 7) & 0x1;
 			if(thischan.status)
 				KeyOn((addr >> 4) & 0xF);
+			else
+				Notify(2, (addr >> 4) & 0xF);
 			break;
 		}
 	}
@@ -428,10 +456,13 @@ void SPU_struct::WriteWord(u32 addr, u16 val)
 		thischan.status = (val >> 15) & 0x1;
 		if (thischan.status)
 			KeyOn((addr >> 4) & 0xF);
+		else
+			Notify(2, (addr >> 4) & 0xF);
 		break;
 	case 0x8:
 		thischan.timer = val & 0xFFFF;
 		adjust_channel_timer(&thischan);
+		Notify(1, (addr >> 4) & 0xF);
 		break;
 	case 0xA:
 		thischan.loopstart = val;
@@ -480,6 +511,8 @@ void SPU_struct::WriteLong(u32 addr, u32 val)
 		thischan.status = (val >> 31) & 0x1;
 		if (thischan.status)
 			KeyOn((addr >> 4) & 0xF);
+		else
+			Notify(2, (addr >> 4) & 0xF);
 		break;
 	case 0x4:
 		thischan.addr = val & 0x7FFFFFF;
@@ -488,6 +521,7 @@ void SPU_struct::WriteLong(u32 addr, u32 val)
 		thischan.timer = val & 0xFFFF;
 		thischan.loopstart = val >> 16;
 		adjust_channel_timer(&thischan);
+		Notify(1, (addr >> 4) & 0xF);
 		break;
 	case 0xC:
 		thischan.length = val & 0x3FFFFF;
@@ -925,6 +959,7 @@ void SPU_Emulate_core(NDS_state *state)
 
 extern "C" void SPU_EmulateSamples(NDS_state *state, int numsamples)
 {
+	state->notes_samples += numsamples;
 	SPU_MixAudio(state,true,state->SPU_core,numsamples);
 	state->SNDCore->UpdateAudio(state,state->SPU_core->outbuf,numsamples);
 }

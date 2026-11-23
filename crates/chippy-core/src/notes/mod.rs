@@ -25,6 +25,7 @@ pub mod meter;
 pub mod midi;
 mod module;
 pub mod musicxml;
+mod nds;
 mod nes;
 mod nesx;
 mod psx;
@@ -140,6 +141,7 @@ pub fn transcribe(loc: &Location, sub: Option<u32>, max_ms: Option<u64>) -> Resu
         "sgc" => sgc::transcribe(loc, sub, max_ms)?,
         "wsr" => wsr::transcribe(loc, sub, max_ms)?,
         e if PLAYSTATION.contains(&e) => psx::transcribe(loc, max_ms)?,
+        "2sf" | "mini2sf" => nds::transcribe(loc, max_ms)?,
         e if crate::formats::SID.contains(&e) => sid::transcribe(loc, sub, max_ms)?,
         e if crate::formats::MODULES.contains(&e) => module::transcribe(loc, max_ms)?,
         e if crate::formats::MIDI.contains(&e) => {
@@ -179,6 +181,8 @@ pub fn supported(name: &str) -> bool {
             | "sap"
             | "sgc"
             | "wsr"
+            | "2sf"
+            | "mini2sf"
     ) || PLAYSTATION.contains(&e)
         || crate::formats::SID.contains(&e)
         || crate::formats::MODULES.contains(&e)

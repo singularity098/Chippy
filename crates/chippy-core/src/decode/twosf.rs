@@ -129,6 +129,51 @@ pub fn open(loc: &Location, opts: &DecodeOptions) -> Result<Timed<TwosfEngine>> 
     Ok(Timed::new(TwosfEngine { s, img }, length, fade).with_gain(gain))
 }
 
+/// Plays the tune (silently) for `ms`, or its tagged length and fade,
+/// handing `f` what each sound channel does: (ms into the tune, the event,
+/// the sample's bytes on a key on). Returns how long was played, ms.
+pub(crate) fn capture(
+    loc: &Location,
+    ms: Option<u64>,
+    f: &mut dyn FnMut(f64, &ffi::NoteEvent, &[u8]),
+) -> Result<f64> {
+    struct Hooked<'a, 'b> {
+        f: &'a mut (dyn FnMut(f64, &ffi::NoteEvent, &[u8]) + 'b),
+    }
+    unsafe extern "C" fn hook(user: *mut std::os::raw::c_void, e: *const ffi::NoteEvent) {
+        let h = unsafe { &mut *(user as *mut Hooked) };
+        let e = unsafe { &*e };
+        let data = if e.data.is_null() {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(e.data, e.data_size as usize) }
+        };
+        (h.f)(e.sample as f64 * 1000.0 / ffi::RATE as f64, e, data);
+    }
+
+    let img = image(loc)?;
+    let opts = DecodeOptions::default();
+    let ms = ms.unwrap_or_else(|| {
+        let (length, fade) = psf::timing(&img.tags, &opts);
+        length + fade
+    });
+    let engine = TwosfEngine {
+        s: TwosfEngine::start(&img)?,
+        img,
+    };
+    let mut hooked = Hooked { f };
+    unsafe { ffi::twosf_set_notes_hook(engine.s, Some(hook), (&mut hooked as *mut Hooked).cast()) };
+    let mut buf = vec![0i16; 2048];
+    let total = ms * ffi::RATE as u64 / 1000;
+    let mut done = 0;
+    while done < total {
+        unsafe { ffi::twosf_render(engine.s, buf.as_mut_ptr(), 1024) };
+        done += 1024;
+    }
+    unsafe { ffi::twosf_set_notes_hook(engine.s, None, std::ptr::null_mut()) };
+    Ok(done as f64 * 1000.0 / ffi::RATE as f64)
+}
+
 pub fn meta(loc: &Location, opts: &DecodeOptions) -> Result<TrackMeta> {
     let p = psf::parse(&loc.read()?)?;
     let format = if loc.extension() == "mini2sf" {
@@ -187,5 +232,12 @@ mod tests {
         let n = d.read(&mut buf).unwrap();
         let hz = pitch(&buf[n..n * 2], ffi::RATE);
         assert!((hz - 440.0).abs() < 15.0, "{hz} Hz");
+        // And its notes: channel 8's square wave.
+        let t = crate::notes::transcribe(&loc, None, Some(1000)).unwrap();
+        let psg = crate::notes::part(&t, "PSG 9");
+        assert_eq!(
+            psg.notes.iter().map(|n| n.key).collect::<Vec<_>>(),
+            vec![69]
+        );
     }
 }

@@ -17,6 +17,19 @@ extern "C" {
 #endif
 
 typedef struct SoundInterface_struct SoundInterface_struct;
+
+/* Chippy: what a sound channel does, for finding a song's notes. */
+typedef struct twosf_note_event {
+    int kind;      /* 0: key on, 1: new timer (pitch), 2: stopped by a write */
+    int channel;
+    int format;    /* 0: PCM8, 1: PCM16, 2: IMA-ADPCM, 3: PSG (square or noise) */
+    int vol, datashift, duty, repeat;
+    unsigned timer, loopstart, length; /* loop start and length in words */
+    const unsigned char *data;         /* the sample (key on, formats 0-2) */
+    unsigned data_size;                /* the bytes readable there */
+    unsigned long long sample;         /* output samples mixed before it */
+} twosf_note_event;
+typedef void (*twosf_notes_fn)(void *user, const twosf_note_event *e);
     
 extern SoundInterface_struct *SNDCoreList[2];
 
@@ -79,6 +92,11 @@ typedef struct NDS_state
     unsigned long sample_size;
     
     void * array_rom_coverage;
+
+    /* Chippy: the notes hook, and the samples mixed so far. */
+    twosf_notes_fn notes_hook;
+    void * notes_user;
+    unsigned long long notes_samples;
 } NDS_state;
 
 int state_init(NDS_state *state);

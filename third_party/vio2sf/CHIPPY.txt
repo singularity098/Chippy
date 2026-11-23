@@ -1,2 +1,5 @@
 vio2sf (DeSmuME-based Nintendo DS sound emulation, GPL-2.0-or-later) by
 Christopher Snowhill, as vendored by rePlayer (source/Replays/vio2sf/desmume).
+
+Chippy's changes: a notes hook (twosf_note_event in desmume/state.h): SPU.cpp tells it of each
+key on, timer change and stop (SPU_struct::Notify), with the number of samples mixed so far.

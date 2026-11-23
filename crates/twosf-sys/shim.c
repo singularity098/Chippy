@@ -27,6 +27,12 @@ NDS_state *twosf_open(const u8 *rom, u32 rom_size, const u8 *state, u32 state_si
 
 void twosf_render(NDS_state *s, s16 *out, unsigned frames) { state_render(s, out, frames); }
 
+void twosf_set_notes_hook(NDS_state *s, twosf_notes_fn f, void *user) {
+    s->notes_hook = f;
+    s->notes_user = user;
+    s->notes_samples = 0;
+}
+
 void twosf_close(NDS_state *s) {
     if (!s) return;
     state_deinit(s);

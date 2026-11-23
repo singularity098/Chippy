@@ -225,13 +225,36 @@ impl Decoder for GmeDecoder {
 /// A sound-chip register write seen by [`capture`]; see gme-sys's
 /// `hooks/config.h`. `kind` 0 is an APU write, 1 a call of the play
 /// routine, 2 an S-DSP write with `time` in SPC clocks from the start of the
-/// block of `gme_play` it happened in.
+/// block of `gme_play` it happened in, 3 a write to another chip (KSS's SCC
+/// and OUT ports, NSF cartridge chips), 4 the end of a block of emulation.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ChipWrite {
     pub kind: i32,
     pub time: i64,
     pub addr: i32,
     pub data: i32,
+    /// When it happened in the tune (kinds 0 and 3, where the emulator
+    /// says), ms; else negative.
+    pub ms: f64,
+}
+
+/// Places the writes of kinds 0 and 3 in time from their blocks' ends
+/// (kind 4): `start` is when the first block started, ms, and moves on.
+fn place(writes: &mut [ChipWrite], start: &mut f64) {
+    let mut from = 0;
+    for i in 0..writes.len() {
+        if writes[i].kind != 4 {
+            continue;
+        }
+        let rate = writes[i].addr.max(1) as f64;
+        for w in &mut writes[from..i] {
+            if (w.kind == 0 || w.kind == 3) && w.time >= 0 {
+                w.ms = *start + w.time as f64 * 1000.0 / rate;
+            }
+        }
+        *start += writes[i].time as f64 * 1000.0 / rate;
+        from = i + 1;
+    }
 }
 
 /// Removes the thread's hook however capturing ends.
@@ -257,6 +280,7 @@ unsafe extern "C" fn collect(
         time: i64::from(time),
         addr,
         data,
+        ms: -1.0,
     });
 }
 
@@ -297,11 +321,19 @@ pub(crate) fn capture(
     let total = ms * rate as u64 / 1000;
     let mut buf = vec![0i16; chunk * 2];
     let mut frames = 0u64;
-    // The init routine's writes, then each block's.
+    // The init routine's writes (at the start), then each block's.
+    let mut start_ms = 0.0;
+    for w in writes
+        .iter_mut()
+        .filter(|w| (w.kind == 0 || w.kind == 3) && w.time >= 0)
+    {
+        w.ms = 0.0;
+    }
     f(0, &writes);
     writes.clear();
     while frames < total {
         let err = unsafe { ffi::gme_play(emu.0, buf.len() as i32, buf.as_mut_ptr()) };
+        place(&mut writes, &mut start_ms);
         f(frames, &writes);
         writes.clear();
         frames += chunk as u64;

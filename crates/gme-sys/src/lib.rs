@@ -61,7 +61,11 @@ extern "C" {
     /// Installs (or with `None`, removes) this thread's hook for sound-chip
     /// register writes, see `hooks/config.h`. `kind` is 0 for an APU write
     /// (NES, Game Boy, PC Engine, KSS, SAP), 1 when the play routine is
-    /// called, 2 for an S-DSP write (SPC, with `time` in SPC clocks).
+    /// called, 2 for an S-DSP write (SPC, with `time` in SPC clocks), 3 for
+    /// a write to another chip (KSS SCC and OUT ports, NSF cartridge chips),
+    /// 4 at the end of a block of emulation (`time` clocks long, `addr`
+    /// clocks a second). Kinds 0 and 3 have `time` in clocks from the start
+    /// of their block, or -1 if unknown.
     pub fn chippy_gme_set_hook(f: Option<chippy_gme_hook_fn>, user: *mut c_void);
 }
 

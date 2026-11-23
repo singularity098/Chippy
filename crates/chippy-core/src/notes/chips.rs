@@ -72,6 +72,9 @@ fn sound(voice: &mut Voice, t: f64, hz: f64, attack: bool, vel: u8) {
 pub(crate) struct Ay {
     name: &'static str,
     clock: f64,
+    /// The clock of writes with bit 8 of the address set (AY files: the
+    /// Amstrad CPC's AY, where the Spectrum's is the usual one).
+    alt_clock: f64,
     regs: [u8; 16],
     edge: [Edge; 3],
     voices: [Voice; 3],
@@ -83,11 +86,30 @@ impl Ay {
         Ay {
             name,
             clock,
+            alt_clock: clock,
             regs: [0; 16],
             edge: Default::default(),
             voices: Default::default(),
             drums: Drums::default(),
         }
+    }
+
+    pub fn with_alt_clock(mut self, clock: f64) -> Ay {
+        self.alt_clock = clock;
+        self
+    }
+
+    /// The pitch of a channel playing the envelope alone, repeating fast
+    /// enough to be a tone (the "buzzer" bass): a sawtooth (shapes 8, 12)
+    /// or a triangle (10, 14) of the envelope period.
+    fn envelope_hz(&self) -> Option<f64> {
+        let period = self.regs[11] as u32 | (self.regs[12] as u32) << 8;
+        let steps = match self.regs[13] & 15 {
+            8 | 12 => 256.0,
+            10 | 14 => 512.0,
+            _ => return None,
+        };
+        (period > 0).then(|| self.clock / (steps * period as f64))
     }
 
     fn update(&mut self, t: f64, c: usize, retrigger: bool) {
@@ -97,7 +119,14 @@ impl Ay {
         let tone = mixer & (1 << c) == 0;
         let noise = mixer & (8 << c) == 0;
         let attack = self.edge[c].attack(level) || (retrigger && vol & 0x10 != 0);
+        let buzz = (vol & 0x10 != 0 && !tone)
+            .then(|| self.envelope_hz())
+            .flatten();
         let v = &mut self.voices[c];
+        if let Some(hz) = buzz {
+            // The envelope's own restarts aren't new notes when it repeats.
+            return sound(v, t, hz, attack && !retrigger, velocity(15, 15));
+        }
         if level == 0 || (!tone && !noise) {
             return v.release(t);
         }
@@ -129,14 +158,17 @@ impl Ay {
 
 impl Chip for Ay {
     fn write(&mut self, t: f64, addr: u16, data: u8) {
-        let r = addr as usize;
+        if addr & 0x100 != 0 && self.clock != self.alt_clock {
+            self.clock = self.alt_clock;
+        }
+        let r = (addr & 0xFF) as usize;
         if r >= 16 {
             return;
         }
         self.regs[r] = data;
         match r {
             0..=5 => self.update(t, r / 2, false),
-            7 => (0..3).for_each(|c| self.update(t, c, false)),
+            7 | 11 | 12 => (0..3).for_each(|c| self.update(t, c, false)),
             8..=10 => self.update(t, r - 8, false),
             // Writing the envelope shape restarts the envelope.
             13 => (0..3).for_each(|c| self.update(t, c, true)),
@@ -819,8 +851,8 @@ impl Chip for Opl {
 
 // ------------------------------------------------------ GME formats
 
-/// Game Boy (GBS), PC Engine (HES), MSX and Sega (KSS) and Atari (SAP)
-/// tunes: their chips' writes, seen as the emulator plays.
+/// ZX Spectrum and Amstrad CPC (AY), Game Boy (GBS), PC Engine (HES), MSX
+/// and Sega (KSS) and Atari (SAP) tunes: their chips' writes, seen as the emulator plays.
 pub fn transcribe_gme(
     loc: &Location,
     ext: &str,
@@ -828,9 +860,12 @@ pub fn transcribe_gme(
     max_ms: Option<u64>,
 ) -> Result<Transcription> {
     const RATE: u32 = 44_100;
-    // Small blocks, so each write's time is known to about 3 ms.
-    const CHUNK: usize = 128;
+    const CHUNK: usize = 1024;
     let mut chips: Vec<Box<dyn Chip>> = match ext {
+        // The Spectrum's AY (half its 3.5469 MHz CPU clock), or the CPC's.
+        "ay" => vec![Box::new(
+            Ay::new("AY", 1_773_450.0).with_alt_clock(1_000_000.0),
+        )],
         "gbs" => vec![Box::new(Dmg::new())],
         "hes" => vec![Box::new(Huc::new(3_579_545.0))],
         "kss" => vec![
@@ -845,9 +880,10 @@ pub fn transcribe_gme(
     };
     let mut writes = 0usize;
     let cap = capture(loc, track, RATE, max_ms, CHUNK, |frame, w| {
-        let t = frame as f64 * 1000.0 / RATE as f64;
+        let block = frame as f64 * 1000.0 / RATE as f64;
         for w in w.iter().filter(|w| w.kind == 0) {
             writes += 1;
+            let t = if w.ms >= 0.0 { w.ms } else { block };
             let (chip, addr) = match ext {
                 "kss" if w.addr == 16 => (1, 0),
                 "sap" if w.addr >= 10 => (1, w.addr - 10),
@@ -953,5 +989,88 @@ mod tests {
         p.write(0.0, 1, 0xA8);
         p.write(300.0, 1, 0xA0);
         assert_eq!(keys(&p.finish(500.0)[0]), vec![69]);
+    }
+
+    /// A ZX Spectrum AY file whose play routine (called at 50 Hz) writes
+    /// each frame's (register, value) pairs to the AY.
+    pub(crate) fn synth_ay(frames: &[&[(u8, u8)]]) -> Vec<u8> {
+        const CODE: u16 = 0x8000;
+        const PTR: u16 = 0x8100;
+        const DATA: u16 = 0x8200;
+        let mut mem = vec![0u8; (DATA - CODE) as usize];
+        #[rustfmt::skip]
+        let play = [
+            0x2A, PTR as u8, (PTR >> 8) as u8, // LD HL,(PTR)
+            0x7E, 0xFE, 0xFF, 0x28, 0x0E,      // loop: LD A,(HL); CP $FF; JR Z,done
+            0x01, 0xFD, 0xFF, 0xED, 0x79,      // LD BC,$FFFD; OUT (C),A
+            0x23, 0x7E, 0x06, 0xBF, 0xED, 0x79, // INC HL; LD A,(HL); LD B,$BF; OUT (C),A
+            0x23, 0x18, 0xED,                  // INC HL; JR loop
+            0x23, 0x22, PTR as u8, (PTR >> 8) as u8, 0xC9, // done: INC HL; LD (PTR),HL; RET
+        ];
+        mem[..play.len()].copy_from_slice(&play);
+        mem[0x20] = 0xC9; // init: RET
+        mem[0x100..0x102].copy_from_slice(&DATA.to_le_bytes());
+        for f in frames {
+            for &(r, v) in *f {
+                mem.extend([r, v]);
+            }
+            mem.push(0xFF);
+        }
+        mem.extend(std::iter::repeat_n(0xFF, 3000));
+
+        let mut f = vec![0u8; 54];
+        let rel = |f: &mut Vec<u8>, at: usize, to: usize| {
+            f[at..at + 2].copy_from_slice(&((to - at) as u16).to_be_bytes())
+        };
+        f[..8].copy_from_slice(b"ZXAYEMUL");
+        rel(&mut f, 12, 52);
+        rel(&mut f, 14, 52);
+        rel(&mut f, 18, 20);
+        rel(&mut f, 20, 52);
+        rel(&mut f, 22, 24);
+        f[24..28].copy_from_slice(&[0, 1, 2, 3]);
+        f[28..30].copy_from_slice(&3000u16.to_be_bytes());
+        rel(&mut f, 34, 38);
+        rel(&mut f, 36, 44);
+        f[38..40].copy_from_slice(&0xF000u16.to_be_bytes());
+        f[40..42].copy_from_slice(&(CODE + 0x20).to_be_bytes());
+        f[42..44].copy_from_slice(&CODE.to_be_bytes());
+        f[44..46].copy_from_slice(&CODE.to_be_bytes());
+        f[46..48].copy_from_slice(&(mem.len() as u16).to_be_bytes());
+        rel(&mut f, 48, 54);
+        f.extend(mem);
+        f
+    }
+
+    #[test]
+    fn ay_file_tones_and_buzzer_bass() {
+        let rest: &[(u8, u8)] = &[];
+        let mut frames: Vec<&[(u8, u8)]> = Vec::new();
+        // A4 on channel A (period 252), and on B the envelope alone as a
+        // sawtooth: 1773450 / (256 * 63) = 110 Hz, A2.
+        frames.push(&[
+            (7, 0b0011_1110),
+            (0, 252),
+            (1, 0),
+            (8, 15),
+            (11, 63),
+            (12, 0),
+            (13, 8),
+            (9, 0x10),
+        ]);
+        frames.extend([rest; 9]);
+        frames.push(&[(0, 126)]); // A5, slid to
+        frames.extend([rest; 9]);
+        frames.push(&[(8, 0), (9, 0)]);
+        frames.extend([rest; 4]);
+        frames.push(&[(0, 168), (8, 12)]); // 659.8 Hz: E5
+        frames.extend([rest; 10]);
+        let t = super::super::transcribe_bytes("t.ay", &synth_ay(&frames), None, 1500);
+        use super::super::{keys_at, part};
+        let a = part(&t, "AY A");
+        // The first play call is the first interrupt, 20 ms in.
+        assert_eq!(keys_at(a), vec![(69, 2), (81, 22), (76, 52)]);
+        assert!(a.notes[1].legato);
+        assert_eq!(keys_at(part(&t, "AY B")), vec![(45, 2)]);
     }
 }

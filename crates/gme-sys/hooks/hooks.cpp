@@ -17,10 +17,16 @@ extern "C" void chippy_gme_set_hook(chippy_gme_hook_fn f, void* user)
 	hook_user = user;
 }
 
-extern "C" void chippy_gme_apu_write(int addr, int data)
+extern "C" void chippy_gme_apu_write(long time, int addr, int data)
 {
 	if (hook)
-		hook(hook_user, 0, 0, addr, data);
+		hook(hook_user, 0, time, addr, data);
+}
+
+extern "C" void chippy_gme_block(long clocks, long rate)
+{
+	if (hook)
+		hook(hook_user, 4, clocks, (int)rate, 0);
 }
 
 extern "C" void chippy_gme_frame(void)
@@ -33,4 +39,10 @@ extern "C" void chippy_gme_spc_dsp_write(long time, int addr, int data)
 {
 	if (hook)
 		hook(hook_user, 2, time, addr, data);
+}
+
+extern "C" void chippy_gme_other_write(long time, int addr, int data)
+{
+	if (hook)
+		hook(hook_user, 3, time, addr, data);
 }

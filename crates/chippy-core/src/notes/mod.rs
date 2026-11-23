@@ -132,7 +132,7 @@ pub fn transcribe(loc: &Location, sub: Option<u32>, max_ms: Option<u64>) -> Resu
         "nsf" | "nsfe" => nes::transcribe(loc, track, max_ms)?,
         "spc" => spc::transcribe(loc, max_ms)?,
         "vgm" | "vgz" | "gym" => vgm::transcribe(loc, max_ms)?,
-        "gbs" | "hes" | "kss" | "sap" => chips::transcribe_gme(loc, &ext, track, max_ms)?,
+        "ay" | "gbs" | "hes" | "kss" | "sap" => chips::transcribe_gme(loc, &ext, track, max_ms)?,
         "sgc" => sgc::transcribe(loc, sub, max_ms)?,
         e if crate::formats::SID.contains(&e) => sid::transcribe(loc, sub, max_ms)?,
         e if crate::formats::MODULES.contains(&e) => module::transcribe(loc, max_ms)?,
@@ -155,7 +155,18 @@ pub fn supported(name: &str) -> bool {
     let e = ext.as_str();
     matches!(
         e,
-        "nsf" | "nsfe" | "spc" | "vgm" | "vgz" | "gym" | "gbs" | "hes" | "kss" | "sap" | "sgc"
+        "nsf"
+            | "nsfe"
+            | "spc"
+            | "vgm"
+            | "vgz"
+            | "gym"
+            | "ay"
+            | "gbs"
+            | "hes"
+            | "kss"
+            | "sap"
+            | "sgc"
     ) || crate::formats::SID.contains(&e)
         || crate::formats::MODULES.contains(&e)
         || crate::formats::MIDI.contains(&e)
@@ -317,6 +328,44 @@ impl Drums {
             .sort_by(|a, b| a.start_ms.total_cmp(&b.start_ms).then(a.key.cmp(&b.key)));
         self.notes
     }
+}
+
+/// Writes `data` to a file called `name` and finds its notes (tests).
+#[cfg(test)]
+pub(crate) fn transcribe_bytes(
+    name: &str,
+    data: &[u8],
+    sub: Option<u32>,
+    ms: u64,
+) -> Transcription {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(name);
+    std::fs::write(&path, data).unwrap();
+    let loc = match crate::vfs::resolve(&path).unwrap() {
+        crate::vfs::Node::Tracks(l) => l,
+        n => panic!("{n:?}"),
+    };
+    transcribe(&loc, sub, Some(ms)).unwrap()
+}
+
+/// The part called `name` (tests).
+#[cfg(test)]
+pub(crate) fn part<'a>(t: &'a Transcription, name: &str) -> &'a Part {
+    t.parts.iter().find(|p| p.name == name).unwrap_or_else(|| {
+        panic!(
+            "no part {name}: {:?}",
+            t.parts.iter().map(|p| &p.name).collect::<Vec<_>>()
+        )
+    })
+}
+
+/// A part's notes as (key, start in 10 ms steps) (tests).
+#[cfg(test)]
+pub(crate) fn keys_at(p: &Part) -> Vec<(u8, i64)> {
+    p.notes
+        .iter()
+        .map(|n| (n.key, (n.start_ms / 10.0).round() as i64))
+        .collect()
 }
 
 #[cfg(test)]

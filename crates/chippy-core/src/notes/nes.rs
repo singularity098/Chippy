@@ -175,9 +175,15 @@ pub(crate) struct Nes {
 impl Nes {
     /// With the cartridge chips in `flags` ([`nesx`]'s bits).
     pub fn new(flags: u8) -> Nes {
+        // An NSF player turns the four channels on before the tune's init
+        // routine runs (as the NSF spec has it), and some drivers rely on
+        // it, never writing $4015 themselves (Rare's, in Snake Rattle 'n
+        // Roll).
+        let mut apu = Apu::default();
+        apu.regs[0x15] = 0x0F;
         Nes {
             flags,
-            apu: Apu::default(),
+            apu,
             voices: Default::default(),
             drums: Drums::default(),
             samples: Vec::new(),
@@ -384,6 +390,22 @@ mod tests {
         h[0x7B] = chips;
         h.extend(rom);
         h
+    }
+
+    #[test]
+    fn channels_start_on() {
+        // A driver that never writes $4015 (the NSF player turns the
+        // channels on before the tune starts).
+        let rest: &[(u16, u8)] = &[];
+        let mut frames: Vec<&[(u16, u8)]> = vec![&[(0x4000, 0x3F), (0x4002, 253), (0x4003, 0x08)]];
+        frames.extend([rest; 29]);
+        frames.push(&[(0x4000, 0x30)]);
+        frames.extend([rest; 10]);
+        let t = crate::notes::transcribe_bytes("t.nsf", &synth_nsf(0, &frames), None, 1000);
+        assert_eq!(
+            crate::notes::keys_at(crate::notes::part(&t, "Pulse 1")),
+            vec![(69, 2)]
+        );
     }
 
     #[test]

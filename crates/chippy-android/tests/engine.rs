@@ -254,3 +254,95 @@ fn browses_plays_and_seeks() {
     engine.shutdown();
     assert!(data.path().join("settings.json").is_file());
 }
+
+/// A MIDI file of a guitar playing C, E, G and C a quarter note apart at
+/// 120 a minute, in 4/4.
+fn arpeggio(path: &std::path::Path) {
+    let mut track: Vec<u8> = vec![
+        0x00, 0xFF, 0x58, 0x04, 0x04, 0x02, 0x18, 0x08, // 4/4
+        0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20, // 120 a minute
+        0x00, 0xC0, 25, // a steel-string guitar
+    ];
+    for key in [60u8, 64, 67, 72] {
+        // On, then off 480 ticks (a quarter) later: 0x83 0x60.
+        track.extend([0x00, 0x90, key, 100, 0x83, 0x60, 0x80, key, 0]);
+    }
+    track.extend([0x00, 0xFF, 0x2F, 0x00]);
+    let mut f = b"MThd".to_vec();
+    f.extend(6u32.to_be_bytes());
+    f.extend(0u16.to_be_bytes());
+    f.extend(1u16.to_be_bytes());
+    f.extend(480u16.to_be_bytes());
+    f.extend(b"MTrk");
+    f.extend((track.len() as u32).to_be_bytes());
+    f.extend(track);
+    std::fs::write(path, f).unwrap();
+}
+
+#[test]
+fn tab_notation_custom_tuning_and_playing_from_a_note() {
+    let data = tempfile::tempdir().unwrap();
+    let storage = tempfile::tempdir().unwrap();
+    let music = storage.path().join("Music");
+    std::fs::create_dir_all(&music).unwrap();
+    arpeggio(&music.join("arpeggio.mid"));
+
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let engine = Engine::new(
+        data.path().to_string_lossy().into(),
+        storage.path().to_string_lossy().into(),
+        Box::new(Collect(seen.clone())),
+    );
+    wait_for(&seen, "the first listing", |s| s.browser.is_some());
+    engine.go_path(music.to_string_lossy().into());
+    engine.activate(0);
+    engine.open_tabs();
+    wait_for(&seen, "the tab", |s| {
+        s.tabs
+            .as_ref()
+            .is_some_and(|t| t.shown && !t.busy && !t.lines.is_empty())
+    });
+    let tabs = || seen.lock().unwrap().tabs.clone().unwrap();
+    let t = tabs();
+    // Each note knows when it is played; the staff has a chord for each,
+    // on the treble clef, an octave up: middle C on the third space.
+    let line = &t.lines[0];
+    let mut times: Vec<u64> = line.notes.iter().map(|n| n.ms).collect();
+    times.dedup();
+    assert_eq!(times, [0, 500, 1000, 1500]);
+    assert_eq!(line.staff.len(), 4);
+    assert_eq!(line.staff[1].ms, 500);
+    assert_eq!(line.staff[0].heads[0].pos, 5);
+    assert_eq!(line.staff[0].flags, 0);
+    assert!(!t.bass_clef);
+    // "Custom…" ends the tunings until there is a tuning of one's own.
+    assert!(!t.custom && t.custom_strings.is_empty());
+    assert_eq!(t.tunings.last().unwrap(), "Custom…");
+    let listed = t.tunings.len() as u32;
+    engine.set_tab_tuning(listed - 1);
+    let t = tabs();
+    assert!(t.custom);
+    assert_eq!(t.tunings.len() as u32, listed);
+    assert_eq!(t.tuning, listed - 1);
+    assert_eq!(t.custom_strings, ["E2", "A2", "D3", "G3", "B3", "E4"]);
+    assert_eq!(t.custom_bases.len() as u32, listed - 1);
+    engine.tab_custom_shift(-1);
+    engine.tab_custom_shift_string(0, -1);
+    engine.tab_custom_add(true);
+    engine.tab_custom_remove(false);
+    let t = tabs();
+    assert_eq!(t.custom_strings, ["G#2", "C#3", "F#3", "A#3", "D#4", "G#4"]);
+    assert_eq!(t.strings.len(), 6);
+    let bass = t
+        .custom_bases
+        .iter()
+        .position(|n| n == "Bass (4 strings)")
+        .unwrap();
+    engine.tab_custom_from(bass as u32);
+    let t = tabs();
+    assert_eq!(t.custom_strings, ["E1", "A1", "D2", "G2"]);
+    assert!(t.bass_clef);
+    // A note tapped plays from where its chord starts (seek_to, as for
+    // the WAV above: without a SoundFont the MIDI file doesn't play here).
+    assert_eq!(t.lines[0].notes[2].ms, 1000);
+}

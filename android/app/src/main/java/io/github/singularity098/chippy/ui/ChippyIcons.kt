@@ -289,6 +289,41 @@ object ChippyIcons {
             weight = 1.6f,
         )
     }
+
+    // Standard notation, on a staff whose lines are 3 apart (6 to 18): the
+    // clefs (treble curling round G, bass round F), drawn 8 staff spaces
+    // square; accidentals and flags centred for 4 and 3 spaces square.
+    val ClefTreble: ImageVector by lazy {
+        icon(
+            "ClefTreble",
+            line = "M 12.6 15.9 C 11.1 15.9 10.6 14.1 12 13.5 C 14 12.7 15.6 14.6 14.9 16.4 C 14.1 18.4 10.6 18.6 9.3 16.6 C 7.9 14.4 9.4 11.8 11.4 10.2 C 13.6 8.4 15 6.4 14.6 4.2 C 14.3 2.6 12.6 2.4 12 4.2 C 11.4 6 11.6 8 12.2 12 L 13.6 20.4 C 13.9 22.4 11.6 22.8 10.8 21.6",
+            solid = "M 11.9 21.3 A 1 1 0 1 1 9.9 21.3 A 1 1 0 1 1 11.9 21.3 Z",
+            weight = 1.3f,
+        )
+    }
+    val ClefBass: ImageVector by lazy {
+        icon(
+            "ClefBass",
+            line = "M 7.6 9.4 C 7.4 7 9.4 5.8 11.4 5.8 C 14.4 5.8 15.9 7.8 15.5 10.8 C 15.1 13.9 12.4 16.9 7.6 18.9",
+            solid = "M 9.6 9.3 A 1.25 1.25 0 1 1 7.1 9.3 A 1.25 1.25 0 1 1 9.6 9.3 Z M 18.9 7.5 A 0.85 0.85 0 1 1 17.2 7.5 A 0.85 0.85 0 1 1 18.9 7.5 Z M 18.9 10.5 A 0.85 0.85 0 1 1 17.2 10.5 A 0.85 0.85 0 1 1 18.9 10.5 Z",
+            weight = 1.3f,
+        )
+    }
+    val Sharp: ImageVector by lazy {
+        icon("Sharp", line = "M 10 4.5 L 10 21 M 14 3 L 14 19.5 M 7 10.5 L 17 8.5 M 7 15.5 L 17 13.5", weight = 1.5f)
+    }
+    val Flat: ImageVector by lazy {
+        icon("Flat", line = "M 9 1 L 9 17 C 12 14.6 16.4 12.6 15.8 10.2 C 15.2 8 11.6 8.6 9 11.6", weight = 1.5f)
+    }
+    val Natural: ImageVector by lazy {
+        icon("Natural", line = "M 9.5 3 L 9.5 16.5 L 14.5 15 M 14.5 21 L 14.5 7.5 L 9.5 9", weight = 1.5f)
+    }
+    val FlagUp: ImageVector by lazy {
+        icon("FlagUp", line = "M 2 1 C 3 6 12 7 10 15", weight = 2.2f)
+    }
+    val FlagDown: ImageVector by lazy {
+        icon("FlagDown", line = "M 2 23 C 3 18 12 17 10 9", weight = 2.2f)
+    }
     val Close: ImageVector by lazy {
         icon(
             "Close",

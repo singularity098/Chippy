@@ -338,8 +338,38 @@ impl Engine {
         self.act(|c| c.clear_tab_mutes());
     }
 
+    /// Item `index` of [`TabsState::tunings`]: a tuning, or "Custom…".
     pub fn set_tab_tuning(&self, index: u32) {
         self.act(|c| c.set_tab_tuning(index as usize));
+    }
+
+    /// Starts the player's own tuning again from item `index` of
+    /// [`TabsState::custom_bases`].
+    pub fn tab_custom_from(&self, index: u32) {
+        self.act(|c| c.tab_custom(|v| v.custom_from(index as usize)));
+    }
+
+    /// Every string of the player's own tuning `d` half steps higher (lower
+    /// if negative).
+    pub fn tab_custom_shift(&self, d: i32) {
+        self.act(|c| c.tab_custom(|v| v.custom_shift(d)));
+    }
+
+    /// String `index` (0 the lowest) of the player's own tuning `d` half
+    /// steps higher (lower if negative).
+    pub fn tab_custom_shift_string(&self, index: u32, d: i32) {
+        self.act(|c| c.tab_custom(|v| v.custom_shift_string(index as usize, d)));
+    }
+
+    /// A string more on the player's own tuning, a fourth above the highest
+    /// (`high`) or below the lowest.
+    pub fn tab_custom_add(&self, high: bool) {
+        self.act(|c| c.tab_custom(|v| v.custom_add(high)));
+    }
+
+    /// The highest (`high`) or lowest string off the player's own tuning.
+    pub fn tab_custom_remove(&self, high: bool) {
+        self.act(|c| c.tab_custom(|v| v.custom_remove(high)));
     }
 
     /// Shows the tab `d` octaves higher (lower if negative), for this

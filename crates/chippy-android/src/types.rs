@@ -271,6 +271,42 @@ pub struct TabNote {
     /// Played softer than the notes around it (an echo): shown in
     /// brackets, dimmer.
     pub soft: bool,
+    /// When its chord is played, to play from it.
+    pub ms: u64,
+}
+
+/// A note head on the staff (standard notation).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct StaffHead {
+    /// 0 the staff's bottom line, 1 the space above it, 8 the top line;
+    /// ledger lines below 0 and above 8.
+    pub pos: i32,
+    /// 0 none, 1 sharp, 2 flat, 3 natural.
+    pub accidental: u8,
+    /// Set beside the stem (a second): -1 left, 1 right, 0 on it.
+    pub side: i8,
+    /// Played softer (an echo): drawn dimmer.
+    pub soft: bool,
+}
+
+/// A chord (or a single note) on the staff, under its fret numbers.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct StaffChord {
+    /// Across the line, 0..1: where the tab has it.
+    pub x: f32,
+    /// When it is played, to play from it.
+    pub ms: u64,
+    /// Lowest first.
+    pub heads: Vec<StaffHead>,
+    /// Whole and half notes have hollow heads.
+    pub hollow: bool,
+    /// Whole notes have none.
+    pub stem: bool,
+    /// Its stem goes up from the heads (else down).
+    pub up: bool,
+    /// Eighths have one, sixteenths two, thirty-seconds three.
+    pub flags: u8,
+    pub dotted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -284,6 +320,8 @@ pub struct TabLine {
     pub marks: Vec<TabMark>,
     /// The bars across the line.
     pub bars: Vec<TabBar>,
+    /// The line in standard notation.
+    pub staff: Vec<StaffChord>,
 }
 
 /// A bar across a line of tab: from `x0` to `x1` (0..1), with its bar line
@@ -324,10 +362,23 @@ pub struct TabsState {
     /// What the shown part can be merged with ("With Pulse 2 · ..."), and
     /// if it is a merge, a way to take it apart: see `merge_tab_part`.
     pub merge_items: Vec<String>,
+    /// The tunings to choose from, ending with "Custom…" (which makes a
+    /// tuning of one's own from the one in use) until there is one.
     pub tunings: Vec<String>,
     pub tuning: u32,
     /// String names, lowest first.
     pub strings: Vec<String>,
+    /// A tuning of the player's own is in use.
+    pub custom: bool,
+    /// Its strings with their octaves ("E2"), lowest first; empty until
+    /// there is one.
+    pub custom_strings: Vec<String>,
+    /// The tunings it can be started again from.
+    pub custom_bases: Vec<String>,
+    /// The most strings it can have.
+    pub max_strings: u32,
+    /// Standard notation is written on the bass clef (else the treble).
+    pub bass_clef: bool,
     pub lines: Vec<TabLine>,
     /// "Moved down an octave to fit."
     pub detail: String,

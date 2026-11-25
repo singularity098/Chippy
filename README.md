@@ -112,13 +112,14 @@ info, PSF tags, vgmstream stream names).
   The fingering keeps the hand in one place on the neck where it can,
   plays a passage that comes back the way it was played the first time,
   and uses open strings near the nut but not once the hand is further up
-  (nor skips a string for a note close by). Click a note to play from it,
-  or anywhere else in a bar to play from the bar's start.
+  (nor skips a string for a note close by). Click (on Android, tap) a
+  note to play from it, or anywhere else in a bar to play from the bar's
+  start.
   *Custom…* at the end of the tunings makes a tuning of your own from the
   one in use: start it again from any of the others, take every string a
   half step down or up, add or take off a string at either end, or tune
   each string on its own; the notes are fingered again on the new strings.
-  The menu beside *Copy* shows the tab, **standard notation** (the staff:
+  The menu beside *Copy* (on Android, the clef button) shows the tab, **standard notation** (the staff:
   guitar on the treble clef and bass on the bass clef, written an octave
   up as usual, each note under its fret number, with its accidentals, its
   value from the beat, and its stem and flags; no beams or rests), or both.
@@ -152,8 +153,8 @@ info, PSF tags, vgmstream stream names).
   the kick drum put their weight, and how the music repeats). That can be
   wrong, so the *Bars* row puts it right: the time signature, the beat
   twice or half as fast, and the bar lines a beat earlier or later.
-  Ctrl-click a bar (Shift-click for a run of them; on Android tap, and
-  hold for a run) and *Neck* moves just those bars' shapes, leaving the
+  Ctrl-click a bar (Shift-click for a run of them; on Android double-tap,
+  and hold for a run) and *Neck* moves just those bars' shapes, leaving the
   rest as they are. All of this (and a tuning of your own) is remembered
   for each track and part until Chippy closes, never saved. *Save…* writes every
   part as tab in bars: **MusicXML** (sheet music and tab, for MuseScore,
@@ -282,7 +283,8 @@ In the playlist, swipe a track away to remove it; its menu shows it in the
 browser, its properties, or exports it. The buttons beside the playlist's
 at the top of the player show the playing track's lyrics and guitar tab
 (greyed out when there are none), over the player with a small transport
-below them. The keyboard button beside them turns MIDI mode on and off; a
+below them; the tab has the desktop's standard notation, tuning of your
+own and tap to play from a note. The keyboard button beside them turns MIDI mode on and off; a
 long press picks its instruments.
 
 At the first start Chippy asks for *All files access*, as the file browser

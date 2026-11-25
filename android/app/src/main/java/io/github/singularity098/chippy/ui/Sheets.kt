@@ -6,6 +6,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -52,6 +54,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.VectorPainter
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
@@ -62,7 +73,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -71,6 +84,7 @@ import io.github.singularity098.chippy.Store
 import io.github.singularity098.chippy.core.LyricsInfo
 import io.github.singularity098.chippy.core.NowState
 import io.github.singularity098.chippy.core.PlayState
+import io.github.singularity098.chippy.core.Engine
 import io.github.singularity098.chippy.core.Fretboard
 import io.github.singularity098.chippy.core.TabBar
 import io.github.singularity098.chippy.core.TabLine
@@ -337,6 +351,7 @@ private fun Dropdown(
     selected: Int,
     enabled: Boolean,
     modifier: Modifier = Modifier,
+    placeholder: String = "–",
     onPick: (Int) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
@@ -357,7 +372,7 @@ private fun Dropdown(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    items.getOrNull(selected) ?: "–",
+                    items.getOrNull(selected) ?: placeholder,
                     Modifier.weight(1f),
                     style = MaterialTheme.typography.titleSmall,
                     maxLines = 1,
@@ -675,11 +690,201 @@ private fun playheadAt(line: TabLine, pos: Long): Float {
 private val Digit = 10.dp
 /** Left of the notes: the strings' names and the bar. */
 private val TabLeft = 30.dp
+/** Above what a line shows: its time. */
+private val LineLabel = 16.dp
+/** A space between two of the staff's lines. */
+private val StaffSpace = 7.dp
+/** A note head's width on the staff. */
+private val HeadWidth = 9.5.dp
+/** Between two strings of the tab. */
+private val StringGap = 14.dp
+
+/** What a line of tab shows: the tab, standard notation (the staff), or both. */
+private enum class Notation { TAB, STAFF, BOTH }
 
 /**
- * One line of tab: the strings, the frets, the bar lines, and the playhead
- * if playing. A tap on a bar chooses it (a long press, the bars up to it); a
- * double tap plays from it. Without bars, a tap plays from the line.
+ * Where what a line shows is, down it: the staff (if shown) above the tab
+ * (if shown), from the top of the line.
+ */
+private class LineGeometry(n: Int, notation: Notation) {
+    val showStaff = notation != Notation.TAB
+    val showTab = notation != Notation.STAFF
+    // The staff, with room above it for high notes and below it for low.
+    val staffTop = LineLabel + StaffSpace * 3.5f
+    val staffBottom = staffTop + StaffSpace * 4
+    val staffEnd = staffBottom + StaffSpace * 4.5f
+    // The tab's top and bottom strings.
+    val tabTop = if (showStaff) staffEnd + 12.dp else LineLabel + 8.dp
+    val tabBottom = tabTop + StringGap * (n - 1).coerceAtLeast(1)
+    // From the top of what the line shows to its bottom.
+    val contentTop = if (showStaff) staffTop else tabTop
+    val contentBottom = if (showTab) tabBottom else staffBottom
+    // Where the bars' numbers end, and the chosen bars are marked above
+    // what the line shows: over the staff, at the top of the line, clear
+    // of the notes above it.
+    val marksTop = if (showStaff) LineLabel else tabTop
+    val height = if (showTab) tabBottom + 10.dp else staffEnd + 4.dp
+}
+
+/**
+ * The note (in the tab) or chord (on the staff) nearest a tap at `x`, `y`
+ * (px) on a line, if one is close enough: when it is played.
+ */
+private fun Density.noteAt(line: TabLine, n: Int, geo: LineGeometry, span: Float, x: Float, y: Float): ULong? {
+    val left = TabLeft.toPx()
+    val reach = 16.dp.toPx()
+    if (geo.showTab && y > geo.tabTop.toPx() - StringGap.toPx() && y < geo.tabBottom.toPx() + StringGap.toPx()) {
+        return line.notes
+            .map { note ->
+                val dx = left + note.x * span - x
+                val dy = geo.tabTop.toPx() + (n - 1 - note.string.toInt()) * StringGap.toPx() - y
+                note to kotlin.math.hypot(dx, dy)
+            }
+            .filter { it.second < reach }
+            .minByOrNull { it.second }
+            ?.first?.ms
+    }
+    if (geo.showStaff && y > geo.staffTop.toPx() - StaffSpace.toPx() * 3 && y < geo.staffEnd.toPx()) {
+        return line.staff
+            .map { it to kotlin.math.abs(left + it.x * span - x) }
+            .filter { it.second < reach }
+            .minByOrNull { it.second }
+            ?.first?.ms
+    }
+    return null
+}
+
+/** The glyphs standard notation is drawn with, tinted as asked. */
+private class Glyphs(
+    val trebleClef: VectorPainter,
+    val bassClef: VectorPainter,
+    val sharp: VectorPainter,
+    val flat: VectorPainter,
+    val natural: VectorPainter,
+    val flagUp: VectorPainter,
+    val flagDown: VectorPainter,
+)
+
+@Composable
+private fun rememberGlyphs() = Glyphs(
+    rememberVectorPainter(ChippyIcons.ClefTreble),
+    rememberVectorPainter(ChippyIcons.ClefBass),
+    rememberVectorPainter(ChippyIcons.Sharp),
+    rememberVectorPainter(ChippyIcons.Flat),
+    rememberVectorPainter(ChippyIcons.Natural),
+    rememberVectorPainter(ChippyIcons.FlagUp),
+    rememberVectorPainter(ChippyIcons.FlagDown),
+)
+
+/** `glyph` drawn `side` square with its top left at `x`, `y`, in `color`. */
+private fun DrawScope.glyph(glyph: VectorPainter, x: Float, y: Float, side: Float, color: Color) {
+    translate(x, y) {
+        with(glyph) { draw(Size(side, side), colorFilter = ColorFilter.tint(color)) }
+    }
+}
+
+/**
+ * A line of standard notation: the staff and its clef, the bar lines, and
+ * each chord where the tab has it, with its accidentals, value (head, stem,
+ * flags, dot) and ledger lines.
+ */
+private fun DrawScope.drawStaff(
+    line: TabLine,
+    geo: LineGeometry,
+    span: Float,
+    bassClef: Boolean,
+    glyphs: Glyphs,
+    ink: Color,
+    faint: Color,
+    lineColor: Color,
+) {
+    val left = TabLeft.toPx()
+    val sp = StaffSpace.toPx()
+    val top = geo.staffTop.toPx()
+    val bottom = geo.staffBottom.toPx()
+    val headW = HeadWidth.toPx()
+    for (k in 0..4) {
+        drawLine(lineColor, Offset(left, top + k * sp), Offset(size.width - 6.dp.toPx(), top + k * sp), 1f)
+    }
+    drawLine(lineColor, Offset(left, top), Offset(left, bottom), 2f)
+    // The clef's art has the staff's lines 3 apart from 6 to 18 on its
+    // grid of 24.
+    glyph(
+        if (bassClef) glyphs.bassClef else glyphs.trebleClef,
+        left / 2 - 4 * sp,
+        top - 2 * sp,
+        8 * sp,
+        faint,
+    )
+    for (bar in line.bars) {
+        if (bar.line && bar.x0 > 0f) {
+            val x = left + bar.x0 * span
+            drawLine(faint, Offset(x, top), Offset(x, bottom), 1.5.dp.toPx())
+        }
+    }
+    val yOf = { pos: Int -> bottom - pos * sp / 2 }
+    for (c in line.staff) {
+        val cx = left + c.x * span
+        for (h in c.heads) {
+            val color = if (h.soft) faint else ink
+            val hx = cx + h.side * (headW - 1.dp.toPx())
+            val cy = yOf(h.pos)
+            // Ledger lines, below the staff and above it.
+            val ledgers = if (h.pos <= -2) -h.pos / 2 else if (h.pos >= 10) (h.pos - 8) / 2 else 0
+            for (k in 0 until ledgers) {
+                val y = if (h.pos < 0) bottom + (k + 1) * sp else top - (k + 1) * sp
+                drawLine(faint, Offset(hx - headW / 2 - 4.dp.toPx(), y), Offset(hx + headW / 2 + 4.dp.toPx(), y), 1f)
+            }
+            rotate(-20f, Offset(hx, cy)) {
+                drawOval(
+                    color,
+                    topLeft = Offset(hx - headW / 2, cy - sp / 2),
+                    size = Size(headW, sp),
+                    style = if (c.hollow) Stroke(1.5.dp.toPx()) else Fill,
+                )
+            }
+            // Sharp, flat or natural, left of the chord: their art is
+            // centred on 12 of 24, a staff space 6 of it, and ends at 17.
+            val accidental = when (h.accidental.toInt()) {
+                1 -> glyphs.sharp
+                2 -> glyphs.flat
+                3 -> glyphs.natural
+                else -> null
+            }
+            if (accidental != null) {
+                val w = 4 * sp
+                val x = cx - headW / 2 - (if (h.side < 0) headW else 0f) - w * 0.78f
+                glyph(accidental, x, cy - w / 2, w, color)
+            }
+            // A dot: in the space above a head on a line.
+            if (c.dotted) {
+                val dy = if (Math.floorMod(h.pos, 2) == 0) sp / 2 else 0f
+                drawCircle(color, 1.8.dp.toPx(), Offset(hx + headW / 2 + 4.dp.toPx(), cy - dy))
+            }
+        }
+        if (c.stem && c.heads.isNotEmpty()) {
+            val lowY = yOf(c.heads.first().pos)
+            val highY = yOf(c.heads.last().pos)
+            val topY = if (c.up) highY - 3.5f * sp else highY
+            val bottomY = if (c.up) lowY else lowY + 3.5f * sp
+            val w = 1.5.dp.toPx()
+            val stemX = if (c.up) cx + headW / 2 - w / 2 else cx - headW / 2 + w / 2
+            drawLine(ink, Offset(stemX, topY), Offset(stemX, bottomY), w)
+            // Flags, curling away from the end of the stem.
+            val f = 3 * sp
+            for (k in 0 until c.flags.toInt()) {
+                val y = if (c.up) topY + k * 1.2f * sp else bottomY - f - k * 1.2f * sp
+                glyph(if (c.up) glyphs.flagUp else glyphs.flagDown, stemX - w / 2 - 1f, y, f, ink)
+            }
+        }
+    }
+}
+
+/**
+ * One line of tab (and, or, standard notation): the strings, the frets,
+ * the bar lines, and the playhead if playing. A tap on a note plays from
+ * it, and elsewhere in a bar from the bar's start (without bars, from the
+ * line's); a double tap chooses the bar (a long press, the bars up to it).
  */
 @Composable
 private fun TabLineView(
@@ -687,58 +892,64 @@ private fun TabLineView(
     strings: List<String>,
     digits: Int,
     playhead: Float?,
-    onClick: () -> Unit,
+    notation: Notation,
+    bassClef: Boolean,
+    onSeek: (ULong) -> Unit,
     onBar: (UInt, Boolean) -> Unit,
     onBarSeek: (UInt) -> Unit,
 ) {
     val measurer = rememberTextMeasurer()
+    val glyphs = rememberGlyphs()
     val look = LocalLook.current
     val lineColor = MaterialTheme.colorScheme.outlineVariant
     val text = MaterialTheme.colorScheme.onSurface
     val faint = MaterialTheme.colorScheme.onSurfaceVariant
     val back = if (playhead != null) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerLow
-    val gap = 14.dp
     val n = strings.size
-    Column(
+    val geo = remember(n, notation) { LineGeometry(n, notation) }
+    Canvas(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 2.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(back)
-            .pointerInput(line, digits) {
+            .height(geo.height)
+            .pointerInput(line, digits, geo) {
+                val span = digits * Digit.toPx()
                 val barAt = { x: Float ->
-                    val f = (x - TabLeft.toPx()) / (digits * Digit.toPx())
+                    val f = (x - TabLeft.toPx()) / span
                     line.bars.firstOrNull { f >= it.x0 && f < it.x1 }
                         ?: line.bars.lastOrNull()?.takeIf { f >= it.x1 }
                         ?: line.bars.firstOrNull()?.takeIf { f < it.x0 }
                 }
                 detectTapGestures(
-                    onTap = { o -> barAt(o.x)?.let { onBar(it.index, false) } ?: onClick() },
-                    onDoubleTap = { o -> barAt(o.x)?.let { onBarSeek(it.index) } ?: onClick() },
+                    onTap = { o ->
+                        val ms = noteAt(line, n, geo, span, o.x, o.y)
+                        when {
+                            ms != null -> onSeek(ms)
+                            else -> barAt(o.x)?.let { onBarSeek(it.index) } ?: onSeek(line.startMs)
+                        }
+                    },
+                    onDoubleTap = { o -> barAt(o.x)?.let { onBar(it.index, false) } },
                     onLongPress = { o -> barAt(o.x)?.let { onBar(it.index, true) } },
                 )
-            }
-            .padding(vertical = 6.dp),
+            },
     ) {
-        Text(
+        val g = StringGap.toPx()
+        val left = TabLeft.toPx()
+        val span = digits * Digit.toPx()
+        val pad = 3.dp.toPx()
+        val label = measurer.measure(
             line.label,
-            Modifier.padding(start = TabLeft),
-            style = MaterialTheme.typography.labelSmall,
-            color = if (playhead != null) look.accent else faint,
+            TextStyle(fontSize = 11.sp, color = if (playhead != null) look.accent else faint),
         )
-        Canvas(
-            Modifier
-                .fillMaxWidth()
-                .height(gap * (n - 1).coerceAtLeast(1) + 16.dp),
-        ) {
-            val g = gap.toPx()
-            val left = TabLeft.toPx()
-            val span = digits * Digit.toPx()
-            val top = 8.dp.toPx()
-            val pad = 3.dp.toPx()
+        drawText(label, topLeft = Offset(left, 2.dp.toPx()))
+        if (geo.showStaff) {
+            drawStaff(line, geo, span, bassClef, glyphs, text, faint, lineColor)
+        }
+        val top = geo.tabTop.toPx()
+        if (geo.showTab) {
             val small = TextStyle(fontSize = 11.sp, color = faint)
-            val fret = TextStyle(fontSize = 13.sp, color = text, fontWeight = FontWeight.Medium)
-            val softFret = TextStyle(fontSize = 13.sp, color = faint, fontWeight = FontWeight.Normal)
             strings.forEachIndexed { i, name ->
                 val y = top + (n - 1 - i) * g
                 drawLine(lineColor, Offset(left, y), Offset(size.width - 6.dp.toPx(), y), 1f)
@@ -746,27 +957,14 @@ private fun TabLineView(
                 drawText(m, topLeft = Offset((left - m.size.width) / 2f, y - m.size.height / 2f))
             }
             drawLine(lineColor, Offset(left, top), Offset(left, top + (n - 1) * g), 2f)
-            // Bar lines and numbers, and the chosen bars marked above and
-            // below the strings.
-            val number = TextStyle(fontSize = 9.sp, color = faint)
-            val marked = TextStyle(fontSize = 9.sp, color = look.accent)
             for (bar in line.bars) {
-                val x0 = left + bar.x0 * span
-                val x1 = left + bar.x1 * span
                 if (bar.line && bar.x0 > 0f) {
+                    val x0 = left + bar.x0 * span
                     drawLine(faint, Offset(x0, top), Offset(x0, top + (n - 1) * g), 1.5.dp.toPx())
                 }
-                if (bar.x0 > 0f || bar.selected || bar.nudged) {
-                    val m = measurer.measure(bar.label, if (bar.selected || bar.nudged) marked else number)
-                    drawText(m, topLeft = Offset(x0 + 2.dp.toPx(), top - m.size.height - 1.dp.toPx()))
-                }
-                if (bar.selected) {
-                    val w = 3.dp.toPx()
-                    drawLine(look.accent, Offset(x0 + w, top - 4.dp.toPx()), Offset(x1 - w, top - 4.dp.toPx()), w)
-                    val bottom = top + (n - 1) * g + 4.dp.toPx()
-                    drawLine(look.accent, Offset(x0 + w, bottom), Offset(x1 - w, bottom), w)
-                }
             }
+            val fret = TextStyle(fontSize = 13.sp, color = text, fontWeight = FontWeight.Medium)
+            val softFret = TextStyle(fontSize = 13.sp, color = faint, fontWeight = FontWeight.Normal)
             for (note in line.notes) {
                 val m = if (note.soft) {
                     measurer.measure("(${note.fret})", softFret)
@@ -782,9 +980,125 @@ private fun TabLineView(
                 )
                 drawText(m, topLeft = Offset(x - m.size.width / 2f, y - m.size.height / 2f))
             }
-            if (playhead != null) {
-                val x = left + playhead * span
-                drawLine(look.accent, Offset(x, top - 6.dp.toPx()), Offset(x, top + (n - 1) * g + 6.dp.toPx()), 2.dp.toPx())
+        }
+        // The bars' numbers, and the chosen bars marked above and below
+        // what the line shows.
+        val contentTop = geo.contentTop.toPx()
+        val contentBottom = geo.contentBottom.toPx()
+        val marksTop = geo.marksTop.toPx()
+        val number = TextStyle(fontSize = 9.sp, color = faint)
+        val marked = TextStyle(fontSize = 9.sp, color = look.accent)
+        for (bar in line.bars) {
+            val x0 = left + bar.x0 * span
+            val x1 = left + bar.x1 * span
+            if (bar.x0 > 0f || bar.selected || bar.nudged) {
+                val m = measurer.measure(bar.label, if (bar.selected || bar.nudged) marked else number)
+                drawText(m, topLeft = Offset(x0 + 2.dp.toPx(), marksTop - m.size.height - 1.dp.toPx()))
+            }
+            if (bar.selected) {
+                val w = 3.dp.toPx()
+                drawLine(look.accent, Offset(x0 + w, marksTop - 4.dp.toPx()), Offset(x1 - w, marksTop - 4.dp.toPx()), w)
+                val bottom = contentBottom + 4.dp.toPx()
+                drawLine(look.accent, Offset(x0 + w, bottom), Offset(x1 - w, bottom), w)
+            }
+        }
+        if (playhead != null) {
+            val x = left + playhead * span
+            drawLine(
+                look.accent,
+                Offset(x, contentTop - 6.dp.toPx()),
+                Offset(x, contentBottom + 6.dp.toPx()),
+                2.dp.toPx(),
+            )
+        }
+    }
+}
+
+/** A small button of the tuning of one's own. */
+@Composable
+private fun TuningButton(icon: ImageVector, description: String, enabled: Boolean, onClick: () -> Unit) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(40.dp)) {
+        Icon(icon, description, Modifier.size(18.dp))
+    }
+}
+
+/**
+ * A tuning of the player's own, in use: started again from any of the
+ * tunings, every string a half step down or up, a string more or fewer at
+ * either end, and each string on its own.
+ */
+@Composable
+private fun CustomTuning(state: TabsState, enabled: Boolean, store: Store, keepView: () -> Unit) {
+    val labelStyle = MaterialTheme.typography.labelMedium
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val strings = state.customStrings.size
+    fun change(f: Engine.() -> Unit) {
+        keepView()
+        store.send(f)
+    }
+    Row(Modifier.padding(bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.tab_tuning), Modifier.width(40.dp), style = labelStyle, color = labelColor)
+        Dropdown(
+            state.customBases,
+            -1,
+            enabled = enabled,
+            modifier = Modifier.weight(1f),
+            placeholder = stringResource(R.string.tab_tuning_from),
+        ) { i -> change { tabCustomFrom(i.toUInt()) } }
+        Text(stringResource(R.string.tab_tuning_all), Modifier.padding(start = 8.dp), style = labelStyle, color = labelColor)
+        TuningButton(ChippyIcons.Minus, stringResource(R.string.tab_tuning_all_down), enabled) { change { tabCustomShift(-1) } }
+        TuningButton(ChippyIcons.Plus, stringResource(R.string.tab_tuning_all_up), enabled) { change { tabCustomShift(1) } }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Spacer(Modifier.width(40.dp))
+        Text(stringResource(R.string.tab_tuning_low), style = labelStyle, color = labelColor)
+        TuningButton(ChippyIcons.Minus, stringResource(R.string.tab_tuning_low_remove), enabled && strings > 1) {
+            change { tabCustomRemove(false) }
+        }
+        TuningButton(ChippyIcons.Plus, stringResource(R.string.tab_tuning_low_add), enabled && strings < state.maxStrings.toInt()) {
+            change { tabCustomAdd(false) }
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(stringResource(R.string.tab_tuning_high), style = labelStyle, color = labelColor)
+        TuningButton(ChippyIcons.Minus, stringResource(R.string.tab_tuning_high_remove), enabled && strings > 1) {
+            change { tabCustomRemove(true) }
+        }
+        TuningButton(ChippyIcons.Plus, stringResource(R.string.tab_tuning_high_add), enabled && strings < state.maxStrings.toInt()) {
+            change { tabCustomAdd(true) }
+        }
+    }
+    // Each string, lowest first: a half step down or up.
+    Row(
+        Modifier
+            .padding(start = 40.dp, bottom = 6.dp)
+            .horizontalScroll(rememberScrollState()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        state.customStrings.forEachIndexed { i, name ->
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.padding(end = 6.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = { change { tabCustomShiftString(i.toUInt(), -1) } },
+                        enabled = enabled,
+                        modifier = Modifier.size(34.dp),
+                    ) { Icon(ChippyIcons.ChevronDown, stringResource(R.string.tab_tuning_string_down, name), Modifier.size(16.dp)) }
+                    Text(
+                        name,
+                        Modifier.widthIn(min = 28.dp),
+                        style = MaterialTheme.typography.titleSmall,
+                        textAlign = TextAlign.Center,
+                    )
+                    IconButton(
+                        onClick = { change { tabCustomShiftString(i.toUInt(), 1) } },
+                        enabled = enabled,
+                        modifier = Modifier.size(34.dp),
+                    ) { Icon(ChippyIcons.ChevronUp, stringResource(R.string.tab_tuning_string_up, name), Modifier.size(16.dp)) }
+                }
             }
         }
     }
@@ -821,11 +1135,44 @@ fun TabsSheet(store: Store, state: TabsState, onClose: () -> Unit) {
     }
     // The fretboard: hidden at first.
     var fretboard by rememberSaveable { mutableStateOf(false) }
+    // The tab, standard notation, or both: the tab at first.
+    var notation by rememberSaveable { mutableStateOf(Notation.TAB) }
     SheetPanel(
         store,
         stringResource(R.string.tab_title, state.title),
         onClose,
         actions = {
+            if (state.lines.isNotEmpty()) {
+                var choosing by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { choosing = true }) {
+                        Icon(
+                            ChippyIcons.ClefTreble,
+                            stringResource(R.string.tab_notation),
+                            tint = if (notation != Notation.TAB) LocalLook.current.accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    DropdownMenu(expanded = choosing, onDismissRequest = { choosing = false }) {
+                        listOf(
+                            Notation.TAB to R.string.tab_show_tab,
+                            Notation.STAFF to R.string.tab_show_staff,
+                            Notation.BOTH to R.string.tab_show_both,
+                        ).forEach { (choice, name) ->
+                            DropdownMenuItem(
+                                text = { Text(stringResource(name)) },
+                                onClick = { choosing = false; notation = choice },
+                                leadingIcon = {
+                                    if (choice == notation) {
+                                        Icon(ChippyIcons.Check, null, tint = LocalLook.current.accent)
+                                    } else {
+                                        Spacer(Modifier.size(24.dp))
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+            }
             if (state.lines.isNotEmpty() && state.fretboard != null) {
                 IconButton(onClick = { fretboard = !fretboard }) {
                     Icon(
@@ -919,6 +1266,9 @@ fun TabsSheet(store: Store, state: TabsState, onClose: () -> Unit) {
                         }
                     }
                 }
+            }
+            if (state.custom) {
+                CustomTuning(state, enabled = parts > 0 && !state.busy, store = store, keepView = keepView)
             }
             // Moved by hand: by octaves, and along the neck.
             val ready = !state.busy && state.lines.isNotEmpty()
@@ -1048,7 +1398,9 @@ fun TabsSheet(store: Store, state: TabsState, onClose: () -> Unit) {
                         state.strings,
                         digits,
                         if (i == current) playhead else null,
-                        onClick = { store.send { seekTo(line.startMs) } },
+                        notation,
+                        state.bassClef,
+                        onSeek = { ms -> store.send { seekTo(ms) } },
                         onBar = { bar, extend -> store.send { selectTabBar(bar, extend) } },
                         onBarSeek = { bar -> store.send { seekTabBar(bar) } },
                     )

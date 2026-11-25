@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use chippy_core::decode::midi;
 use chippy_core::meta::{self, format_ms, TrackMeta};
+use chippy_core::notes::staff::{Accidental, Clef};
 use chippy_core::notes::style::Style;
 use chippy_core::playlist::Playlist as Queue;
 use chippy_core::settings::{Repeat, Session, Settings};
@@ -750,8 +751,21 @@ impl Core {
         self.dirty.tabs = true;
     }
 
+    /// Item `i` of the tunings: a tuning, or (after them all, until there
+    /// is one) "Custom…", which makes a tuning of one's own from the one in
+    /// use.
     pub fn set_tab_tuning(&mut self, i: usize) {
-        self.tabs.set_tuning(i);
+        if i >= self.tabs.tuning_names().len() {
+            self.tabs.start_custom();
+        } else {
+            self.tabs.set_tuning(i);
+        }
+        self.dirty.tabs = true;
+    }
+
+    /// Changes the tuning of one's own with `f`.
+    pub fn tab_custom(&mut self, f: impl FnOnce(&mut TabView)) {
+        f(&mut self.tabs);
         self.dirty.tabs = true;
     }
 
@@ -886,6 +900,16 @@ impl Core {
         let title = self.sheet_track().map(|t| t.1).unwrap_or_default();
         let selected = v.selection();
         let nudged = v.nudged_bars();
+        let names = v.tuning_names();
+        let custom = v.custom_strings();
+        let bases = names[..names.len() - usize::from(!custom.is_empty())].to_vec();
+        let mut tunings = names;
+        if custom.is_empty() {
+            tunings.push("Custom…".to_string());
+        }
+        // When a chord is played: the next whole millisecond, so playing
+        // from it starts in it.
+        let at = |ms: f64| ms.max(0.0).ceil() as u64;
         TabsState {
             shown: self.tabs_shown,
             busy: v.busy(),
@@ -898,14 +922,19 @@ impl Core {
                 .map(|(_, name)| format!("With {name}"))
                 .chain(v.is_merged().then(|| "Take this merge apart".to_string()))
                 .collect(),
-            tunings: v.tuning_names(),
+            tunings,
             tuning: v.tuning_index() as u32,
             strings: v.strings(),
+            custom: v.is_custom(),
+            custom_strings: custom,
+            custom_bases: bases,
+            max_strings: chippy_engine::tabs::MAX_STRINGS as u32,
+            bass_clef: v.clef() == Clef::Bass,
             lines: v
                 .lines()
                 .iter()
                 .map(|l| TabLine {
-                    start_ms: l.start_ms as u64,
+                    start_ms: at(l.start_ms),
                     end_ms: l.end_ms as u64,
                     label: l.label.clone(),
                     notes: l
@@ -916,6 +945,35 @@ impl Core {
                             string,
                             fret,
                             soft,
+                            ms: at(l.chord_at(x).unwrap_or(l.start_ms)),
+                        })
+                        .collect(),
+                    staff: l
+                        .staff
+                        .iter()
+                        .map(|c| StaffChord {
+                            x: c.x,
+                            ms: at(c.ms),
+                            heads: c
+                                .heads
+                                .iter()
+                                .map(|h| StaffHead {
+                                    pos: h.pos,
+                                    accidental: match h.accidental {
+                                        Accidental::None => 0,
+                                        Accidental::Sharp => 1,
+                                        Accidental::Flat => 2,
+                                        Accidental::Natural => 3,
+                                    },
+                                    side: h.side,
+                                    soft: h.soft,
+                                })
+                                .collect(),
+                            hollow: c.hollow,
+                            stem: c.stem,
+                            up: c.up,
+                            flags: c.flags,
+                            dotted: c.dotted,
                         })
                         .collect(),
                     marks: l

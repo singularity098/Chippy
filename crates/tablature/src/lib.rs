@@ -1,7 +1,7 @@
 //! Guitar tablature and the music it is made from: notes, the beats and
-//! bars they fall in, fingering on a fretted instrument, scores written out
-//! as MusicXML or Guitar Pro 5, and tab files read in ([`read`]: Guitar Pro
-//! 3 to 5 and 7 to 8, MusicXML).
+//! bars they fall in, fingering on a fretted instrument, standard notation
+//! for it, scores written out as MusicXML or Guitar Pro 5, and tab files
+//! read in ([`read`]: Guitar Pro 3 to 5 and 7 to 8, MusicXML).
 //!
 //! Nothing here knows where the notes came from (a chiptune's sound chip, a
 //! MIDI file, a tab file) or how they sound: it has no
@@ -15,6 +15,7 @@ pub mod musicxml;
 pub mod musicxml_read;
 pub mod score;
 pub mod song;
+pub mod staff;
 pub mod tab;
 
 pub use song::{read, Song};

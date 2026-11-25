@@ -2,12 +2,14 @@
 //! playing track's notes and bars (worked out on a thread of their own),
 //! which part is shown on which instrument, the bars as put right by hand,
 //! the fingering moved along the neck (the whole part, or chosen bars),
-//! and where playback is in the tab.
+//! a tuning of the player's own, the tab as standard notation, and where
+//! playback is in the tab.
 
 use crate::instrument::{self, Kind};
 use chippy_core::meta::format_ms;
 use chippy_core::notes::meter::{self, Meter, MeterAdjust};
 use chippy_core::notes::score::{self, Score};
+use chippy_core::notes::staff::{self, Clef};
 use chippy_core::notes::{self, gm, tab, Part, Transcription};
 use chippy_core::TrackRef;
 use crossbeam_channel::{Receiver, Sender};
@@ -32,6 +34,22 @@ pub struct Line {
     pub bars: Vec<(f32, usize)>,
     /// The bars across it: (from x, to x, bar), 0..1.
     pub segments: Vec<(f32, f32, usize)>,
+    /// Each chord's time and place across it (x 0..1), in order.
+    pub chords: Vec<(f64, f32)>,
+    /// The line in standard notation.
+    pub staff: Vec<staff::Chord>,
+}
+
+impl Line {
+    /// When the chord at `x` (0..1) across the line is played, if one is
+    /// there.
+    pub fn chord_at(&self, x: f32) -> Option<f64> {
+        self.chords
+            .iter()
+            .min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs()))
+            .filter(|c| (c.1 - x).abs() < 1e-3)
+            .map(|c| c.0)
+    }
 }
 
 /// How wide a line is taken to be until the view says (in digits).
@@ -82,6 +100,13 @@ pub struct TabView {
     mutes: HashMap<TrackRef, Mutes>,
     /// The shown part's notes on the fretboard, cut into bars.
     fretboard: Option<Fretboard>,
+    /// A tuning of the player's own (open strings, as listed, lowest
+    /// first), once one is made: kept across parts and tracks until the
+    /// app closes.
+    custom: Vec<u8>,
+    /// The staff the shown tab is written on, and how far above how it
+    /// sounds.
+    clef: (Clef, i32),
 }
 
 /// Which of a track's parts (as found) are muted, and which soloed.
@@ -231,6 +256,8 @@ impl Default for TabView {
             found_parts: 0,
             mutes: HashMap::new(),
             fretboard: None,
+            custom: Vec::new(),
+            clef: (Clef::Treble, 12),
         }
     }
 }
@@ -335,6 +362,18 @@ fn median_key(p: &Part) -> u8 {
 /// The index, among the tunings to choose from, of the strings a part read
 /// from a tab file is written for: after [`tab::TUNINGS`].
 const WRITTEN: usize = tab::TUNINGS.len();
+/// The index of the tuning of the player's own: after [`WRITTEN`].
+const CUSTOM: usize = WRITTEN + 1;
+/// The most strings a tuning of one's own can have.
+pub const MAX_STRINGS: usize = 10;
+/// The lowest and highest an open string can be tuned (MIDI keys).
+const STRING_RANGE: (u8, u8) = (16, 84);
+
+/// "Custom (D A D G B E)".
+fn custom_name(strings: &[u8]) -> String {
+    let names: Vec<String> = strings.iter().map(|&k| pitch_name(k)).collect();
+    format!("Custom ({})", names.join(" "))
+}
 
 /// A note's name without its octave ("F#").
 fn pitch_name(key: u8) -> String {
@@ -359,19 +398,26 @@ fn written_name(p: &Part) -> String {
     format!("As written ({}{capo})", names.join(" "))
 }
 
-/// Tuning `i` (an index into [`tab::TUNINGS`], or [`WRITTEN`]) for part `p`.
-fn tuning_of(p: &Part, i: usize) -> tab::Tuning {
+/// Tuning `i` (an index into [`tab::TUNINGS`], [`WRITTEN`] or
+/// [`CUSTOM`], whose strings are `custom`) for part `p`.
+fn tuning_of(p: &Part, i: usize, custom: &[u8]) -> tab::Tuning {
     match tab::TUNINGS.get(i) {
         Some(t) => t.clone(),
-        None if !p.strings.is_empty() => tab::Tuning::new(written_name(p), p.strings.clone()),
+        None if i == CUSTOM && !custom.is_empty() => {
+            tab::Tuning::new(custom_name(custom), custom.to_vec())
+        }
+        None if i == WRITTEN && !p.strings.is_empty() => {
+            tab::Tuning::new(written_name(p), p.strings.clone())
+        }
         None => tab::TUNINGS[0].clone(),
     }
 }
 
-/// Part `p` laid out on tuning `i`, moved by hand as `a` says: on the
-/// strings and frets the tab file gives, as written, until it is moved.
-fn lay_out(p: &Part, i: usize, a: tab::Adjust) -> tab::Tab {
-    let tuning = tuning_of(p, i);
+/// Part `p` laid out on tuning `i` (a tuning of one's own: `custom`),
+/// moved by hand as `a` says: on the strings and frets the tab file gives,
+/// as written, until it is moved.
+fn lay_out(p: &Part, i: usize, custom: &[u8], a: tab::Adjust) -> tab::Tab {
+    let tuning = tuning_of(p, i, custom);
     let mut t = match i == WRITTEN && a == tab::Adjust::default() {
         true => tab::written(&p.notes, &p.written, &tuning),
         false => None,
@@ -389,16 +435,18 @@ fn lay_out(p: &Part, i: usize, a: tab::Adjust) -> tab::Tab {
 }
 
 /// The parts of `t`, laid out as `tabs` says ((part index, tuning, tab)),
-/// written out in the bars of `meter`.
+/// written out in the bars of `meter`; a tuning of one's own has the
+/// strings `custom`.
 fn build_score(
     t: &Transcription,
     title: &str,
     meter: &Meter,
     tabs: &[(usize, usize, tab::Tab)],
+    custom: &[u8],
 ) -> Score {
     let tunings: Vec<tab::Tuning> = tabs
         .iter()
-        .map(|(i, tuning, _)| tuning_of(&t.parts[*i], *tuning))
+        .map(|(i, tuning, _)| tuning_of(&t.parts[*i], *tuning, custom))
         .collect();
     let parts: Vec<score::PartTab> = tabs
         .iter()
@@ -433,10 +481,10 @@ pub fn default_score(t: &Transcription, title: &str, meter: &Meter) -> Option<Sc
             } else {
                 0
             };
-            (i, tuning, lay_out(p, tuning, tab::Adjust::default()))
+            (i, tuning, lay_out(p, tuning, &[], tab::Adjust::default()))
         })
         .collect();
-    (!tabs.is_empty()).then(|| build_score(t, title, meter, &tabs))
+    (!tabs.is_empty()).then(|| build_score(t, title, meter, &tabs, &[]))
 }
 
 impl TabView {
@@ -597,23 +645,47 @@ impl TabView {
     pub fn tuning_name(&self) -> String {
         match (tab::TUNINGS.get(self.tuning), self.current_part()) {
             (Some(t), _) => t.name.to_string(),
+            (None, _) if self.tuning == CUSTOM && !self.custom.is_empty() => {
+                custom_name(&self.custom)
+            }
             (None, Some(p)) if !p.strings.is_empty() => written_name(p),
             _ => tab::TUNINGS[0].name.to_string(),
         }
     }
 
-    pub fn tuning_index(&self) -> usize {
-        self.tuning
+    /// The tunings listed (indices into [`tab::TUNINGS`], [`WRITTEN`] and
+    /// [`CUSTOM`]), in the order [`TabView::tuning_names`] gives them.
+    fn tuning_list(&self) -> Vec<usize> {
+        let mut list: Vec<usize> = (0..tab::TUNINGS.len()).collect();
+        if self.current_part().is_some_and(|p| !p.strings.is_empty()) {
+            list.push(WRITTEN);
+        }
+        if !self.custom.is_empty() {
+            list.push(CUSTOM);
+        }
+        list
     }
 
-    /// The tunings to choose from: the usual ones, and the one the shown
-    /// part is written for if it was read from a tab file.
+    /// Where the tuning in use is in [`TabView::tuning_names`].
+    pub fn tuning_index(&self) -> usize {
+        self.tuning_list()
+            .iter()
+            .position(|&i| i == self.tuning)
+            .unwrap_or(0)
+    }
+
+    /// The tunings to choose from: the usual ones, the one the shown part
+    /// is written for if it was read from a tab file, and the player's own
+    /// once there is one.
     pub fn tuning_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = tab::TUNINGS.iter().map(|t| t.name.to_string()).collect();
-        if let Some(p) = self.current_part().filter(|p| !p.strings.is_empty()) {
-            names.push(written_name(p));
-        }
-        names
+        self.tuning_list()
+            .into_iter()
+            .map(|i| match tab::TUNINGS.get(i) {
+                Some(t) => t.name.to_string(),
+                None if i == CUSTOM => custom_name(&self.custom),
+                None => self.current_part().map(written_name).unwrap_or_default(),
+            })
+            .collect()
     }
 
     pub fn step_part(&mut self, d: i32) {
@@ -778,12 +850,140 @@ impl TabView {
         self.set_tuning((self.tuning as i32 + d).rem_euclid(n) as usize);
     }
 
+    /// Uses tuning `i` of [`TabView::tuning_names`].
     pub fn set_tuning(&mut self, i: usize) {
-        if i < self.tuning_names().len() {
-            self.tuning = i;
+        if let Some(&t) = self.tuning_list().get(i) {
+            self.tuning = t;
             self.tuning_chosen = true;
             self.arrange();
         }
+    }
+
+    // ---- a tuning of one's own
+
+    /// The open strings of the tuning in use, lowest first.
+    fn open_strings(&self) -> Vec<u8> {
+        match self.current_part() {
+            Some(p) => tuning_of(p, self.tuning, &self.custom).strings.to_vec(),
+            None => tuning_of(&Part::default(), self.tuning, &self.custom)
+                .strings
+                .to_vec(),
+        }
+    }
+
+    /// Whether the tuning in use is the player's own.
+    pub fn is_custom(&self) -> bool {
+        self.tuning == CUSTOM && !self.custom.is_empty()
+    }
+
+    /// The strings of the player's own tuning, lowest first, with their
+    /// octaves ("E2", "A2"...); empty until there is one.
+    pub fn custom_strings(&self) -> Vec<String> {
+        self.custom.iter().map(|&k| notes::key_name(k)).collect()
+    }
+
+    /// Changes the player's own tuning with `f` (starting from the tuning
+    /// in use if there isn't one yet) and uses it.
+    fn edit_custom(&mut self, f: impl FnOnce(&mut Vec<u8>)) {
+        let mut strings = if !self.is_custom() {
+            self.open_strings()
+        } else {
+            self.custom.clone()
+        };
+        f(&mut strings);
+        if strings.is_empty() {
+            return;
+        }
+        for k in &mut strings {
+            *k = (*k).clamp(STRING_RANGE.0, STRING_RANGE.1);
+        }
+        self.custom = strings;
+        self.tuning = CUSTOM;
+        self.tuning_chosen = true;
+        self.arrange();
+    }
+
+    /// Makes a tuning of the player's own from the one in use (or uses it
+    /// again, if there is one).
+    pub fn start_custom(&mut self) {
+        if self.custom.is_empty() {
+            self.edit_custom(|_| {});
+        } else if !self.is_custom() {
+            self.tuning = CUSTOM;
+            self.tuning_chosen = true;
+            self.arrange();
+        }
+    }
+
+    /// Starts the player's own tuning again from tuning `i` of
+    /// [`TabView::tuning_names`].
+    pub fn custom_from(&mut self, i: usize) {
+        let Some(&t) = self.tuning_list().get(i) else {
+            return;
+        };
+        let strings = match self.current_part() {
+            Some(p) => tuning_of(p, t, &self.custom).strings.to_vec(),
+            None => tuning_of(&Part::default(), t, &self.custom)
+                .strings
+                .to_vec(),
+        };
+        self.edit_custom(|s| *s = strings);
+    }
+
+    /// Every string of the player's own tuning `d` half steps higher
+    /// (lower, if negative).
+    pub fn custom_shift(&mut self, d: i32) {
+        self.edit_custom(|s| {
+            let can = s.iter().all(|&k| {
+                (STRING_RANGE.0 as i32..=STRING_RANGE.1 as i32).contains(&(k as i32 + d))
+            });
+            if can {
+                for k in s.iter_mut() {
+                    *k = (*k as i32 + d) as u8;
+                }
+            }
+        });
+    }
+
+    /// String `i` (0 the lowest) of the player's own tuning `d` half steps
+    /// higher (lower, if negative).
+    pub fn custom_shift_string(&mut self, i: usize, d: i32) {
+        self.edit_custom(|s| {
+            if let Some(k) = s.get_mut(i) {
+                *k = (*k as i32 + d).clamp(STRING_RANGE.0 as i32, STRING_RANGE.1 as i32) as u8;
+            }
+        });
+    }
+
+    /// A string more on the player's own tuning: a fourth above the highest
+    /// (`high`), or below the lowest.
+    pub fn custom_add(&mut self, high: bool) {
+        self.edit_custom(|s| {
+            if s.len() >= MAX_STRINGS {
+                return;
+            }
+            if high {
+                let top = s.last().copied().unwrap_or(64);
+                s.push(top.saturating_add(5));
+            } else {
+                let bottom = s.first().copied().unwrap_or(40);
+                s.insert(0, bottom.saturating_sub(5));
+            }
+        });
+    }
+
+    /// The highest (`high`) or lowest string off the player's own tuning,
+    /// leaving one at least.
+    pub fn custom_remove(&mut self, high: bool) {
+        self.edit_custom(|s| {
+            if s.len() > 1 {
+                if high {
+                    s.pop();
+                } else {
+                    s.remove(0);
+                }
+            }
+        });
     }
 
     /// Where the shown part's adjustments are kept.
@@ -913,9 +1113,10 @@ impl TabView {
         Some((m.bars.get(i)?.start_ms, m.bar_end(i)))
     }
 
-    /// When bar `i` starts (not before the track does), to play from.
+    /// When bar `i` starts (not before the track does), to play from: the
+    /// next whole millisecond, so it is in the bar, not just before it.
     pub fn bar_start(&self, i: usize) -> Option<u64> {
-        self.bar_span(i).map(|b| b.0.max(0.0) as u64)
+        self.bar_span(i).map(|b| b.0.max(0.0).ceil() as u64)
     }
 
     fn meter_adjust(&self) -> MeterAdjust {
@@ -1060,7 +1261,12 @@ impl TabView {
     /// parts) on.
     fn tuning_for(&self, p: &Part) -> usize {
         let written = !p.strings.is_empty();
-        if self.tuning_chosen && (self.tuning != WRITTEN || written) {
+        let chosen = match self.tuning {
+            WRITTEN => written,
+            CUSTOM => !self.custom.is_empty(),
+            _ => true,
+        };
+        if self.tuning_chosen && chosen {
             self.tuning
         } else if written {
             // As the tab file writes it.
@@ -1106,7 +1312,8 @@ impl TabView {
         let adjust = self.fit_spans(&self.adjust());
         let Some(p) = self.current_part() else { return };
         let tuning = self.tuning_for(p);
-        let tab = lay_out(p, tuning, adjust.clone());
+        let tab = lay_out(p, tuning, &self.custom, adjust.clone());
+        self.clef = Clef::for_strings(&tuning_of(p, tuning, &self.custom).strings);
         // Steps asked for past where anything moves are forgotten, so a
         // step back the other way shows at once.
         let mut kept = tab::Adjust {
@@ -1140,9 +1347,13 @@ impl TabView {
     fn layout(&mut self) {
         let Some(tab) = &self.tab else { return };
         let bars = self.bar_starts();
-        self.lines = tab::layout(tab, self.width, self.length_ms, &bars)
+        let rows = tab::layout(tab, self.width, self.length_ms, &bars);
+        let (clef, octave) = self.clef;
+        let staves = staff::staff(tab, &rows, clef, octave, self.meter.as_ref());
+        self.lines = rows
             .into_iter()
-            .map(|r| Line {
+            .zip(staves)
+            .map(|(r, staff)| Line {
                 label: format_ms(r.start_ms.max(0.0) as u64),
                 start_ms: r.start_ms,
                 end_ms: r.end_ms,
@@ -1150,6 +1361,8 @@ impl TabView {
                 bars: r.bars,
                 cells: r.cells,
                 marks: r.marks,
+                chords: r.chords,
+                staff,
             })
             .collect();
         self.fretboard = self.make_fretboard();
@@ -1406,30 +1619,26 @@ impl TabView {
                     .get(&(track.clone(), i))
                     .map(|a| self.fit_spans(a))
                     .unwrap_or_default();
-                (i, tuning, lay_out(p, tuning, a))
+                (i, tuning, lay_out(p, tuning, &self.custom, a))
             })
             .collect();
-        Some(build_score(t, title, m, &tabs))
+        Some(build_score(t, title, m, &tabs, &self.custom))
     }
 
     pub fn lines(&self) -> &[Line] {
         &self.lines
     }
 
+    /// The staff the shown tab is written on in standard notation.
+    pub fn clef(&self) -> Clef {
+        self.clef.0
+    }
+
     /// The strings' names, lowest first.
     pub fn strings(&self) -> Vec<String> {
         match &self.tab {
             Some(t) => t.string_names.clone(),
-            None => {
-                let tuning = match self.current_part() {
-                    Some(p) => tuning_of(p, self.tuning),
-                    None => tab::TUNINGS
-                        .get(self.tuning)
-                        .unwrap_or(&tab::TUNINGS[0])
-                        .clone(),
-                };
-                tuning.strings.iter().map(|&k| pitch_name(k)).collect()
-            }
+            None => self.open_strings().iter().map(|&k| pitch_name(k)).collect(),
         }
     }
 
@@ -1466,6 +1675,7 @@ impl TabView {
             start_ms: l.start_ms,
             end_ms: l.end_ms,
             cells: Vec::new(),
+            chords: Vec::new(),
             marks: l.marks.clone(),
             bar: None,
             bars: Vec::new(),
@@ -1696,6 +1906,61 @@ mod tests {
     }
 
     #[test]
+    fn tunes_the_strings_by_hand() {
+        let t = Transcription {
+            parts: vec![Part::new(
+                "Gtr",
+                25,
+                vec![note(0.0, 40), note(200.0, 45), note(400.0, 64)],
+            )],
+            ..Default::default()
+        };
+        let mut v = showing(t, "/tmp/tunes-by-hand.mid");
+        let listed = v.tuning_names().len();
+        assert!(!v.is_custom() && v.custom_strings().is_empty());
+        // Made from standard tuning, then down a half step: the low E is
+        // played a fret up on the low string.
+        v.start_custom();
+        assert!(v.is_custom());
+        assert_eq!(v.tuning_names().len(), listed + 1);
+        assert_eq!(v.tuning_index(), listed);
+        assert_eq!(v.custom_strings()[0], "E2");
+        v.custom_shift(-1);
+        assert_eq!(v.tuning_name(), "Custom (D# G# C# F# A# D#)");
+        assert_eq!(v.strings()[0], "D#");
+        let low = v.tab.as_ref().unwrap().notes[0].clone();
+        assert_eq!((low.string, low.fret), (0, 1));
+        // Drop the low string to C#, add a high one, take the low one off.
+        v.custom_shift_string(0, -2);
+        assert_eq!(v.custom_strings()[0], "C#2");
+        v.custom_add(true);
+        assert_eq!(v.custom_strings().len(), 7);
+        assert_eq!(v.custom_strings()[6], "G#4");
+        v.custom_remove(false);
+        assert_eq!(v.custom_strings().len(), 6);
+        assert_eq!(v.strings().len(), 6);
+        // Started again from the bass's strings.
+        let bass = v
+            .tuning_names()
+            .iter()
+            .position(|n| n == "Bass (4 strings)")
+            .unwrap();
+        v.custom_from(bass);
+        assert_eq!(v.custom_strings(), ["E1", "A1", "D2", "G2"]);
+        // Another tuning, and back to one's own as it was left.
+        v.set_tuning(0);
+        assert!(!v.is_custom());
+        v.set_tuning(listed);
+        assert!(v.is_custom());
+        assert_eq!(v.custom_strings().len(), 4);
+        // Each line has its notation, and its chords' times to click on.
+        let line = &v.lines()[0];
+        assert_eq!(line.staff.len(), line.chords.len());
+        assert_eq!(line.chord_at(line.chords[1].1), Some(200.0));
+        assert_eq!(v.clef(), Clef::Bass);
+    }
+
+    #[test]
     fn fretboard_shows_the_bar() {
         let t = Transcription {
             parts: vec![Part::new(
@@ -1777,7 +2042,7 @@ mod tests {
     fn tab_files_show_as_written() {
         let p = written_part();
         assert_eq!(written_name(&p), "As written (D A D G B E, capo 2)");
-        let t = lay_out(&p, WRITTEN, tab::Adjust::default());
+        let t = lay_out(&p, WRITTEN, &[], tab::Adjust::default());
         let places: Vec<(u8, u8)> = t.notes.iter().map(|n| (n.string, n.fret)).collect();
         assert_eq!(places, vec![(0, 0), (2, 7)]);
         assert_eq!(t.string_names, vec!["D", "A", "D", "G", "B", "E"]);
@@ -1786,6 +2051,7 @@ mod tests {
         let moved = lay_out(
             &p,
             WRITTEN,
+            &[],
             tab::Adjust {
                 position: -1,
                 ..Default::default()
@@ -1794,7 +2060,7 @@ mod tests {
         assert_eq!(moved.notes.len(), 2);
         assert!(moved.notes.iter().all(|n| n.key == 40 || n.key == 59));
         // Any other tuning ignores what is written.
-        let std = lay_out(&p, 0, tab::Adjust::default());
+        let std = lay_out(&p, 0, &[], tab::Adjust::default());
         assert_eq!(std.string_names, vec!["E", "A", "D", "G", "B", "E"]);
 
         // Written out, it keeps the file's tuning and frets.

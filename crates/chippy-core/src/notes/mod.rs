@@ -41,7 +41,7 @@ pub use spc::SampleInfo;
 // The notes, bars and tab themselves live in the `tablature` crate, shared
 // with anything else that works with tab; they are re-exported here so the
 // rest of Chippy finds them where it always has.
-pub use tablature::{gp5, key_name, musicxml, score, tab, Note, Part};
+pub use tablature::{gp5, key_name, musicxml, score, staff, tab, Note, Part};
 
 /// Beats and bars ([`tablature::meter`]), and [`meter::find`] to get them
 /// for a transcribed track.

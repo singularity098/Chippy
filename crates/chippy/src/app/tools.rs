@@ -14,9 +14,11 @@ use crate::export::{self, Format, Progress};
 use crate::midimode;
 use crate::tabs::{Available, TabView};
 use crate::{
-    Export, FretDot, Info, InfoField, Lyrics, Now, TabBar, TabCell, TabLine, TabPart, Tabs,
+    Export, FretDot, Info, InfoField, Lyrics, Now, StaffHead, StaffStem, TabBar, TabCell, TabLine,
+    TabPart, Tabs,
 };
 use chippy_core::lyrics;
+use chippy_core::notes::staff::{Accidental, Clef};
 use chippy_core::notes::style::Style;
 
 /// The lyrics dialog's state: the track whose lyrics are shown.
@@ -684,8 +686,23 @@ impl App {
         });
     }
 
+    /// Item `i` of the tunings: a tuning, or (after them all, until there
+    /// is one) "Custom…", which makes a tuning of one's own from the one in
+    /// use.
     pub(super) fn set_tab_tuning(&mut self, i: i32) {
-        self.keeping_tab_view(|v| v.set_tuning(i.max(0) as usize));
+        let i = i.max(0) as usize;
+        self.keeping_tab_view(|v| {
+            if i >= v.tuning_names().len() {
+                v.start_custom();
+            } else {
+                v.set_tuning(i);
+            }
+        });
+    }
+
+    /// Changes the tuning of one's own with `f`.
+    pub(super) fn custom_tab_tuning(&mut self, f: impl FnOnce(&mut TabView)) {
+        self.keeping_tab_view(f);
     }
 
     /// Changes the tab with `f` (another part, instrument...), keeping the
@@ -890,9 +907,14 @@ impl App {
         }
     }
 
+    /// Plays from `ms` (a note clicked in the tab).
+    pub(super) fn seek_tab_to(&mut self, ms: i32) {
+        self.seek(ms.max(0) as u64);
+    }
+
     pub(super) fn seek_tab_line(&mut self, i: i32) {
         if let Some(l) = self.tabs.view.lines().get(i.max(0) as usize) {
-            self.seek(l.start_ms as u64);
+            self.seek(l.start_ms.max(0.0).ceil() as u64);
         }
     }
 
@@ -906,9 +928,24 @@ impl App {
         let parts: Vec<SharedString> = v.part_names().iter().map(ss).collect();
         t.set_part_names(ModelRc::new(VecModel::from(parts)));
         t.set_part(v.part_index() as i32);
-        let tunings: Vec<SharedString> = v.tuning_names().iter().map(ss).collect();
+        let names = v.tuning_names();
+        let custom = v.custom_strings();
+        let mut tunings: Vec<SharedString> = names.iter().map(ss).collect();
+        if custom.is_empty() {
+            tunings.push(ss("Custom…"));
+        }
         t.set_tunings(ModelRc::new(VecModel::from(tunings)));
         t.set_tuning(v.tuning_index() as i32);
+        t.set_custom(v.is_custom());
+        let bases = &names[..names.len() - usize::from(!custom.is_empty())];
+        t.set_custom_bases(ModelRc::new(VecModel::from(
+            bases.iter().map(ss).collect::<Vec<_>>(),
+        )));
+        t.set_custom_strings(ModelRc::new(VecModel::from(
+            custom.iter().map(ss).collect::<Vec<_>>(),
+        )));
+        t.set_max_strings(crate::tabs::MAX_STRINGS as i32);
+        t.set_bass_clef(v.clef() == Clef::Bass);
         let strings: Vec<SharedString> = v.strings().iter().map(ss).collect();
         t.set_strings(ModelRc::new(VecModel::from(strings)));
         let selected = v.selection();
@@ -916,37 +953,88 @@ impl App {
         let lines: Vec<TabLine> = v
             .lines()
             .iter()
-            .map(|l| TabLine {
-                start: ss(&l.label),
-                cells: ModelRc::new(VecModel::from(
-                    l.cells
-                        .iter()
-                        .map(|&(x, string, fret, soft)| TabCell {
-                            x,
-                            string: string as i32,
-                            fret: ss(if soft {
-                                format!("({fret})")
-                            } else {
-                                fret.to_string()
-                            }),
-                            soft,
-                        })
-                        .collect::<Vec<_>>(),
-                )),
-                bars: ModelRc::new(VecModel::from(
+            .map(|l| {
+                // The bar at `x` across the line (-1: none).
+                let bar_at = |x: f32| -> i32 {
                     l.segments
                         .iter()
-                        .map(|&(x0, x1, i)| TabBar {
-                            x0,
-                            x1,
-                            index: i as i32,
-                            line: l.bars.iter().any(|b| b.1 == i),
-                            label: ss((i + 1).to_string()),
-                            selected: selected.is_some_and(|(a, b)| (a..=b).contains(&i)),
-                            nudged: nudged.contains(&i),
-                        })
-                        .collect::<Vec<_>>(),
-                )),
+                        .find(|s| x >= s.0 && x < s.1)
+                        .or(l.segments.last())
+                        .map_or(-1, |s| s.2 as i32)
+                };
+                let ms_at = |x: f32| -> i32 {
+                    l.chord_at(x).map_or(l.start_ms, |t| t).max(0.0).ceil() as i32
+                };
+                TabLine {
+                    start: ss(&l.label),
+                    cells: ModelRc::new(VecModel::from(
+                        l.cells
+                            .iter()
+                            .map(|&(x, string, fret, soft)| TabCell {
+                                x,
+                                string: string as i32,
+                                fret: ss(if soft {
+                                    format!("({fret})")
+                                } else {
+                                    fret.to_string()
+                                }),
+                                soft,
+                                ms: ms_at(x),
+                                bar: bar_at(x),
+                            })
+                            .collect::<Vec<_>>(),
+                    )),
+                    heads: ModelRc::new(VecModel::from(
+                        l.staff
+                            .iter()
+                            .flat_map(|c| {
+                                c.heads.iter().map(move |h| StaffHead {
+                                    x: c.x,
+                                    pos: h.pos,
+                                    accidental: match h.accidental {
+                                        Accidental::None => 0,
+                                        Accidental::Sharp => 1,
+                                        Accidental::Flat => 2,
+                                        Accidental::Natural => 3,
+                                    },
+                                    side: h.side as i32,
+                                    hollow: c.hollow,
+                                    dotted: c.dotted,
+                                    soft: h.soft,
+                                })
+                            })
+                            .collect::<Vec<_>>(),
+                    )),
+                    stems: ModelRc::new(VecModel::from(
+                        l.staff
+                            .iter()
+                            .map(|c| StaffStem {
+                                x: c.x,
+                                low: c.heads.first().map_or(0, |h| h.pos),
+                                high: c.heads.last().map_or(0, |h| h.pos),
+                                stem: c.stem,
+                                up: c.up,
+                                flags: c.flags as i32,
+                                ms: c.ms.max(0.0).ceil() as i32,
+                                bar: bar_at(c.x),
+                            })
+                            .collect::<Vec<_>>(),
+                    )),
+                    bars: ModelRc::new(VecModel::from(
+                        l.segments
+                            .iter()
+                            .map(|&(x0, x1, i)| TabBar {
+                                x0,
+                                x1,
+                                index: i as i32,
+                                line: l.bars.iter().any(|b| b.1 == i),
+                                label: ss((i + 1).to_string()),
+                                selected: selected.is_some_and(|(a, b)| (a..=b).contains(&i)),
+                                nudged: nudged.contains(&i),
+                            })
+                            .collect::<Vec<_>>(),
+                    )),
+                }
             })
             .collect();
         t.set_lines(ModelRc::new(VecModel::from(lines)));

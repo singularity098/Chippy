@@ -109,6 +109,19 @@ info, PSF tags, vgmstream stream names).
   standard, drop A), bass or ukulele, a part (channel) at a time, starting
   with the lead; the notes are spaced to fit the window without touching,
   with a playhead that follows the song; *Copy* gives the tab as text.
+  The fingering keeps the hand in one place on the neck where it can,
+  plays a passage that comes back the way it was played the first time,
+  and uses open strings near the nut but not once the hand is further up
+  (nor skips a string for a note close by). Click a note to play from it,
+  or anywhere else in a bar to play from the bar's start.
+  *Custom…* at the end of the tunings makes a tuning of your own from the
+  one in use: start it again from any of the others, take every string a
+  half step down or up, add or take off a string at either end, or tune
+  each string on its own; the notes are fingered again on the new strings.
+  The menu beside *Copy* shows the tab, **standard notation** (the staff:
+  guitar on the treble clef and bass on the bass clef, written an octave
+  up as usual, each note under its fret number, with its accidentals, its
+  value from the beat, and its stem and flags; no beams or rests), or both.
   Another part or instrument keeps the same bars in view. Notes played
   softer than those around them (an echo of a note just played, the way
   chip tunes fake a delay) are shown in brackets, dimmer: `(5)`. *Merge…*
@@ -125,7 +138,8 @@ info, PSF tags, vgmstream stream names).
   (the chip's own sound can't leave a channel out), for each track until
   Chippy closes. The fretboard button shows a guitar's neck under the
   controls (hidden at first): the notes of the bar playing, each named
-  (`Bb`), the ones sounding lit and the rest of the bar's greyed out.
+  (`Bb`), the ones sounding lit in the theme's colours and the rest of the
+  bar's greyed out.
   *Octave* shows the part an octave higher or lower; *Neck* nudges its
   shapes up or down the neck, a step at a time: the lowest-fretted notes of
   each passage move to a lower string, played higher up (or the highest to
@@ -137,11 +151,11 @@ info, PSF tags, vgmstream stream names).
   (the step the notes move in, the beat they lean on, where the bass and
   the kick drum put their weight, and how the music repeats). That can be
   wrong, so the *Bars* row puts it right: the time signature, the beat
-  twice or half as fast, and the bar lines a beat earlier or later. Click a
-  bar (Shift-click for a run of them; on Android tap, and hold for a run)
-  and *Neck* moves just those bars' shapes, leaving the rest as they are;
-  double-click a bar to play from it. All of this is remembered for each
-  track and part until Chippy closes, never saved. *Save…* writes every
+  twice or half as fast, and the bar lines a beat earlier or later.
+  Ctrl-click a bar (Shift-click for a run of them; on Android tap, and
+  hold for a run) and *Neck* moves just those bars' shapes, leaving the
+  rest as they are. All of this (and a tuning of your own) is remembered
+  for each track and part until Chippy closes, never saved. *Save…* writes every
   part as tab in bars: **MusicXML** (sheet music and tab, for MuseScore,
   Guitar Pro, TuxGuitar, Sibelius...) or **Guitar Pro 5** (`.gp5`), as
   shown, with times rounded to sixteenths (or triplets, where the notes fit

@@ -481,6 +481,19 @@ impl App {
         on!(app, tb, on_select_bar, |a, i: i32, extend: bool| a
             .select_tab_bar(i, extend));
         on!(app, tb, on_seek_bar, |a, i: i32| a.seek_tab_bar(i));
+        on!(app, tb, on_seek_to, |a, ms: i32| a.seek_tab_to(ms));
+        on!(app, tb, on_custom_from, |a, i: i32| a
+            .custom_tab_tuning(|v| v.custom_from(i.max(0) as usize)));
+        on!(app, tb, on_custom_shift, |a, d: i32| a
+            .custom_tab_tuning(|v| v.custom_shift(d)));
+        on!(app, tb, on_custom_shift_string, |a, i: i32, d: i32| a
+            .custom_tab_tuning(
+                |v| v.custom_shift_string(i.max(0) as usize, d)
+            ));
+        on!(app, tb, on_custom_add, |a, high: bool| a
+            .custom_tab_tuning(|v| v.custom_add(high)));
+        on!(app, tb, on_custom_remove, |a, high: bool| a
+            .custom_tab_tuning(|v| v.custom_remove(high)));
         on!(app, tb, on_set_sig, |a, i: i32| a.set_tab_sig(i));
         on!(app, tb, on_step_speed, |a, d: i32| a.step_tab_speed(d));
         on!(app, tb, on_shift_bars, |a, d: i32| a.shift_tab_bars(d));

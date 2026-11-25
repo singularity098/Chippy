@@ -2,7 +2,10 @@
 //!
 //! Each note can be played on several strings; the fingering is chosen
 //! over the whole part at once (a shortest path), preferring to keep the
-//! hand in one place, low frets, and chords within a hand's reach. A part
+//! hand in one place, low frets, and chords within a hand's reach. Open
+//! strings are used freely near the nut, but not once the hand is further
+//! up the neck, nor a string skipped for a note close by; and a passage
+//! played again is fingered as it was the first time. A part
 //! outside the instrument's range is moved by octaves to fit; single notes
 //! still out of reach are folded into it an octave at a time.
 //!
@@ -191,6 +194,8 @@ fn name(key: u8) -> String {
 struct Fingering {
     /// (string, fret) per note of the chord, in the chord's order.
     places: Vec<(u8, u8)>,
+    /// The key of each of `places`.
+    keys: Vec<u8>,
     cost: f64,
     /// The lowest and highest fretted frets (None: all open).
     pos: Option<(f64, f64)>,
@@ -224,6 +229,7 @@ fn fingerings(keys: &[u8], tuning: &Tuning) -> Vec<Fingering> {
                 + if span > 3.0 { (span - 3.0) * 1.5 } else { 0.0 };
             out.push(Fingering {
                 places: cur.clone(),
+                keys: keys.to_vec(),
                 cost,
                 pos,
             });
@@ -245,7 +251,8 @@ fn fingerings(keys: &[u8], tuning: &Tuning) -> Vec<Fingering> {
 
 /// Where the hand goes for a fingering, from where it was (the first fret
 /// its four fingers cover), and the cost of getting there: none if the
-/// frets are already under the fingers, else a shift.
+/// frets are already under the fingers, else a shift: a fret or two
+/// cheaply, a long jump dearly.
 fn moving(hand: Option<f64>, frets: Option<(f64, f64)>) -> (f64, Option<f64>) {
     match (hand, frets) {
         (Some(w), Some((lo, hi))) => {
@@ -255,11 +262,43 @@ fn moving(hand: Option<f64>, frets: Option<(f64, f64)>) -> (f64, Option<f64>) {
                 lo
             };
             let d = (to - w).abs();
-            (if d > 0.0 { 0.5 + d * 0.3 } else { 0.0 }, Some(to))
+            // A fret or two is a small adjustment; a long jump costs far
+            // more than several short ones.
+            let cost = d * 0.3 + d * d * 0.08;
+            (cost, Some(to))
         }
         (None, Some((lo, _))) => (0.0, Some(lo)),
         (hand, None) => (0.0, hand),
     }
+}
+
+/// Up to this fret, the hand is near enough the nut for open strings to
+/// come naturally; further up, reaching back for one breaks up a passage.
+const OPEN_NEAR: f64 = 3.0;
+
+/// What playing `f` costs with the hand at `hand`, after `prev`, beyond its
+/// own cost: its open strings, if the hand is up the neck, and a string
+/// skipped between two single notes close in pitch (a note fretted far
+/// away, or an open string, when a fret beside it would do).
+fn in_passage(hand: Option<f64>, prev: Option<&Fingering>, f: &Fingering) -> f64 {
+    let opens = f.places.iter().filter(|p| p.1 == 0).count() as f64;
+    let open = match hand {
+        Some(w) if opens > 0.0 => opens * (w - OPEN_NEAR).max(0.0) * 0.25,
+        _ => 0.0,
+    };
+    let skip = match prev {
+        Some(p) if p.places.len() == 1 && f.places.len() == 1 => {
+            let strings = (p.places[0].0 as i32 - f.places[0].0 as i32).abs();
+            let interval = (p.keys[0] as i32 - f.keys[0] as i32).abs();
+            if strings >= 2 && interval <= 7 {
+                (strings - 1) as f64 * 0.5
+            } else {
+                0.0
+            }
+        }
+        _ => 0.0,
+    };
+    open + skip
 }
 
 /// The strings' names, lowest first ("E", "A", ...).
@@ -309,8 +348,15 @@ pub fn arrange(notes: &[Note], tuning: &Tuning) -> Tab {
 /// The most comfortable fingering of each chord over the whole part (a
 /// Viterbi search), notes outside each chord's `limits` (lowest, highest
 /// fret) counting heavily against it, and chords `keep` gives a fingering
-/// for kept to it: an index into each chord's options.
-fn choose(options: &[Vec<Fingering>], limits: &[(u8, u8)], keep: &[Option<usize>]) -> Vec<usize> {
+/// for kept to it: an index into each chord's options. Chords `prefer`
+/// gives a fingering for lean towards it (a passage played as it was the
+/// first time).
+fn choose_once(
+    options: &[Vec<Fingering>],
+    limits: &[(u8, u8)],
+    keep: &[Option<usize>],
+    prefer: &[Option<usize>],
+) -> Vec<usize> {
     let outside = |f: &Fingering, (lo, hi): (u8, u8)| -> f64 {
         f.places
             .iter()
@@ -328,11 +374,19 @@ fn choose(options: &[Vec<Fingering>], limits: &[(u8, u8)], keep: &[Option<usize>
             })
             .sum()
     };
-    // Per option: (total cost, best previous option, where the hand is,
-    // carried through open strings).
-    let mut best: Vec<Vec<(f64, usize, Option<f64>)>> = Vec::with_capacity(options.len());
+    // Per option, a few ways to get to it, each with the hand somewhere
+    // else (the cheapest way there may leave the hand badly placed for
+    // what follows): (total cost, (previous option, its way), where the
+    // hand is, carried through open strings).
+    type Way = (f64, (usize, usize), Option<f64>);
+    let mut best: Vec<Vec<Vec<Way>>> = Vec::with_capacity(options.len());
     for (i, opts) in options.iter().enumerate() {
-        let row: Vec<(f64, usize, Option<f64>)> = opts
+        let before: usize = best
+            .last()
+            .map_or(0, |b: &Vec<Vec<Way>>| b.iter().map(Vec::len).sum());
+        // Fewer ways for big chords with many fingerings, to keep it quick.
+        let keep_ways = if opts.len() * before > 4000 { 1 } else { WAYS };
+        let row: Vec<Vec<Way>> = opts
             .iter()
             .enumerate()
             .map(|(oi, o)| {
@@ -340,36 +394,119 @@ fn choose(options: &[Vec<Fingering>], limits: &[(u8, u8)], keep: &[Option<usize>
                     Some(k) if k != oi => 1000.0,
                     _ => 0.0,
                 };
-                let own = o.cost + outside(o, limits[i]) + kept;
+                let preferred = match prefer.get(i).copied().flatten() {
+                    Some(k) if k != oi => REPEAT_COST,
+                    _ => 0.0,
+                };
+                let own = o.cost + outside(o, limits[i]) + kept + preferred;
                 if i == 0 {
-                    return (own, 0, moving(None, o.pos).1);
+                    return vec![(own, (0, 0), moving(None, o.pos).1)];
                 }
-                best[i - 1]
-                    .iter()
-                    .enumerate()
-                    .map(|(j, &(c, _, hand))| {
+                let mut ways: Vec<Way> = Vec::new();
+                for (j, prev) in best[i - 1].iter().enumerate() {
+                    for (k, &(c, _, hand)) in prev.iter().enumerate() {
                         let (m, to) = moving(hand, o.pos);
-                        (c + m + own, j, to)
-                    })
-                    .min_by(|a, b| a.0.total_cmp(&b.0))
-                    .unwrap_or((own, 0, None))
+                        let extra = in_passage(hand, options[i - 1].get(j), o);
+                        let w = (c + m + extra + own, (j, k), to);
+                        match ways.iter_mut().find(|x| x.2 == to) {
+                            Some(x) if x.0 <= w.0 => {}
+                            Some(x) => *x = w,
+                            None => ways.push(w),
+                        }
+                    }
+                }
+                ways.sort_by(|a, b| a.0.total_cmp(&b.0));
+                ways.truncate(keep_ways);
+                ways
             })
             .collect();
         best.push(row);
     }
     let mut pick = vec![0usize; options.len()];
     if let Some(last) = best.last() {
-        let mut j = last
+        let mut at = last
             .iter()
             .enumerate()
-            .min_by(|a, b| a.1 .0.total_cmp(&b.1 .0))
-            .map_or(0, |(j, _)| j);
+            .flat_map(|(j, ways)| ways.iter().enumerate().map(move |(k, w)| (w.0, (j, k))))
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map_or((0, 0), |w| w.1);
         for i in (0..options.len()).rev() {
-            pick[i] = j;
-            j = best[i][j].1;
+            pick[i] = at.0;
+            at = best[i]
+                .get(at.0)
+                .and_then(|ways| ways.get(at.1))
+                .map_or((0, 0), |w| w.1);
         }
     }
     pick
+}
+
+/// How many ways to reach each fingering are kept (see [`choose_once`]).
+const WAYS: usize = 4;
+
+/// What playing a chord of a repeated passage differently from the first
+/// time costs.
+const REPEAT_COST: f64 = 1.5;
+/// How many chords in a row must be the same as earlier ones for a passage
+/// to be taken as played again.
+const REPEAT_CHORDS: usize = 6;
+
+/// For each chord, the earlier chord it repeats, if any: the first time
+/// the same chords were played from it on (or up to it) for
+/// [`REPEAT_CHORDS`] chords.
+fn repeats(options: &[Vec<Fingering>]) -> Vec<Option<usize>> {
+    use std::collections::HashMap;
+    let n = options.len();
+    let mut out = vec![None; n];
+    if n < REPEAT_CHORDS {
+        return out;
+    }
+    let keys: Vec<&[u8]> = options
+        .iter()
+        .map(|o| o.first().map_or(&[][..], |f| &f.keys[..]))
+        .collect();
+    let mut ahead: HashMap<&[&[u8]], usize> = HashMap::new();
+    let mut behind: HashMap<&[&[u8]], usize> = HashMap::new();
+    for i in 0..n {
+        let mut first = None;
+        if i + REPEAT_CHORDS <= n {
+            let p = *ahead.entry(&keys[i..i + REPEAT_CHORDS]).or_insert(i);
+            first = (p != i).then_some(p);
+        }
+        if i + 1 >= REPEAT_CHORDS {
+            let p = *behind.entry(&keys[i + 1 - REPEAT_CHORDS..=i]).or_insert(i);
+            if first.is_none() && p != i {
+                first = Some(p);
+            }
+        }
+        out[i] = first;
+    }
+    out
+}
+
+/// [`choose_once`], then again with each repeated passage leaning towards
+/// how it was fingered the first time (`repeats` gives which chord each
+/// repeats), so the same notes are shown the same way each time.
+fn choose(
+    options: &[Vec<Fingering>],
+    limits: &[(u8, u8)],
+    keep: &[Option<usize>],
+    repeats: &[Option<usize>],
+) -> Vec<usize> {
+    let pick = choose_once(options, limits, keep, &[]);
+    if repeats.iter().all(Option::is_none) {
+        return pick;
+    }
+    let prefer: Vec<Option<usize>> = repeats
+        .iter()
+        .enumerate()
+        .map(|(i, &r)| {
+            let r = r?;
+            let first = options[r].get(pick[r])?;
+            options[i].iter().position(|f| f.places == first.places)
+        })
+        .collect();
+    choose_once(options, limits, keep, &prefer)
 }
 
 /// How far either side of a chord its passage reaches, for nudging.
@@ -423,6 +560,7 @@ fn step_limits(
 /// it is the whole part. The steps taken.
 fn step_along(
     options: &[Vec<Fingering>],
+    repeats: &[Option<usize>],
     pick: &mut Vec<usize>,
     times: &[f64],
     limits: &mut [(u8, u8)],
@@ -445,7 +583,7 @@ fn step_along(
             if limits == before.as_slice() {
                 break 'steps;
             }
-            let next = choose(options, limits, &keep);
+            let next = choose(options, limits, &keep, repeats);
             let moved = range.clone().any(|i| {
                 options[i].get(next[i]).map(|f| &f.places)
                     != options[i].get(pick[i]).map(|f| &f.places)
@@ -542,11 +680,13 @@ pub fn arrange_with(notes: &[Note], tuning: &Tuning, adjust: Adjust) -> Tab {
         })
         .collect();
     let mut limits = vec![(0u8, FRETS); options.len()];
-    let mut pick = choose(&options, &limits, &[]);
+    let repeats = repeats(&options);
+    let mut pick = choose(&options, &limits, &[], &repeats);
     // Along the neck: the whole part, then each span on its own.
     let times: Vec<f64> = chords.iter().map(|c| c[0].0).collect();
     let position = step_along(
         &options,
+        &repeats,
         &mut pick,
         &times,
         &mut limits,
@@ -561,6 +701,7 @@ pub fn arrange_with(notes: &[Note], tuning: &Tuning, adjust: Adjust) -> Tab {
             let to = times.partition_point(|&t| t < sp.end_ms);
             step_along(
                 &options,
+                &repeats,
                 &mut pick,
                 &times,
                 &mut limits,
@@ -608,6 +749,9 @@ pub struct Row {
     pub end_ms: f64,
     /// (x 0..1, string, fret, soft).
     pub cells: Vec<(f32, u8, u8, bool)>,
+    /// Each chord's time (that of its first note) and place across the
+    /// line, in order.
+    pub chords: Vec<(f64, f32)>,
     /// (ms, x 0..1), in time order, from the line's start to its end: the
     /// playhead goes straight from one to the next.
     pub marks: Vec<(f64, f32)>,
@@ -734,6 +878,7 @@ pub fn layout(tab: &Tab, width: f32, end_ms: f64, bars: &[f64]) -> Vec<Row> {
             start_ms: 0.0,
             end_ms,
             cells: Vec::new(),
+            chords: Vec::new(),
             marks: vec![(0.0, 0.0), (end_ms, 1.0)],
             bar: bar_at(0.0),
             bars: Vec::new(),
@@ -818,6 +963,7 @@ pub fn layout(tab: &Tab, width: f32, end_ms: f64, bars: &[f64]) -> Vec<Row> {
             start_ms,
             end_ms: row_end,
             cells: Vec::new(),
+            chords: Vec::new(),
             marks: Vec::new(),
             bar: bar_at(start_ms),
             bars: Vec::new(),
@@ -828,7 +974,8 @@ pub fn layout(tab: &Tab, width: f32, end_ms: f64, bars: &[f64]) -> Vec<Row> {
         for (it, &x) in items[s..e].iter().zip(&xs) {
             row.marks.push((it.t(), x / width));
             match it {
-                Item::Chord(_, frets, _) => {
+                Item::Chord(t, frets, _) => {
+                    row.chords.push((*t, x / width));
                     for &(string, fret, soft) in frets {
                         row.cells.push((x / width, string, fret, soft));
                     }
@@ -987,6 +1134,65 @@ mod tests {
         let frets: Vec<u8> = tab.notes.iter().map(|n| n.fret).collect();
         let span = frets.iter().max().unwrap() - frets.iter().filter(|&&f| f > 0).min().unwrap();
         assert!(span <= 5, "{frets:?}");
+    }
+
+    fn notes_of(keys: &[u8], from: f64) -> Vec<Note> {
+        keys.iter()
+            .enumerate()
+            .map(|(i, &k)| note(from + i as f64 * 200.0, k))
+            .collect()
+    }
+
+    #[test]
+    fn keeps_open_strings_near_the_nut() {
+        let g = &TUNINGS[0];
+        // High on the neck, an E and a B that open strings could play: they
+        // are fretted beside the rest instead.
+        let high = notes_of(&[76, 74, 72, 71, 69, 64, 69, 71, 72, 74, 76, 71, 69], 0.0);
+        let tab = arrange(&high, g);
+        assert!(tab.notes.iter().all(|n| n.fret > 0), "{:?}", tab.notes);
+        let frets: Vec<u8> = tab.notes.iter().map(|n| n.fret).collect();
+        let span = frets.iter().max().unwrap() - frets.iter().min().unwrap();
+        assert!(span <= 5, "{frets:?}");
+        // Low down, open strings are still played.
+        let low = notes_of(&[40, 43, 45, 47, 45, 43, 40, 52, 55, 57], 0.0);
+        let tab = arrange(&low, g);
+        assert!(tab.notes.iter().any(|n| n.fret == 0), "{:?}", tab.notes);
+    }
+
+    #[test]
+    fn stays_in_one_part_of_the_neck() {
+        // From Snake Rattle 'n Roll's title tune: a run up at the 10th
+        // fret dips to notes that fit at the 5th, then comes straight back
+        // up; it is played where it is, not with a jump down and back.
+        let keys = [
+            75, 74, 73, 71, 70, 69, 60, 62, 65, 64, 63, 62, 61, 77, 77, 75, 74,
+        ];
+        let tab = arrange(&notes_of(&keys, 0.0), &TUNINGS[0]);
+        let frets: Vec<u8> = tab.notes.iter().map(|n| n.fret).collect();
+        let span = frets.iter().max().unwrap() - frets.iter().min().unwrap();
+        assert!(span <= 5, "{frets:?}");
+    }
+
+    #[test]
+    fn fingers_a_passage_the_same_each_time() {
+        let g = &TUNINGS[0];
+        let passage = [62u8, 64, 65, 67, 69, 67, 65, 64, 62];
+        // Once after notes low on the neck, once after notes further up.
+        let mut notes = notes_of(&[45, 47, 48, 50], 0.0);
+        notes.extend(notes_of(&passage, 800.0));
+        notes.extend(notes_of(&[71, 72, 74, 76, 77, 76], 3000.0));
+        notes.extend(notes_of(&passage, 4200.0));
+        let tab = arrange(&notes, g);
+        let places = |from: f64| -> Vec<(u8, u8)> {
+            tab.notes
+                .iter()
+                .filter(|n| n.start_ms >= from && n.start_ms < from + 1800.0)
+                .map(|n| (n.string, n.fret))
+                .collect()
+        };
+        assert_eq!(places(800.0).len(), passage.len());
+        assert_eq!(places(800.0), places(4200.0));
     }
 
     #[test]

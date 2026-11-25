@@ -29,6 +29,39 @@ export struct TabCell {
     fret: string,
     // Played softer than the notes around it (an echo): drawn dimmer.
     soft: bool,
+    // When its chord is played (ms), to play from it.
+    ms: int,
+    // The bar it is in (-1: no bars).
+    bar: int,
+}
+
+// A note head on the staff (standard notation).
+export struct StaffHead {
+    // Across the line, 0..1: where the tab has its chord.
+    x: float,
+    // 0 the staff's bottom line, 1 the space above, 8 the top line; ledger
+    // lines below 0 and above 8.
+    pos: int,
+    // 0 none, 1 sharp, 2 flat, 3 natural.
+    accidental: int,
+    // Beside the stem (a second): -1 left, 1 right.
+    side: int,
+    hollow: bool,
+    dotted: bool,
+    soft: bool,
+}
+
+// A chord on the staff: its stem (from its lowest head to its highest),
+// flags, and when it is played.
+export struct StaffStem {
+    x: float,
+    low: int,
+    high: int,
+    stem: bool,
+    up: bool,
+    flags: int,
+    ms: int,
+    bar: int,
 }
 
 // A bar across a line of tab: from x0 to x1 (0..1), with its bar line at
@@ -75,6 +108,8 @@ export struct TabLine {
     start: string,
     cells: [TabCell],
     bars: [TabBar],
+    heads: [StaffHead],
+    stems: [StaffStem],
 }
 
 export global Lyrics {
@@ -146,10 +181,12 @@ export global Tabs {
     callback set-part(int);
     callback set-tuning(int);
     callback seek-line(int);
-    // A click on a bar chooses it (with Shift, the bars up to it); a
-    // double-click plays from it.
+    // A click on a bar plays from its start, and on a note from the note;
+    // Ctrl-click chooses the bar (to move it along the neck on its own),
+    // Shift-click the bars up to it.
     callback select-bar(int, bool);
     callback seek-bar(int);
+    callback seek-to(int);
     callback set-sig(int);
     callback step-speed(int);
     callback shift-bars(int);
@@ -183,6 +220,23 @@ export global Tabs {
     in-out property <bool> fretboard-shown;
     in property <int> frets: 12;
     in property <[FretDot]> fret-dots;
+    // What the lines show: 0 the tab, 1 standard notation, 2 both.
+    in-out property <int> notation: 0;
+    // The notation's clef: bass (else treble).
+    in property <bool> bass-clef;
+    // A tuning of the player's own, in use: its strings ("E2", lowest
+    // first), and the tunings it can start from again. It is made from the
+    // tunings' list ("Custom…"), then changed: every string a half step
+    // up or down, one string, or a string more or fewer at either end.
+    in property <bool> custom;
+    in property <[string]> custom-strings;
+    in property <[string]> custom-bases;
+    in property <int> max-strings: 10;
+    callback custom-from(int);
+    callback custom-shift(int);
+    callback custom-shift-string(int, int);
+    callback custom-add(bool);
+    callback custom-remove(bool);
 }
 
 export global Export {
@@ -783,7 +837,7 @@ component TabAdjust inherits HorizontalLayout {
         icon-size: 14px;
         icon: Icons.chevron-left;
         enabled: root.enabled && Tabs.can-down;
-        tip: Tabs.selection == "" ? "Move the shapes down the neck, towards the nut" : "Move these bars' shapes down the neck, towards the nut";
+        tip: Tabs.selection == "" ? "Move the shapes down the neck, towards the nut (Ctrl-click a bar to move it alone)" : "Move these bars' shapes down the neck, towards the nut";
         clicked => { Tabs.nudge(-1); }
     }
     Text {
@@ -801,7 +855,7 @@ component TabAdjust inherits HorizontalLayout {
         icon-size: 14px;
         icon: Icons.chevron-right;
         enabled: root.enabled && Tabs.can-up;
-        tip: Tabs.selection == "" ? "Move the shapes up the neck, to higher frets" : "Move these bars' shapes up the neck, to higher frets";
+        tip: Tabs.selection == "" ? "Move the shapes up the neck, to higher frets (Ctrl-click a bar to move it alone)" : "Move these bars' shapes up the neck, to higher frets";
         clicked => { Tabs.nudge(1); }
     }
     IconButton {
@@ -1239,9 +1293,9 @@ component Fretboard inherits Rectangle {
         width: root.dot;
         height: root.dot;
         border-radius: self.width / 2;
-        background: d.now ? Theme.accent : #3a3a42;
+        background: d.now ? Theme.paint : #3a3a42;
         border-width: 1px;
-        border-color: d.now ? Theme.accent.brighter(30%) : Theme.border-strong;
+        border-color: d.now ? Theme.paint-a : Theme.border-strong;
         Text {
             text: d.name;
             color: d.now ? Theme.on-paint : Theme.text-dim;
@@ -1253,14 +1307,192 @@ component Fretboard inherits Rectangle {
     }
 }
 
+// A tuning of the player's own: started from any of the tunings, then
+// every string a half step up or down, a string more or fewer at either
+// end, and (below) each string on its own.
+component TabTuning inherits VerticalLayout {
+    in property <bool> enabled;
+    spacing: 2px;
+    HorizontalLayout {
+        height: 34px;
+        spacing: 4px;
+        Text {
+            horizontal-stretch: 0;
+            text: "Tuning";
+            color: Theme.text-dim;
+            font-size: Theme.font-small;
+            vertical-alignment: center;
+        }
+        Dropdown {
+            width: 150px;
+            list-width: 260px;
+            items: Tabs.custom-bases;
+            current: -1;
+            placeholder: "Start from…";
+            enabled: root.enabled;
+            tip: "Start again from another tuning";
+            picked(i) => { Tabs.custom-from(i); }
+        }
+        Rectangle { width: 6px; }
+        Text {
+            horizontal-stretch: 0;
+            text: "All strings";
+            color: Theme.text-dim;
+            font-size: Theme.font-small;
+            vertical-alignment: center;
+        }
+        IconButton {
+            y: (parent.height - self.height) / 2;
+            size: 30px;
+            icon-size: 14px;
+            icon: Icons.minus;
+            enabled: root.enabled;
+            tip: "Every string a half step lower";
+            clicked => { Tabs.custom-shift(-1); }
+        }
+        IconButton {
+            y: (parent.height - self.height) / 2;
+            size: 30px;
+            icon-size: 14px;
+            icon: Icons.plus;
+            enabled: root.enabled;
+            tip: "Every string a half step higher";
+            clicked => { Tabs.custom-shift(1); }
+        }
+        Rectangle { width: 6px; }
+        Text {
+            horizontal-stretch: 0;
+            text: "Low string";
+            color: Theme.text-dim;
+            font-size: Theme.font-small;
+            vertical-alignment: center;
+        }
+        IconButton {
+            y: (parent.height - self.height) / 2;
+            size: 30px;
+            icon-size: 14px;
+            icon: Icons.minus;
+            enabled: root.enabled && Tabs.custom-strings.length > 1;
+            tip: "Take the lowest string off";
+            clicked => { Tabs.custom-remove(false); }
+        }
+        IconButton {
+            y: (parent.height - self.height) / 2;
+            size: 30px;
+            icon-size: 14px;
+            icon: Icons.plus;
+            enabled: root.enabled && Tabs.custom-strings.length < Tabs.max-strings;
+            tip: "A string more below the lowest, a fourth down";
+            clicked => { Tabs.custom-add(false); }
+        }
+        Rectangle { width: 6px; }
+        Text {
+            horizontal-stretch: 0;
+            text: "High string";
+            color: Theme.text-dim;
+            font-size: Theme.font-small;
+            vertical-alignment: center;
+        }
+        IconButton {
+            y: (parent.height - self.height) / 2;
+            size: 30px;
+            icon-size: 14px;
+            icon: Icons.minus;
+            enabled: root.enabled && Tabs.custom-strings.length > 1;
+            tip: "Take the highest string off";
+            clicked => { Tabs.custom-remove(true); }
+        }
+        IconButton {
+            y: (parent.height - self.height) / 2;
+            size: 30px;
+            icon-size: 14px;
+            icon: Icons.plus;
+            enabled: root.enabled && Tabs.custom-strings.length < Tabs.max-strings;
+            tip: "A string more above the highest, a fourth up";
+            clicked => { Tabs.custom-add(true); }
+        }
+        Rectangle { horizontal-stretch: 1; }
+    }
+    // Each string, lowest first: a half step down or up.
+    HorizontalLayout {
+        height: 30px;
+        spacing: 6px;
+        alignment: start;
+        Text {
+            horizontal-stretch: 0;
+            text: "Strings";
+            color: Theme.text-dim;
+            font-size: Theme.font-small;
+            vertical-alignment: center;
+        }
+        for name[i] in Tabs.custom-strings: Rectangle {
+            width: 86px;
+            border-radius: 8px;
+            background: Theme.surface-2;
+            border-width: 1px;
+            border-color: Theme.border;
+            HorizontalLayout {
+                padding-left: 2px;
+                padding-right: 2px;
+                IconButton {
+                    y: (parent.height - self.height) / 2;
+                    size: 24px;
+                    icon-size: 12px;
+                    icon: Icons.chevron-down;
+                    enabled: root.enabled;
+                    tip: "This string a half step lower";
+                    clicked => { Tabs.custom-shift-string(i, -1); }
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: name;
+                    color: Theme.text;
+                    font-size: Theme.font-small;
+                    font-weight: Theme.regular;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                IconButton {
+                    y: (parent.height - self.height) / 2;
+                    size: 24px;
+                    icon-size: 12px;
+                    icon: Icons.chevron-up;
+                    enabled: root.enabled;
+                    tip: "This string a half step higher";
+                    clicked => { Tabs.custom-shift-string(i, 1); }
+                }
+            }
+        }
+    }
+}
+
 export component TabsSheet inherits Sheet {
     heading: Tabs.title;
     icon: Icons.guitar-line;
     open: Tabs.shown;
     close => { Tabs.close(); }
     property <length> gap: 15px;
+    // What the lines show: the tab, standard notation, or both (the staff
+    // above the tab).
+    property <bool> show-tab: Tabs.notation != 1;
+    property <bool> show-staff: Tabs.notation != 0;
+    // The staff: a space between its lines, where its top and bottom lines
+    // are in a line (with room above for high notes and the line's time),
+    // and where its room below ends.
+    property <length> sp: 8px;
+    property <length> staff-top: 28px + 4 * root.sp;
+    property <length> staff-bottom: root.staff-top + 4 * root.sp;
+    property <length> staff-end: root.staff-bottom + 5 * root.sp;
+    // A note head's width.
+    property <length> head-w: 11px;
+    // The tab's top and bottom strings.
+    property <length> tab-top: root.show-staff ? root.staff-end + 12px : 28px;
+    property <length> tab-bottom: root.tab-top + (Tabs.strings.length - 1) * root.gap;
+    // From the top of what a line shows to its bottom.
+    property <length> content-top: root.show-staff ? root.staff-top : root.tab-top;
+    property <length> content-bottom: root.show-tab ? root.tab-bottom : root.staff-bottom;
     // A line: its time on top, clear of the numbers on the top string.
-    property <length> line-height: (Tabs.strings.length - 1) * root.gap + 48px;
+    property <length> line-height: root.show-tab ? root.tab-bottom + 20px : root.staff-end + 4px;
     property <length> label-width: 26px;
     property <length> left: root.label-width + 6px;
     // Across a line, for the notes: what the scroll shows, less the
@@ -1355,6 +1587,9 @@ export component TabsSheet inherits Sheet {
         alignment: center;
         enabled: !Tabs.busy && Tabs.lines.length > 0;
     }
+    if Tabs.custom: TabTuning {
+        enabled: !Tabs.busy && Tabs.part-names.length > 0;
+    }
     if Tabs.has-bars: TabBars {
         height: 34px;
         enabled: !Tabs.busy && Tabs.lines.length > 0;
@@ -1369,7 +1604,7 @@ export component TabsSheet inherits Sheet {
                 for line[li] in Tabs.lines: row := Rectangle {
                     height: root.line-height;
                     property <bool> now: li == Tabs.current;
-                    property <length> top: 28px;
+                    property <length> top: root.tab-top;
                     border-radius: 8px;
                     background: self.now ? Theme.surface-2 : transparent;
                     Text {
@@ -1379,60 +1614,175 @@ export component TabsSheet inherits Sheet {
                         color: row.now ? Theme.accent : Theme.text-faint;
                         font-size: Theme.font-small - 1px;
                     }
-                    // The strings, highest on top, with their names.
-                    for name[si] in Tabs.strings: Rectangle {
-                        property <length> sy: row.top + (Tabs.strings.length - 1 - si) * root.gap;
-                        Text {
-                            x: 4px;
-                            y: parent.sy - self.height / 2;
-                            width: root.label-width;
-                            text: name;
-                            color: Theme.text-faint;
-                            font-size: Theme.font-small - 1px;
-                            horizontal-alignment: center;
-                        }
-                        Rectangle {
+                    // ---- standard notation: the staff, its clef, and the
+                    // notes where the tab has them.
+                    if root.show-staff: Rectangle {
+                        for k in 5: Rectangle {
                             x: root.left;
-                            y: parent.sy;
+                            y: root.staff-top + k * root.sp;
                             width: root.span + 10px;
                             height: 1px;
                             background: Theme.border-strong;
                         }
-                    }
-                    Rectangle {
-                        x: root.left;
-                        y: row.top;
-                        width: 2px;
-                        height: (Tabs.strings.length - 1) * root.gap + 1px;
-                        background: Theme.border-strong;
-                    }
-                    for c in line.cells: Rectangle {
-                        x: root.left + c.x * root.digits * root.digit - self.width / 2;
-                        y: row.top + (Tabs.strings.length - 1 - c.string) * root.gap - self.height / 2;
-                        width: fret.preferred-width + 6px;
-                        height: 15px;
-                        background: row.now ? Theme.surface-2 : Theme.bg;
-                        fret := Text {
-                            text: c.fret;
-                            color: c.soft ? Theme.text-dim : Theme.text;
-                            font-size: Theme.font-small;
-                            font-weight: Theme.regular;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
+                        Rectangle {
+                            x: root.left;
+                            y: root.staff-top;
+                            width: 2px;
+                            height: 4 * root.sp + 1px;
+                            background: Theme.border-strong;
+                        }
+                        // The clef's art has the staff's lines 3 apart
+                        // from 6 to 18 on its grid of 24.
+                        Icon {
+                            x: 4px + root.label-width / 2 - self.width / 2;
+                            y: root.staff-top - 2 * root.sp;
+                            width: 8 * root.sp;
+                            height: 8 * root.sp;
+                            line: Tabs.bass-clef ? Icons.clef-bass-line : Icons.clef-treble-line;
+                            solid: Tabs.bass-clef ? Icons.clef-bass-solid : Icons.clef-treble-solid;
+                            weight: 1.3;
+                            tint: Theme.text-dim;
+                        }
+                        for bar in line.bars: Rectangle {
+                            if bar.line && bar.x0 > 0: Rectangle {
+                                x: root.left + bar.x0 * root.digits * root.digit - 1px;
+                                y: root.staff-top;
+                                width: 2px;
+                                height: 4 * root.sp + 1px;
+                                background: Theme.text-faint;
+                            }
+                        }
+                        for h in line.heads: Rectangle {
+                            property <length> cx: root.left + h.x * root.digits * root.digit;
+                            property <length> hx: self.cx + h.side * (root.head-w - 1px);
+                            property <length> cy: root.staff-bottom - h.pos * root.sp / 2;
+                            property <color> ink: h.soft ? Theme.text-dim : Theme.text;
+                            // Ledger lines, below the staff and above it.
+                            for k in (h.pos <= -2 ? floor(-h.pos / 2) : h.pos >= 10 ? floor((h.pos - 8) / 2) : 0): Rectangle {
+                                x: parent.hx - root.head-w / 2 - 4px;
+                                y: h.pos < 0 ? root.staff-bottom + (k + 1) * root.sp : root.staff-top - (k + 1) * root.sp;
+                                width: root.head-w + 8px;
+                                height: 1px;
+                                background: Theme.text-dim;
+                            }
+                            Rectangle {
+                                x: parent.hx - root.head-w / 2;
+                                y: parent.cy - root.sp / 2;
+                                width: root.head-w;
+                                height: root.sp;
+                                border-radius: root.sp / 2;
+                                transform-rotation: -20deg;
+                                background: h.hollow ? transparent : parent.ink;
+                                border-width: h.hollow ? 1.6px : 0px;
+                                border-color: parent.ink;
+                            }
+                            // Sharp, flat or natural, left of the chord;
+                            // their art is centred on 12 of 24, a staff
+                            // space 6 of it, and ends at 17.
+                            if h.accidental > 0: Icon {
+                                x: parent.cx - root.head-w / 2 - (h.side < 0 ? root.head-w : 0px) - self.width * 0.78;
+                                y: parent.cy - self.height / 2;
+                                width: 4 * root.sp;
+                                height: self.width;
+                                line: h.accidental == 1 ? Icons.sharp-line : h.accidental == 2 ? Icons.flat-line : Icons.natural-line;
+                                weight: 1.5;
+                                tint: parent.ink;
+                            }
+                            // A dot: in the space above a head on a line.
+                            if h.dotted: Rectangle {
+                                x: parent.hx + root.head-w / 2 + 3px;
+                                y: parent.cy - (mod(h.pos, 2) == 0 ? root.sp / 2 : 0px) - 2px;
+                                width: 4px;
+                                height: 4px;
+                                border-radius: 2px;
+                                background: parent.ink;
+                            }
+                        }
+                        for st in line.stems: Rectangle {
+                            property <length> cx: root.left + st.x * root.digits * root.digit;
+                            property <length> low-y: root.staff-bottom - st.low * root.sp / 2;
+                            property <length> high-y: root.staff-bottom - st.high * root.sp / 2;
+                            property <length> top-y: st.up ? self.high-y - 3.5 * root.sp : self.high-y;
+                            property <length> bottom-y: st.up ? self.low-y : self.low-y + 3.5 * root.sp;
+                            property <length> stem-x: st.up ? self.cx + root.head-w / 2 - 1.5px : self.cx - root.head-w / 2;
+                            if st.stem: Rectangle {
+                                x: parent.stem-x;
+                                y: parent.top-y;
+                                width: 1.5px;
+                                height: parent.bottom-y - parent.top-y;
+                                background: Theme.text;
+                            }
+                            // Flags, curling away from the end of the stem.
+                            for f in (st.stem ? st.flags : 0): Icon {
+                                x: parent.stem-x - 1px;
+                                y: st.up ? parent.top-y - 1px + f * 1.2 * root.sp : parent.bottom-y - self.height + 1px - f * 1.2 * root.sp;
+                                width: 3 * root.sp;
+                                height: 3 * root.sp;
+                                line: st.up ? Icons.flag-up-line : Icons.flag-down-line;
+                                weight: 2.2;
+                                tint: Theme.text;
+                            }
                         }
                     }
-                    // Bar lines, the bars' numbers, and the chosen bars
-                    // marked above and below the strings.
-                    for bar in line.bars: Rectangle {
-                        property <length> x0: root.left + bar.x0 * root.digits * root.digit;
-                        property <length> x1: root.left + bar.x1 * root.digits * root.digit;
-                        if bar.line && bar.x0 > 0: Rectangle {
-                            x: parent.x0 - 1px;
+                    // ---- the tab: the strings, highest on top, with their
+                    // names, and the frets.
+                    if root.show-tab: Rectangle {
+                        for name[si] in Tabs.strings: Rectangle {
+                            property <length> sy: row.top + (Tabs.strings.length - 1 - si) * root.gap;
+                            Text {
+                                x: 4px;
+                                y: parent.sy - self.height / 2;
+                                width: root.label-width;
+                                text: name;
+                                color: Theme.text-faint;
+                                font-size: Theme.font-small - 1px;
+                                horizontal-alignment: center;
+                            }
+                            Rectangle {
+                                x: root.left;
+                                y: parent.sy;
+                                width: root.span + 10px;
+                                height: 1px;
+                                background: Theme.border-strong;
+                            }
+                        }
+                        Rectangle {
+                            x: root.left;
                             y: row.top;
                             width: 2px;
                             height: (Tabs.strings.length - 1) * root.gap + 1px;
-                            background: Theme.text-faint;
+                            background: Theme.border-strong;
                         }
+                        for c in line.cells: Rectangle {
+                            x: root.left + c.x * root.digits * root.digit - self.width / 2;
+                            y: row.top + (Tabs.strings.length - 1 - c.string) * root.gap - self.height / 2;
+                            width: fret.preferred-width + 6px;
+                            height: 15px;
+                            background: row.now ? Theme.surface-2 : Theme.bg;
+                            fret := Text {
+                                text: c.fret;
+                                color: c.soft ? Theme.text-dim : Theme.text;
+                                font-size: Theme.font-small;
+                                font-weight: Theme.regular;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        for bar in line.bars: Rectangle {
+                            if bar.line && bar.x0 > 0: Rectangle {
+                                x: root.left + bar.x0 * root.digits * root.digit - 1px;
+                                y: row.top;
+                                width: 2px;
+                                height: (Tabs.strings.length - 1) * root.gap + 1px;
+                                background: Theme.text-faint;
+                            }
+                        }
+                    }
+                    // The bars' numbers, and the chosen bars marked above
+                    // and below what the line shows.
+                    for bar in line.bars: Rectangle {
+                        property <length> x0: root.left + bar.x0 * root.digits * root.digit;
+                        property <length> x1: root.left + bar.x1 * root.digits * root.digit;
                         Text {
                             x: parent.x0 + (bar.x0 > 0 ? 3px : 44px);
                             y: 3px;
@@ -1442,7 +1792,7 @@ export component TabsSheet inherits Sheet {
                         }
                         if bar.selected: Rectangle {
                             x: parent.x0 + 2px;
-                            y: row.top - 9px;
+                            y: root.content-top - 9px;
                             width: parent.x1 - parent.x0 - 4px;
                             height: 3px;
                             border-radius: 1.5px;
@@ -1450,7 +1800,7 @@ export component TabsSheet inherits Sheet {
                         }
                         if bar.selected: Rectangle {
                             x: parent.x0 + 2px;
-                            y: row.top + (Tabs.strings.length - 1) * root.gap + 7px;
+                            y: root.content-bottom + 7px;
                             width: parent.x1 - parent.x0 - 4px;
                             height: 3px;
                             border-radius: 1.5px;
@@ -1459,28 +1809,88 @@ export component TabsSheet inherits Sheet {
                     }
                     if row.now: Rectangle {
                         x: root.left + Tabs.playhead * root.digits * root.digit - 1px;
-                        y: row.top - 8px;
+                        y: root.content-top - 8px;
                         width: 2px;
-                        height: (Tabs.strings.length - 1) * root.gap + 16px;
+                        height: root.content-bottom - root.content-top + 16px;
                         background: Theme.paint;
                         border-radius: 1px;
                     }
+                    // Clicks: a bar plays from its start (Ctrl-click
+                    // chooses it, Shift-click the bars up to it); a note,
+                    // from the note.
                     if line.bars.length == 0: TouchArea {
                         mouse-cursor: pointer;
                         clicked => { Tabs.seek-line(li); }
                     }
                     for bar in line.bars: TouchArea {
                         property <bool> shift;
+                        property <bool> ctrl;
                         x: root.left + bar.x0 * root.digits * root.digit;
                         width: (bar.x1 - bar.x0) * root.digits * root.digit;
                         mouse-cursor: pointer;
                         pointer-event(e) => {
                             if e.kind == PointerEventKind.down {
                                 self.shift = e.modifiers.shift;
+                                self.ctrl = e.modifiers.control || e.modifiers.meta;
                             }
                         }
-                        clicked => { Tabs.select-bar(bar.index, self.shift); }
-                        double-clicked => { Tabs.seek-bar(bar.index); }
+                        clicked => {
+                            if self.shift || self.ctrl {
+                                Tabs.select-bar(bar.index, self.shift);
+                            } else {
+                                Tabs.seek-bar(bar.index);
+                            }
+                        }
+                    }
+                    if root.show-tab: Rectangle {
+                        for c in line.cells: TouchArea {
+                            property <bool> shift;
+                            property <bool> ctrl;
+                            x: root.left + c.x * root.digits * root.digit - self.width / 2;
+                            y: row.top + (Tabs.strings.length - 1 - c.string) * root.gap - self.height / 2;
+                            width: 20px;
+                            height: root.gap;
+                            mouse-cursor: pointer;
+                            pointer-event(e) => {
+                                if e.kind == PointerEventKind.down {
+                                    self.shift = e.modifiers.shift;
+                                    self.ctrl = e.modifiers.control || e.modifiers.meta;
+                                }
+                            }
+                            clicked => {
+                                if (self.shift || self.ctrl) && c.bar >= 0 {
+                                    Tabs.select-bar(c.bar, self.shift);
+                                } else {
+                                    Tabs.seek-to(c.ms);
+                                }
+                            }
+                        }
+                    }
+                    if root.show-staff: Rectangle {
+                        for st in line.stems: TouchArea {
+                            property <bool> shift;
+                            property <bool> ctrl;
+                            property <length> low-y: root.staff-bottom - st.low * root.sp / 2;
+                            property <length> high-y: root.staff-bottom - st.high * root.sp / 2;
+                            x: root.left + st.x * root.digits * root.digit - self.width / 2;
+                            y: self.high-y - root.sp;
+                            width: root.head-w + 8px;
+                            height: self.low-y - self.high-y + 2 * root.sp;
+                            mouse-cursor: pointer;
+                            pointer-event(e) => {
+                                if e.kind == PointerEventKind.down {
+                                    self.shift = e.modifiers.shift;
+                                    self.ctrl = e.modifiers.control || e.modifiers.meta;
+                                }
+                            }
+                            clicked => {
+                                if (self.shift || self.ctrl) && st.bar >= 0 {
+                                    Tabs.select-bar(st.bar, self.shift);
+                                } else {
+                                    Tabs.seek-to(st.ms);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1512,6 +1922,14 @@ export component TabsSheet inherits Sheet {
             opacity: 0;
             read-only: true;
             text: Tabs.all-text;
+        }
+        if Tabs.lines.length > 0: Dropdown {
+            width: 150px;
+            list-width: 170px;
+            items: ["Tab", "Notation", "Tab and notation"];
+            current: Tabs.notation;
+            tip: "Show the tab, standard notation (the staff), or both";
+            picked(i) => { Tabs.notation = i; }
         }
         if Tabs.lines.length > 0: IconButton {
             y: (parent.height - self.height) / 2;

@@ -963,7 +963,7 @@ impl App {
                         .map_or(-1, |s| s.2 as i32)
                 };
                 let ms_at = |x: f32| -> i32 {
-                    l.chord_at(x).map_or(l.start_ms, |t| t).max(0.0).ceil() as i32
+                    l.chord_at(x).unwrap_or(l.start_ms).max(0.0).ceil() as i32
                 };
                 TabLine {
                     start: ss(&l.label),

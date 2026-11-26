@@ -340,9 +340,15 @@ export component MainWindow inherits Window {
     }
 
     // ---------------------------------------------------------- main area
+    // The lyrics or the guitar tab takes the player's place (on the
+    // desktop): the playlist and the art fade out, the page fades in.
+    property <bool> page-shown: !root.phone && (Lyrics.shown || Tabs.shown);
     if !root.phone: Rectangle {
         y: root.top-inset;
         height: root.mid-height;
+        opacity: root.page-shown ? 0 : 1;
+        visible: self.opacity > 0;
+        animate opacity { duration: Theme.slide; easing: ease-out; }
         HorizontalLayout {
             padding: 18px;
             padding-left: root.gutter + 14px;
@@ -360,8 +366,9 @@ export component MainWindow inherits Window {
         }
     }
 
-    // The lyrics and the guitar tab slide up over the player, the bottom
-    // bar (and so the transport) still below them.
+    // The lyrics and the guitar tab: on a phone they slide up over the
+    // player; on the desktop they take its place, between the title bar and
+    // the bottom bar (and so the transport, still below them).
     property <length> sheet-height: root.phone ? root.height - root.top-inset : root.mid-height;
     property <length> sheet-inset: root.phone ? 0 : root.gutter;
     // Lyrics are seldom long lines: on a wide window, a column in the
@@ -371,22 +378,30 @@ export component MainWindow inherits Window {
         x: (root.width - self.width) / 2;
         width: root.lyrics-width;
         height: root.sheet-height;
-        y: Lyrics.shown ? root.top-inset : root.height;
-        visible: self.y < root.height;
+        y: Lyrics.shown || !root.phone ? root.top-inset : root.height;
+        opacity: Lyrics.shown || root.phone ? 1 : 0;
+        visible: root.phone ? self.y < root.height : self.opacity > 0;
         animate y { duration: Theme.slide; easing: ease-out; }
+        animate opacity { duration: Theme.slide; easing: ease-out; }
         compact: root.phone;
+        page: !root.phone;
     }
     TabsSheet {
         x: root.sheet-inset;
         width: root.width - 2 * root.sheet-inset;
         height: root.sheet-height;
-        y: Tabs.shown ? root.top-inset : root.height;
-        visible: self.y < root.height;
+        y: Tabs.shown || !root.phone ? root.top-inset : root.height;
+        opacity: Tabs.shown || root.phone ? 1 : 0;
+        visible: root.phone ? self.y < root.height : self.opacity > 0;
         animate y { duration: Theme.slide; easing: ease-out; }
+        animate opacity { duration: Theme.slide; easing: ease-out; }
         compact: root.phone;
+        page: !root.phone;
     }
 
     if !root.phone: BottomBar {
+        lyrics-shown: Lyrics.shown;
+        tabs-shown: Tabs.shown;
         y: root.height - root.bottom-height;
         height: root.bottom-height;
     }

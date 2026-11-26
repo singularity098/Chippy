@@ -605,7 +605,8 @@ component Dropdown inherits Rectangle {
 
 // A panel over the player, from the top of the bottom bar up: its heading,
 // a button that puts it away (as does dragging its top down), and what it
-// shows.
+// shows. On the desktop it is a page instead (`page`): it takes the
+// player's place, flat on the window, with no grip or shadow.
 component Sheet inherits Rectangle {
     in property <string> heading;
     in property <string> icon;
@@ -613,14 +614,16 @@ component Sheet inherits Rectangle {
     in property <bool> open;
     // No bottom bar below it (a phone held upright): play and pause here.
     in property <bool> compact;
+    // In the player's place, not over it.
+    in property <bool> page;
     callback close;
-    background: Theme.bg;
-    border-top-left-radius: 16px;
-    border-top-right-radius: 16px;
-    border-width: 1px;
+    background: root.page ? transparent : Theme.bg;
+    border-top-left-radius: root.page ? 0 : 16px;
+    border-top-right-radius: root.page ? 0 : 16px;
+    border-width: root.page ? 0 : 1px;
     border-color: Theme.border-strong;
-    drop-shadow-blur: 24px;
-    drop-shadow-color: #000000c0;
+    drop-shadow-blur: root.page ? 0 : 24px;
+    drop-shadow-color: root.page ? transparent : #000000c0;
     changed open => {
         if root.open { keys.focus(); }
     }
@@ -632,7 +635,7 @@ component Sheet inherits Rectangle {
         close => { root.close(); }
     }
     // Dragging the top of the panel down puts it away.
-    TouchArea {
+    if !root.page: TouchArea {
         y: 0;
         height: 64px;
         moved => {
@@ -641,10 +644,10 @@ component Sheet inherits Rectangle {
     }
     VerticalLayout {
         padding: 16px;
-        padding-top: 0;
+        padding-top: root.page ? 12px : 0;
         spacing: 8px;
         // The grip.
-        Rectangle {
+        if !root.page: Rectangle {
             height: 12px;
             Rectangle {
                 x: (parent.width - self.width) / 2;
@@ -683,8 +686,8 @@ component Sheet inherits Rectangle {
             }
             IconButton {
                 y: (parent.height - self.height) / 2;
-                icon: Icons.chevron-down;
-                tip: "Put away (Esc)";
+                icon: root.page ? Icons.close : Icons.chevron-down;
+                tip: root.page ? "Back to the player (Esc)" : "Put away (Esc)";
                 clicked => { root.close(); }
             }
         }

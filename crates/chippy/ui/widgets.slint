@@ -71,9 +71,14 @@ export component IconButton inherits Rectangle {
     width: root.size;
     height: root.size;
     border-radius: root.size / 2;
-    background: touch.pressed ? Theme.pressed : touch.has-hover ? #ffffff0f : transparent;
-    border-width: root.outlined || touch.has-hover ? 1px : 0;
+    // On (a toggle that is on): filled with the theme's paint, glowing,
+    // the icon dark on it.
+    background: root.active ? (touch.pressed ? Theme.paint-pressed : Theme.paint)
+        : touch.pressed ? Theme.pressed : touch.has-hover ? #ffffff0f : transparent;
+    border-width: !root.active && (root.outlined || touch.has-hover) ? 1px : 0;
     border-color: touch.has-hover ? Theme.border-hover : Theme.border-strong;
+    drop-shadow-blur: root.active ? (touch.has-hover ? 16px : 10px) : 0;
+    drop-shadow-color: root.active ? Theme.paint-b.transparentize(touch.has-hover ? 45% : 60%) : transparent;
     opacity: root.enabled ? 1 : 0.35;
     Icon {
         x: (parent.width - self.width) / 2;
@@ -83,15 +88,7 @@ export component IconButton inherits Rectangle {
         line: root.icon;
         solid: root.icon-solid;
         weight: root.weight;
-        tint: root.active ? Theme.paint : touch.has-hover ? Theme.text : Theme.text-dim;
-    }
-    if root.active: Rectangle {
-        y: parent.height - 6px;
-        x: (parent.width - self.width) / 2;
-        width: 4px;
-        height: 4px;
-        border-radius: 2px;
-        background: Theme.paint;
+        tint: root.active ? Theme.on-paint : touch.has-hover ? Theme.text : Theme.text-dim;
     }
     touch := TouchArea {
         enabled: root.enabled;

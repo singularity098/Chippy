@@ -71,9 +71,14 @@ component MidiButton inherits Rectangle {
     width: self.size;
     height: self.size;
     border-radius: self.size / 2;
-    background: touch.pressed ? Theme.pressed : touch.has-hover ? #ffffff0f : transparent;
-    border-width: touch.has-hover ? 1px : 0;
+    // On: filled with the theme's paint, as the other toggles are (red if
+    // the track couldn't be played as MIDI).
+    background: Now.midi-mode ? (Now.midi-state == 4 ? #e05a5a : touch.pressed ? Theme.paint-pressed : Theme.paint)
+        : touch.pressed ? Theme.pressed : touch.has-hover ? #ffffff0f : transparent;
+    border-width: !Now.midi-mode && touch.has-hover ? 1px : 0;
     border-color: Theme.border-hover;
+    drop-shadow-blur: Now.midi-mode ? (touch.has-hover ? 16px : 10px) : 0;
+    drop-shadow-color: Now.midi-mode ? Theme.paint-b.transparentize(touch.has-hover ? 45% : 60%) : transparent;
     opacity: root.enabled ? 1 : 0.35;
     Icon {
         x: (parent.width - self.width) / 2;
@@ -82,17 +87,17 @@ component MidiButton inherits Rectangle {
         height: 20px;
         line: Icons.midi-line;
         weight: 1.6;
-        tint: Now.midi-mode ? Theme.paint : touch.has-hover ? Theme.text : Theme.text-dim;
+        tint: Now.midi-mode ? Theme.on-paint : touch.has-hover ? Theme.text : Theme.text-dim;
     }
-    // On: a dot, pulsing while the notes are worked out.
-    if Now.midi-mode: Rectangle {
-        y: parent.height - 6px;
+    // A dot, pulsing while the notes are worked out.
+    if Now.midi-mode && Now.midi-state == 2: Rectangle {
+        y: parent.height - 7px;
         x: (parent.width - self.width) / 2;
         width: 4px;
         height: 4px;
         border-radius: 2px;
-        background: Now.midi-state == 4 ? #e05a5a : Theme.paint;
-        opacity: Now.midi-state == 2 ? 0.3 + 0.7 * abs(sin(360deg * animation-tick() / 1.2s)) : 1;
+        background: Theme.on-paint;
+        opacity: 0.3 + 0.7 * abs(sin(360deg * animation-tick() / 1.2s));
     }
     touch := TouchArea {
         enabled: root.enabled;
@@ -259,6 +264,9 @@ export component ArtPanel inherits Rectangle {
 }
 
 export component BottomBar inherits Rectangle {
+    // The lyrics or the guitar tab is showing: its button is lit.
+    in property <bool> lyrics-shown;
+    in property <bool> tabs-shown;
     background: #0000009c;
     Rectangle {
         y: 0;
@@ -462,6 +470,7 @@ export component BottomBar inherits Rectangle {
                 icon: Icons.lyrics-line;
                 icon-size: 18px;
                 enabled: Now.has-track && Now.has-lyrics;
+                active: root.lyrics-shown;
                 tip: !Now.has-track ? "Lyrics (L)" : Now.has-lyrics ? "Lyrics (L)" : "No lyrics found for this track";
                 clicked => { Now.show-lyrics(); }
             }
@@ -470,6 +479,7 @@ export component BottomBar inherits Rectangle {
                 icon: Icons.guitar-line;
                 icon-size: 18px;
                 enabled: Now.has-track && Now.has-notes;
+                active: root.tabs-shown;
                 tip: !Now.has-track ? "Guitar tab (T)" : Now.has-notes ? "Guitar tab (T)" : "The notes of this track can't be found";
                 clicked => { Now.show-tabs(); }
             }

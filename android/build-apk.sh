@@ -7,7 +7,8 @@
 #
 # Needs ANDROID_HOME (SDK with platform 35 and build-tools), ANDROID_NDK_HOME,
 # the Rust target aarch64-linux-android, cargo-ndk, and Gradle 8.
-# The APK lands in android/app/build/outputs/apk/<type>/.
+# The APK lands in android/app/build/outputs/apk/<type>/, named
+# Chippy-<version>.apk (Chippy-<version>-debug.apk for debug builds).
 set -euo pipefail
 
 TYPE="${1:-release}"

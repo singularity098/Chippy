@@ -64,9 +64,14 @@ jobs:
       - name: Package
         id: package
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          if [ "$GITHUB_REF_TYPE" != tag ]; then version="$(git rev-parse --short HEAD)"; fi
-          name="chippy-${version}-linux-x86_64"
+          # <App>-<version>-<platform>-<architecture>: a tag's version, or
+          # the crate's and the commit for builds between releases.
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)-$(git rev-parse --short HEAD)"
+          fi
+          name="Chippy-${version}-linux-x86_64"
           mkdir -p "dist/$name"
           cp target/release/chippy "dist/$name/"
           strip "dist/$name/chippy"

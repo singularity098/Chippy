@@ -247,14 +247,14 @@ desktop distributions have.
 For **Windows** (10 or 11, x86_64) every push builds an installer and a
 portable zip (`.github/workflows/windows.yml`), attached to releases too:
 
-* **Installer** (`chippy-…-setup.exe`): installs for you alone by default,
+* **Installer** (`Chippy-<version>-windows-x86_64.exe`): installs for you alone by default,
   with no administrator prompt (into `%LOCALAPPDATA%\Programs\Chippy`), or
   for everyone on the PC. It adds a Start menu entry, optionally a desktop
   one, and lists Chippy under *Open with* for chiptunes, modules and other
   music without changing your default player. A new version installs over
   the old one. Uninstall it from *Settings → Apps*: it then asks whether to
   delete your settings too (no, by default; a silent uninstall keeps them).
-* **Portable zip**: unzip anywhere and run `chippy.exe`. Settings stay in
+* **Portable zip** (`Chippy-<version>-windows-x86_64.zip`): unzip anywhere and run `chippy.exe`. Settings stay in
   the `chippy-settings` folder beside it, so deleting the folder removes
   everything (delete just `chippy-settings` to keep them in your profile
   instead).

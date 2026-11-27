@@ -91,7 +91,7 @@ jobs:
           cp README.md LICENSE dist/files/
           # The portable zip: a chippy-settings folder beside chippy.exe
           # keeps the settings there instead of in the user's profile.
-          name="chippy-$version-windows-x86_64-portable"
+          name="Chippy-$version-windows-x86_64"
           mkdir -p "dist/$name/chippy-settings"
           cp dist/files/* "dist/$name/"
           sed 's/$/\r/' packaging/windows/portable-settings.txt > "dist/$name/chippy-settings/README.txt"
@@ -102,8 +102,8 @@ jobs:
           path: dist/files/
       - uses: actions/upload-artifact@v4
         with:
-          name: chippy-${{ steps.version.outputs.version }}-windows-x86_64-portable
-          path: dist/chippy-${{ steps.version.outputs.version }}-windows-x86_64-portable.zip
+          name: Chippy-${{ steps.version.outputs.version }}-windows-x86_64-portable
+          path: dist/Chippy-${{ steps.version.outputs.version }}-windows-x86_64.zip
           compression-level: 0
 
   installer:
@@ -131,7 +131,7 @@ jobs:
         # For the current user, silently, as winget would.
         shell: pwsh
         run: |
-          $setup = Get-ChildItem dist\chippy-*-setup.exe | Select-Object -First 1
+          $setup = Get-ChildItem dist\Chippy-*-windows-x86_64.exe | Select-Object -First 1
           $p = Start-Process $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER','/TASKS=openwith' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "setup failed: $($p.ExitCode)" }
           $app = "$env:LOCALAPPDATA\Programs\Chippy"
@@ -154,18 +154,18 @@ jobs:
           Write-Host "installed, ran and uninstalled cleanly"
       - uses: actions/upload-artifact@v4
         with:
-          name: chippy-${{ needs.build.outputs.version }}-windows-x86_64-setup
-          path: dist/chippy-*-setup.exe
+          name: Chippy-${{ needs.build.outputs.version }}-windows-x86_64-setup
+          path: dist/Chippy-*-windows-x86_64.exe
           compression-level: 0
       - uses: actions/download-artifact@v4
         if: github.ref_type == 'tag'
         with:
-          name: chippy-${{ needs.build.outputs.version }}-windows-x86_64-portable
+          name: Chippy-${{ needs.build.outputs.version }}-windows-x86_64-portable
           path: dist
       - name: Release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/chippy-*-setup.exe
-            dist/chippy-*-portable.zip
+            dist/Chippy-*-windows-x86_64.exe
+            dist/Chippy-*-windows-x86_64.zip

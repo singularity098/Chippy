@@ -56,7 +56,7 @@ SetupIconFile=chippy.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
 OutputDir={#OutputDir}
-OutputBaseFilename=chippy-{#AppVersion}-windows-x86_64-setup
+OutputBaseFilename=Chippy-{#AppVersion}-windows-x86_64
 Compression=lzma2/max
 SolidCompression=yes
 ; Tell Explorer when the Open with entries change.

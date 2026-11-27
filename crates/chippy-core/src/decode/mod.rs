@@ -11,6 +11,11 @@ pub mod tabfile;
 pub mod timed;
 pub mod twosf;
 pub mod usf;
+#[cfg(feature = "vgmstream")]
+pub mod vgm;
+/// Without vgmstream: its formats aren't opened.
+#[cfg(not(feature = "vgmstream"))]
+#[path = "vgm_off.rs"]
 pub mod vgm;
 pub mod wsr;
 pub mod xmp;

@@ -1,0 +1,21 @@
+[package]
+name = "chippy-tab"
+description = "MIDI files and chiptunes imported as guitar tablature (for Tabby): Chippy finds each channel's notes and the bars, the tablature crate fingers and writes them"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+# vgmstream's audio formats hold no notes; leave it out unless Chippy
+# itself is being built alongside.
+vgmstream = ["chippy-core/vgmstream"]
+
+[dependencies]
+chippy-core = { path = "../chippy-core", default-features = false }
+tablature.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

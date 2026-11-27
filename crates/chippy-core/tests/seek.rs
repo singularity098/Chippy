@@ -184,6 +184,10 @@ fn streamed_formats_land_where_asked() {
     let opts = DecodeOptions::default();
     let mut sym = chippy_core::decode::sym::SymDecoder::open(&loc).unwrap();
     check_marked(&mut sym, "Symphonia");
-    let mut vgm = chippy_core::decode::vgm::VgmDecoder::open(&loc, None, &opts).unwrap();
-    check_marked(&mut vgm, "vgmstream");
+    #[cfg(feature = "vgmstream")]
+    {
+        let mut vgm = chippy_core::decode::vgm::VgmDecoder::open(&loc, None, &opts).unwrap();
+        check_marked(&mut vgm, "vgmstream");
+    }
+    let _ = opts;
 }

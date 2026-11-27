@@ -30,7 +30,7 @@ files as if they were folders.
 | Chippy's own Z80 + SN76489 | SGC (Sega Master System / Game Gear; not the FM unit or ColecoVision) |
 | [libxmp](https://github.com/libxmp/libxmp) | Tracker modules: MOD, XM, S3M, IT, MED, MTM, 669, OKT, STM, FAR, ULT, PTM, DBM, AMF, MDL, PSM, GDM, IMF, UMX... |
 | [RustySynth](https://github.com/sinshu/rustysynth) | MIDI (MID, MIDI, KAR, RMI, SMF) through SF2 SoundFonts |
-| Chippy's own `tablature` crate, then RustySynth | Tab files: Guitar Pro 3, 4 and 5 (GP3, GP4, GP5), Guitar Pro 7 and 8 (GP), MusicXML (MUSICXML, MXL), every track through the SoundFont with its repeats and tempo changes. Guitar Pro 6's GPX isn't read yet |
+| The `tablature` crate ([Tabby](https://github.com/singularity098/Tabby)'s), then RustySynth | Tab files: Guitar Pro 3, 4 and 5 (GP3, GP4, GP5), Guitar Pro 6 (GPX), Guitar Pro 7 and 8 (GP), MusicXML (MUSICXML, MXL), every track through the SoundFont with its repeats, tempo changes and effects (bends, slides, hammer-ons, palm muting...) |
 | [vgmstream](https://github.com/vgmstream/vgmstream) | Hundreds of game formats: ADX, HCA, BRSTM, BCSTM, XWB, FSB, AT3, DSP, GENH/TXTH... including multi-subsong files |
 | [Symphonia](https://github.com/pdeljanov/Symphonia) | MP3, FLAC, WAV, OGG Vorbis, M4A/AAC, ALAC, AIFF, CAF, MKV/WebM audio (Opus in them through libopus) |
 | vgmstream's FFmpeg | Opus, WMA, AC-3 |
@@ -395,9 +395,8 @@ crates/
                    resampling, spectrum, album art, exporting
   chippy-core/     no UI: virtual file system (folders, archives, multi-track
                    files), decoders, tags, album art, playlist, settings
-  tablature/       no audio, no UI: notes, beats and bars, guitar tab
-                   fingering, Guitar Pro and MusicXML read and written
-                   (chippy-core re-exports it as notes::{tab, score, ...})
+  chippy-tab/      MIDI files and chiptunes imported as guitar tab, for
+                   Tabby (chippy-core's notes, fingered and put in bars)
   uniffi-bindgen/  generates chippy-android's Kotlin bindings
   gme-sys/         builds third_party/game-music-emu
   vgmstream-sys/   builds third_party/vgmstream, with mpg123, libvorbis and
@@ -411,6 +410,13 @@ crates/
   sidplayfp-sys/   third_party/libsidplayfp (SID)
   xmp-sys/         third_party/libxmp (tracker modules)
   archive-sys/     third_party/libarchive (RAR, RSN)
+(The tablature crate, notes, beats and bars, guitar tab fingering, Guitar
+Pro and MusicXML read and written, lives in
+[Tabby](https://github.com/singularity098/Tabby), the tab editor; Cargo
+fetches it from there. chippy-core re-exports it as notes::{tab, score, ...}.
+Its `vgmstream` feature, on by default, can be turned off where only notes
+are wanted.)
+
 android/           the Android app: the Compose UI, media session and
                    playback service in Kotlin (Gradle), and build-apk.sh
 ```

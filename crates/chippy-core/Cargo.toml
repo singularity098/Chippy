@@ -6,9 +6,15 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["vgmstream"]
+# Hundreds of game audio formats (ADX, BRSTM, HCA...), with FFmpeg,
+# mpg123 and libvorbis. Left out where only notes are wanted (Tabby).
+vgmstream = ["dep:vgmstream-sys"]
+
 [dependencies]
 gme-sys.workspace = true
-vgmstream-sys.workspace = true
+vgmstream-sys = { workspace = true, optional = true }
 lazyusf-sys.workspace = true
 aosdk-sys.workspace = true
 archive-sys.workspace = true

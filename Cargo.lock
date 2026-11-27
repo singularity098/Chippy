@@ -1138,6 +1138,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "chippy-tab"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chippy-core",
+ "tablature",
+ "tempfile",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5909,6 +5919,7 @@ dependencies = [
 [[package]]
 name = "tablature"
 version = "0.1.0"
+source = "git+https://github.com/singularity098/Tabby?branch=main#bf9064a83e83912089460dd970821ca7af5637d0"
 dependencies = [
  "roxmltree",
  "zip",

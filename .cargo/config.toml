@@ -3,3 +3,7 @@
 # emulators' C++ as a DLL that Windows does not have. Nothing asks for it
 # here; crates/chippy/build.rs links it into chippy.exe instead.
 CXXSTDLIB_x86_64_pc_windows_gnu = ""
+
+[net]
+# Fetches the tablature crate from Tabby with git itself.
+git-fetch-with-cli = true

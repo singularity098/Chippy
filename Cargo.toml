@@ -11,8 +11,8 @@ members = [
     "crates/twosf-sys",
     "crates/wsr-sys",
     "crates/xmp-sys",
-    "crates/tablature",
     "crates/chippy-core",
+    "crates/chippy-tab",
     "crates/chippy-engine",
     "crates/chippy",
     "crates/chippy-android",
@@ -38,7 +38,8 @@ gsf-sys = { path = "crates/gsf-sys" }
 twosf-sys = { path = "crates/twosf-sys" }
 wsr-sys = { path = "crates/wsr-sys" }
 xmp-sys = { path = "crates/xmp-sys" }
-tablature = { path = "crates/tablature" }
+# The tablature crate lives in Tabby, the tab editor.
+tablature = { git = "https://github.com/singularity098/Tabby", branch = "main" }
 chippy-core = { path = "crates/chippy-core" }
 anyhow = "1"
 log = "0.4"

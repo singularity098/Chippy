@@ -313,6 +313,7 @@ export component MainWindow inherits Window {
             if e.text == Key.Escape {
                 if root.left-pos > 0 { root.close-left(); return accept; }
                 if root.right-pos > 0 { root.close-right(); return accept; }
+                if Lyrics.shown { Lyrics.close(); return accept; }
                 if root.fullscreen { root.toggle-fullscreen(); return accept; }
                 return accept;
             }
@@ -340,9 +341,13 @@ export component MainWindow inherits Window {
     }
 
     // ---------------------------------------------------------- main area
-    // The lyrics or the guitar tab takes the player's place (on the
-    // desktop): the playlist and the art fade out, the page fades in.
-    property <bool> page-shown: !root.phone && (Lyrics.shown || Tabs.shown);
+    // The guitar tab takes the player's place (on the desktop): the
+    // playlist and the art fade out, the page fades in. The lyrics come up
+    // under the art instead, squeezing it upwards.
+    property <bool> page-shown: !root.phone && Tabs.shown;
+    // 0 the art alone, 1 the lyrics under it.
+    property <float> lyrics-t: Lyrics.shown && !root.phone ? 1 : 0;
+    animate lyrics-t { duration: Theme.slide; easing: ease-in-out; }
     if !root.phone: Rectangle {
         y: root.top-inset;
         height: root.mid-height;
@@ -359,32 +364,42 @@ export component MainWindow inherits Window {
                 min-width: 320px;
                 open-browser => { root.open-left(); }
             }
-            ArtPanel {
+            Rectangle {
                 horizontal-stretch: 0;
                 width: min(parent.height - 36px - 80px, (root.width - 2 * root.gutter) * 0.42);
+                // The lyrics card's height, and the gap above it.
+                property <length> card-h: (self.height * 0.58) * root.lyrics-t;
+                property <length> gap: 16px * root.lyrics-t;
+                ArtPanel {
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height - parent.card-h - parent.gap;
+                }
+                LyricsSheet {
+                    y: parent.height - self.height;
+                    width: parent.width;
+                    height: parent.card-h;
+                    opacity: min(1, root.lyrics-t * 2);
+                    visible: root.lyrics-t > 0;
+                    docked: true;
+                }
             }
         }
     }
 
     // The lyrics and the guitar tab: on a phone they slide up over the
-    // player; on the desktop they take its place, between the title bar and
-    // the bottom bar (and so the transport, still below them).
+    // player; on the desktop the tab takes its place, between the title bar
+    // and the bottom bar (and so the transport, still below them), and the
+    // lyrics sit under the art (above).
     property <length> sheet-height: root.phone ? root.height - root.top-inset : root.mid-height;
     property <length> sheet-inset: root.phone ? 0 : root.gutter;
-    // Lyrics are seldom long lines: on a wide window, a column in the
-    // middle.
-    property <length> lyrics-width: root.phone ? root.width : min(root.width - 2 * root.sheet-inset, 760px);
-    LyricsSheet {
-        x: (root.width - self.width) / 2;
-        width: root.lyrics-width;
+    if root.phone: LyricsSheet {
+        width: root.width;
         height: root.sheet-height;
-        y: Lyrics.shown || !root.phone ? root.top-inset : root.height;
-        opacity: Lyrics.shown || root.phone ? 1 : 0;
-        visible: root.phone ? self.y < root.height : self.opacity > 0;
+        y: Lyrics.shown ? root.top-inset : root.height;
+        visible: self.y < root.height;
         animate y { duration: Theme.slide; easing: ease-out; }
-        animate opacity { duration: Theme.slide; easing: ease-out; }
-        compact: root.phone;
-        page: !root.phone;
+        compact: true;
     }
     TabsSheet {
         x: root.sheet-inset;

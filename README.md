@@ -173,9 +173,12 @@ info, PSF tags, vgmstream stream names).
   in the background the first time (the chip plays meanwhile, the button's
   dot pulsing), and the MIDI follows the chip's loudness and its fade.
   Chippy always starts with it off.
-* Lyrics and the tab slide up over the player, the transport still below
-  them, and slide back down with the arrow, a drag or `Esc`. Their buttons
-  are greyed out when a track has no lyrics, or its notes can't be found.
+* On the desktop the lyrics come up in a panel under the album art, the
+  art squeezed upwards to make room and the playlist still in use beside
+  it; the arrow, `L` or `Esc` collapses it again. The tab takes the
+  player's place. On a phone both slide up over the player and slide back
+  down with the arrow, a drag or `Esc`. Their buttons are greyed out when
+  a track has no lyrics, or its notes can't be found.
 * **Open a file** with the button in the title bar (`Ctrl+O`), or drop
   files on the window: the first plays, the rest join the playlist.
 * **Album art** on the right: an embedded picture, or `cover.jpg`,

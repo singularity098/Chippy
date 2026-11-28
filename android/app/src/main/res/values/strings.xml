@@ -15,6 +15,8 @@
     <string name="previous_soundfont">Previous SoundFont</string>
     <string name="next_soundfont">Next SoundFont</string>
     <string name="no_soundfont">No SoundFont</string>
+    <string name="soundfont">SoundFont</string>
+    <string name="choose_soundfont_folder">Choose a SoundFont folder…</string>
 
     <!-- Player -->
     <string name="now_playing">Now playing</string>
@@ -154,7 +156,7 @@
     <string name="usf_hle">Fast N64 audio (USF)</string>
     <string name="next_track_note">Changes apply from the next track.</string>
     <string name="midi">MIDI</string>
-    <string name="midi_hint">MIDI files play through a SoundFont (SF2). Pick a folder of them; the one chosen can change while a song plays, beside its title.</string>
+    <string name="midi_hint">MIDI files play through a SoundFont (SF2). Pick a folder of them; the one chosen can change while a song plays, beside its title or from the SoundFont button at the top.</string>
     <string name="soundfont_folder">SoundFont folder</string>
     <string name="none_chosen">None chosen</string>
     <string name="choose">Choose…</string>

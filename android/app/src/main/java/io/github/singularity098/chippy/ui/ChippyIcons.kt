@@ -153,6 +153,13 @@ object ChippyIcons {
             weight = 1.6f,
         )
     }
+    val SoundFont: ImageVector by lazy {
+        icon(
+            "SoundFont",
+            line = "M 5 4.5 L 19 4.5 A 2 2 0 0 1 21 6.5 L 21 17.5 A 2 2 0 0 1 19 19.5 L 5 19.5 A 2 2 0 0 1 3 17.5 L 3 6.5 A 2 2 0 0 1 5 4.5 Z M 6.5 12 C 7.8 7 10.7 7 12 12 C 13.3 17 16.2 17 17.5 12",
+            weight = 1.6f,
+        )
+    }
     val Info: ImageVector by lazy {
         icon(
             "Info",

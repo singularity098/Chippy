@@ -23,6 +23,17 @@ pub fn pretty(p: &Path) -> String {
         .replacen("//", "/", 1)
 }
 
+/// A path as shown where room is short (the settings' folder lists): the
+/// shared storage is `~`, as the browser's path bar shows home on the
+/// desktop. "~/Music/NES".
+pub fn short(p: &Path) -> String {
+    let full = pretty(p);
+    match full.strip_prefix(INTERNAL) {
+        Some(rest) => format!("~{rest}"),
+        None => full,
+    }
+}
+
 /// The levels of a path, for the path bar: (label, path). The shared
 /// storage and SD cards are one level each.
 pub fn crumbs(p: &Path) -> Vec<(String, PathBuf)> {
@@ -106,6 +117,12 @@ mod tests {
         assert_eq!(pretty(Path::new("/storage/emulated/0")), "Internal storage");
         assert_eq!(pretty(Path::new("/storage/1A2B-3C4D/VGM")), "SD card/VGM");
         assert_eq!(pretty(Path::new("/data/x")), "/data/x");
+        assert_eq!(
+            short(Path::new("/storage/emulated/0/Music/NES")),
+            "~/Music/NES"
+        );
+        assert_eq!(short(Path::new("/storage/emulated/0")), "~");
+        assert_eq!(short(Path::new("/storage/1A2B-3C4D/VGM")), "SD card/VGM");
         let c = crumbs(Path::new("/storage/emulated/0/Music"));
         assert_eq!(c.len(), 2);
         assert_eq!(c[1].1, PathBuf::from("/storage/emulated/0/Music"));

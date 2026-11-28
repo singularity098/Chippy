@@ -1,7 +1,7 @@
 // The right sidebar: every setting. Changes apply at once and are saved.
 import { Fling } from "fling.slint";
 import { Theme } from "theme.slint";
-import { BigButton, Toggle, Chip, SectionTitle, SettingRow, Stepper, IconButton, TextField, MenuItem } from "widgets.slint";
+import { BigButton, Toggle, Chip, SectionTitle, SettingRow, Stepper, IconButton, TextField, MenuItem, Dropdown } from "widgets.slint";
 import { Icon, Icons } from "icons.slint";
 import { MusicDir } from "types.slint";
 import { ScrollView } from "std-widgets.slint";
@@ -89,19 +89,6 @@ export component SettingsPanel inherits Rectangle {
         }
     }
 
-    // Rows of the SoundFont list shown before it scrolls.
-    property <float> sf-rows: Prefs.soundfonts.length > 6 ? 5.5 : 6;
-    // Keeps the SoundFont in use in view (it also changes with [ and ]).
-    property <int> sf-picked: Prefs.soundfont;
-    changed sf-picked => { root.show-soundfont(); }
-    function show-soundfont() {
-        let top = Prefs.soundfont * 36px;
-        if top < -sf-scroll.viewport-y {
-            sf-scroll.viewport-y = -top;
-        } else if top + 36px > -sf-scroll.viewport-y + sf-scroll.visible-height {
-            sf-scroll.viewport-y = -(top + 36px - sf-scroll.visible-height);
-        }
-    }
     property <string> sf-dir: Prefs.soundfont-dir;
     changed sf-dir => { sf-field.text = Prefs.soundfont-dir; }
 
@@ -136,11 +123,6 @@ export component SettingsPanel inherits Rectangle {
             vertical-stretch: 1;
             offset <=> scroll.viewport-y;
             range: scroll.viewport-height - scroll.visible-height;
-            // The SoundFont list scrolls on its own.
-            inner-offset <=> sf-scroll.viewport-y;
-            inner-range: sf-scroll.viewport-height - sf-scroll.visible-height;
-            inner-top: sf-box.absolute-position.y - self.absolute-position.y;
-            inner-height: sf-box.visible ? sf-box.height : 0;
             scroll := ScrollView {
                 viewport-height: col.preferred-height;
                 viewport-width: self.visible-width;
@@ -320,7 +302,7 @@ export component SettingsPanel inherits Rectangle {
                     SectionTitle { text: "MIDI"; }
                     Card {
                         Text {
-                            text: "MIDI files play through a SoundFont (SF2). Pick a folder of them; the one chosen can change while a song plays (also with [ and ], or beside the title below).";
+                            text: "MIDI files play through a SoundFont (SF2). Pick a folder of them; the one chosen can change while a song plays (also with [ and ], beside the title below, or from the SoundFont button beside MIDI mode).";
                             color: Theme.text-dim;
                             font-size: Theme.font-small;
                             wrap: word-wrap;
@@ -353,23 +335,12 @@ export component SettingsPanel inherits Rectangle {
                             }
                         }
                         Rectangle { height: 6px; }
-                        // At most five and a half rows; more scroll inside.
-                        sf-box := Rectangle {
-                            height: min(Prefs.soundfonts.length, root.sf-rows) * 36px;
-                            visible: Prefs.soundfonts.length > 0;
-                            sf-scroll := ScrollView {
-                                viewport-height: sf-col.preferred-height;
-                                viewport-width: self.visible-width;
-                                sf-col := VerticalLayout {
-                                    width: parent.visible-width;
-                                    for name[i] in Prefs.soundfonts: MenuItem {
-                                        text: name;
-                                        checkable: true;
-                                        checked: i == Prefs.soundfont;
-                                        clicked => { root.interacted(); Prefs.pick-soundfont(i); }
-                                    }
-                                }
-                            }
+                        if Prefs.soundfonts.length > 0: Dropdown {
+                            items: Prefs.soundfonts;
+                            current: Prefs.soundfont;
+                            placeholder: "No SoundFont";
+                            tip: "The SoundFont MIDI plays through";
+                            picked(i) => { root.interacted(); Prefs.pick-soundfont(i); }
                         }
                         if Prefs.soundfont-dir != "" && Prefs.soundfonts.length == 0: Text {
                             text: "No .sf2 files in this folder.";

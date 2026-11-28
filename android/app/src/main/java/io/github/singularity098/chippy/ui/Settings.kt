@@ -18,14 +18,19 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -33,6 +38,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,6 +53,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.singularity098.chippy.R
 import io.github.singularity098.chippy.Store
@@ -91,34 +101,44 @@ fun SettingsScreen(
             }
             s.musicDirs.forEachIndexed { i, d ->
                 item(key = "dir:$i:${d.path}") {
-                    ListItem(
-                        modifier = Modifier.clickable(role = Role.RadioButton) {
-                            store.send { setHomeDir(i.toUInt()) }
-                        },
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        leadingContent = {
+                    // The name and its buttons on one line, the path under
+                    // them across the whole width.
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(role = Role.RadioButton) { store.send { setHomeDir(i.toUInt()) } }
+                            .padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 10.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             RadioButton(selected = d.home, onClick = { store.send { setHomeDir(i.toUInt()) } })
-                        },
-                        headlineContent = { Text(d.label) },
-                        supportingContent = { Text(d.path) },
-                        trailingContent = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (s.musicDirs.size > 1) {
-                                    IconButton(
-                                        onClick = { store.send { moveMusicDir(i.toUInt(), -1) } },
-                                        enabled = i > 0,
-                                    ) { Icon(ChippyIcons.ChevronUp, stringResource(R.string.move_folder_up, d.label)) }
-                                    IconButton(
-                                        onClick = { store.send { moveMusicDir(i.toUInt(), 1) } },
-                                        enabled = i < s.musicDirs.size - 1,
-                                    ) { Icon(ChippyIcons.ChevronDown, stringResource(R.string.move_folder_down, d.label)) }
-                                }
-                                IconButton(onClick = { store.send { removeMusicDir(i.toUInt()) } }) {
-                                    Icon(ChippyIcons.Trash, stringResource(R.string.remove_folder, d.label))
-                                }
+                            Text(
+                                d.label,
+                                Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (s.musicDirs.size > 1) {
+                                IconButton(
+                                    onClick = { store.send { moveMusicDir(i.toUInt(), -1) } },
+                                    enabled = i > 0,
+                                ) { Icon(ChippyIcons.ChevronUp, stringResource(R.string.move_folder_up, d.label)) }
+                                IconButton(
+                                    onClick = { store.send { moveMusicDir(i.toUInt(), 1) } },
+                                    enabled = i < s.musicDirs.size - 1,
+                                ) { Icon(ChippyIcons.ChevronDown, stringResource(R.string.move_folder_down, d.label)) }
                             }
-                        },
-                    )
+                            IconButton(onClick = { store.send { removeMusicDir(i.toUInt()) } }) {
+                                Icon(ChippyIcons.Trash, stringResource(R.string.remove_folder, d.label))
+                            }
+                        }
+                        Text(
+                            d.path,
+                            Modifier.padding(horizontal = 12.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
             item {
@@ -198,19 +218,8 @@ fun SettingsScreen(
             if (s.soundfontDir.isNotEmpty() && s.soundfonts.isEmpty()) {
                 item { Hint(stringResource(R.string.no_soundfonts)) }
             }
-            s.soundfonts.forEachIndexed { i, name ->
-                item(key = "sf:$i:$name") {
-                    ListItem(
-                        modifier = Modifier.clickable(role = Role.RadioButton) {
-                            store.send { pickSoundfont(i.toUInt()) }
-                        },
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        leadingContent = {
-                            RadioButton(selected = i == s.soundfont, onClick = { store.send { pickSoundfont(i.toUInt()) } })
-                        },
-                        headlineContent = { Text(name) },
-                    )
-                }
+            if (s.soundfonts.isNotEmpty()) {
+                item { SoundFontPicker(s.soundfonts, s.soundfont) { i -> store.send { pickSoundfont(i.toUInt()) } } }
             }
             if (s.soundfontStatus.isNotEmpty()) {
                 item { Hint(s.soundfontStatus) }
@@ -237,6 +246,42 @@ fun SettingsScreen(
             }
             item { Hint(stringResource(R.string.sound_output, s.device)) }
             item { Hint(stringResource(R.string.settings_file, s.configPath)) }
+        }
+    }
+}
+
+/** The SoundFont in use, as a drop-down of the folder's SF2 files. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SoundFontPicker(fonts: List<String>, picked: Int, onPick: (Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded = open,
+        onExpandedChange = { open = it },
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        OutlinedTextField(
+            value = fonts.getOrNull(picked) ?: stringResource(R.string.no_soundfont),
+            onValueChange = {},
+            readOnly = true,
+            singleLine = true,
+            label = { Text(stringResource(R.string.soundfont)) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = open) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(MenuAnchorType.PrimaryNotEditable),
+        )
+        ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            fonts.forEachIndexed { i, name ->
+                DropdownMenuItem(
+                    text = { Text(name) },
+                    trailingIcon = if (i == picked) { { Icon(ChippyIcons.Check, null) } } else null,
+                    onClick = {
+                        open = false
+                        onPick(i)
+                    },
+                )
+            }
         }
     }
 }

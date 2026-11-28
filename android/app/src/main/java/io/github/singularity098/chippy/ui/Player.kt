@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -37,6 +36,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -104,20 +104,24 @@ fun PlayerScreen(
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
-            CenterAlignedTopAppBar(
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
+            // Start-aligned, with compact buttons, so the title keeps
+            // one line beside the six of them on a phone.
+            TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 navigationIcon = {
-                    IconButton(onClick = onOpenBrowser) {
+                    BarButton(onClick = onOpenBrowser) {
                         Icon(ChippyIcons.Folder, stringResource(R.string.file_browser))
                     }
                 },
                 title = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column {
                         Text(
                             stringResource(R.string.now_playing).uppercase(),
                             style = MaterialTheme.typography.labelMedium,
-                            letterSpacing = 1.8.sp,
+                            letterSpacing = 1.4.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                         if (!now?.location.isNullOrEmpty()) {
                             Text(
@@ -134,24 +138,22 @@ fun PlayerScreen(
                     // Greyed out when the track has no lyrics, or its notes
                     // can't be found.
                     val lyricsOk = now?.hasTrack == true && now.hasLyrics
-                    IconButton(onClick = onLyrics, enabled = lyricsOk) {
+                    BarButton(onClick = onLyrics, enabled = lyricsOk) {
                         Icon(
                             ChippyIcons.Lyrics,
                             stringResource(if (lyricsOk || now?.hasTrack != true) R.string.lyrics else R.string.no_lyrics),
                         )
                     }
                     val notesOk = now?.hasTrack == true && now.hasNotes
-                    IconButton(onClick = onTabs, enabled = notesOk) {
+                    BarButton(onClick = onTabs, enabled = notesOk) {
                         Icon(
                             ChippyIcons.Guitar,
                             stringResource(if (notesOk || now?.hasTrack != true) R.string.guitar_tab else R.string.no_notes),
                         )
                     }
                     MidiButton(store, now, enabled = notesOk && now?.midi != true)
-                    IconButton(onClick = onOpenPlaylist) {
-                        Icon(ChippyIcons.Queue, stringResource(R.string.playlist))
-                    }
-                    IconButton(onClick = onOpenSettings) {
+                    SoundFontButton(store, now, onOpenSettings)
+                    BarButton(onClick = onOpenSettings) {
                         Icon(ChippyIcons.Gear, stringResource(R.string.settings))
                     }
                 },
@@ -420,7 +422,7 @@ private fun MidiButton(store: Store, now: NowState?, enabled: Boolean) {
     Box {
         Box(
             Modifier
-                .size(48.dp)
+                .size(BarButtonSize)
                 .clip(CircleShape)
                 .combinedClickable(
                     enabled = enabled,
@@ -462,6 +464,56 @@ private fun MidiButton(store: Store, now: NowState?, enabled: Boolean) {
                     onClick = {
                         menu = false
                         store.send { setMidiStyle(i.toUInt()) }
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** The top bar's buttons: a little smaller than Material's 48dp, so six
+ * fit beside the title on a phone. */
+private val BarButtonSize = 42.dp
+
+@Composable
+private fun BarButton(onClick: () -> Unit, enabled: Boolean = true, content: @Composable () -> Unit) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(BarButtonSize), content = content)
+}
+
+/** The SoundFonts in the chosen folder, to pick the one MIDI (and MIDI
+ * mode) plays through. Lit while the track plays through it. */
+@Composable
+private fun SoundFontButton(store: Store, now: NowState?, onOpenSettings: () -> Unit) {
+    val settings by store.settings.collectAsStateWithLifecycle()
+    var menu by remember { mutableStateOf(false) }
+    val fonts = settings?.soundfonts.orEmpty()
+    val picked = settings?.soundfont ?: -1
+    val inUse = now?.hasTrack == true && (now.midi || (now.midiMode && now.midiState == MidiState.PLAYING))
+    Box {
+        BarButton(onClick = { menu = true }) {
+            Icon(
+                ChippyIcons.SoundFont,
+                stringResource(R.string.soundfont),
+                tint = if (inUse) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            if (fonts.isEmpty()) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.choose_soundfont_folder)) },
+                    onClick = {
+                        menu = false
+                        onOpenSettings()
+                    },
+                )
+            }
+            fonts.forEachIndexed { i, name ->
+                DropdownMenuItem(
+                    text = { Text(name) },
+                    trailingIcon = if (i == picked) { { Icon(ChippyIcons.Check, null) } } else null,
+                    onClick = {
+                        menu = false
+                        store.send { pickSoundfont(i.toUInt()) }
                     },
                 )
             }

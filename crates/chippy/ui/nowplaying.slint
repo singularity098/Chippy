@@ -3,6 +3,8 @@
 import { Theme } from "theme.slint";
 import { IconButton, MenuItem, PlayButton, Scrubber, Tip } from "widgets.slint";
 import { Icon, Icons } from "icons.slint";
+import { Prefs } from "settings.slint";
+import { ScrollView } from "std-widgets.slint";
 
 export global Now {
     in property <string> title;
@@ -162,6 +164,78 @@ component MidiButton inherits Rectangle {
     }
 }
 
+// The SoundFont button beside MIDI mode: a click lists the SoundFonts in
+// the chosen folder, to pick the one MIDI (and MIDI mode) plays through.
+// Lit while the track plays through one.
+component SoundFontButton inherits Rectangle {
+    property <length> size: 40px;
+    property <bool> in-use: Now.has-track && (Now.midi || (Now.midi-mode && Now.midi-state == 3));
+    property <int> rows: max(1, Prefs.soundfonts.length);
+    width: self.size;
+    height: self.size;
+    border-radius: self.size / 2;
+    background: touch.pressed ? Theme.pressed : touch.has-hover ? #ffffff0f : transparent;
+    border-width: touch.has-hover ? 1px : 0;
+    border-color: Theme.border-hover;
+    Icon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 20px;
+        height: 20px;
+        line: Icons.soundfont-line;
+        weight: 1.6;
+        tint: root.in-use ? Theme.paint : touch.has-hover ? Theme.text : Theme.text-dim;
+    }
+    touch := TouchArea {
+        clicked => { menu.show(); }
+    }
+    Tip {
+        text: Prefs.soundfont >= 0 && Prefs.soundfont < Prefs.soundfonts.length
+            ? "SoundFont: " + Prefs.soundfonts[Prefs.soundfont] + " ([ and ] for the others)"
+            : "SoundFont";
+        hover: touch.has-hover;
+        pressed: touch.pressed;
+    }
+    menu := PopupWindow {
+        // Closed by the pick itself: a click inside reaches the item first.
+        close-policy: close-on-click-outside;
+        width: 280px;
+        height: min(root.rows * 36px + 14px, 400px);
+        x: (root.width - self.width) / 2;
+        y: - self.height - 22px;
+        Rectangle {
+            background: Theme.popup;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #000000a0;
+            ScrollView {
+                VerticalLayout {
+                    padding: 6px;
+                    if Prefs.soundfonts.length == 0: MenuItem {
+                        text: "Choose a SoundFont folder…";
+                        clicked => {
+                            menu.close();
+                            Prefs.choose-dir("soundfont");
+                        }
+                    }
+                    for name[i] in Prefs.soundfonts: MenuItem {
+                        text: name;
+                        checkable: true;
+                        checked: i == Prefs.soundfont;
+                        // Picked before closing: closing ends the list.
+                        clicked => {
+                            Prefs.pick-soundfont(i);
+                            menu.close();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Bars rising from the bottom in the theme's paint, with peak caps.
 export component Spectrum inherits Rectangle {
     property <int> n: Now.bars.length;
@@ -287,7 +361,7 @@ export component BottomBar inherits Rectangle {
     // The timeline is 70% longer than it once was, the room taken from
     // the now playing part (which seldom needs it all): what the bar used
     // to be, then the now playing part shortened by 70% of it.
-    property <length> right-width: root.narrow ? 348px : 408px;
+    property <length> right-width: root.narrow ? 396px : 456px;
     property <length> fixed: 14px + 18px + root.right-width + (root.narrow ? 2 * 18px : 150px + 3 * 18px) + 2 * 54px + 2 * 10px;
     property <length> was-now: root.narrow ? min(300px, root.width * 0.3) : min(470px, root.width * 0.34);
     property <length> was-bar: max(0px, root.width - root.fixed - root.was-now);
@@ -486,6 +560,9 @@ export component BottomBar inherits Rectangle {
             MidiButton {
                 y: (parent.height - self.height) / 2;
                 enabled: Now.has-track && Now.has-notes && !Now.midi;
+            }
+            SoundFontButton {
+                y: (parent.height - self.height) / 2;
             }
             IconButton {
                 y: (parent.height - self.height) / 2;

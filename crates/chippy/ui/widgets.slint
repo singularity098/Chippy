@@ -3,6 +3,7 @@
 import { Theme } from "theme.slint";
 import { Icon, Icons } from "icons.slint";
 import { Tip, Tips } from "tooltip.slint";
+import { ScrollView } from "std-widgets.slint";
 
 export { Tip, Tips }
 
@@ -421,4 +422,82 @@ export component MenuItem inherits Rectangle {
         }
     }
     touch := TouchArea { clicked => { root.clicked(); } }
+}
+
+// A choice from a list: the one chosen, and the list to pick from below
+// it. Its width is set by where it is, not by what it says, so whatever is
+// beside it stays put.
+export component Dropdown inherits Rectangle {
+    in property <[string]> items;
+    in property <int> current;
+    in property <bool> enabled: true;
+    in property <string> tip;
+    in property <length> list-width: 300px;
+    // Shown when nothing is chosen.
+    in property <string> placeholder: "–";
+    callback picked(int);
+    preferred-width: 140px;
+    min-width: 60px;
+    height: 34px;
+    border-radius: Theme.radius;
+    background: touch.pressed ? Theme.pressed : Theme.surface-3;
+    border-width: 1px;
+    border-color: touch.has-hover && root.enabled ? Theme.border-hover : Theme.border-strong;
+    opacity: root.enabled ? 1 : 0.45;
+    Text {
+        x: 12px;
+        width: parent.width - 42px;
+        height: parent.height;
+        text: root.current >= 0 && root.current < root.items.length ? root.items[root.current] : root.placeholder;
+        color: root.current >= 0 && root.current < root.items.length ? Theme.accent : Theme.text-dim;
+        font-weight: Theme.regular;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Icon {
+        x: parent.width - 26px;
+        y: (parent.height - self.height) / 2;
+        width: 14px;
+        height: 14px;
+        line: Icons.chevron-down;
+        weight: 2;
+        tint: Theme.text-dim;
+    }
+    touch := TouchArea {
+        enabled: root.enabled && root.items.length > 0;
+        mouse-cursor: self.enabled ? pointer : default;
+        clicked => { list.show(); }
+    }
+    Tip { text: root.tip; hover: touch.has-hover && !touch.pressed; pressed: touch.pressed; }
+    list := PopupWindow {
+        // Closed by the pick itself: a click inside reaches the item first.
+        close-policy: close-on-click-outside;
+        x: 0;
+        y: root.height + 4px;
+        width: max(root.width, root.list-width);
+        height: min(root.items.length * 36px + 14px, 400px);
+        Rectangle {
+            background: Theme.popup;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #000000a0;
+            ScrollView {
+                VerticalLayout {
+                    padding: 6px;
+                    for item[i] in root.items: MenuItem {
+                        text: item;
+                        checkable: true;
+                        checked: i == root.current;
+                        // Picked before closing: closing ends the list.
+                        clicked => {
+                            root.picked(i);
+                            list.close();
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

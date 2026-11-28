@@ -26,7 +26,7 @@ use chippy_engine::player::{Cmd, Event, Player};
 use chippy_engine::spectrum::{Spectrum, FFT_LEN};
 use chippy_engine::tabs::{Available, TabView};
 
-use crate::paths::{self, file_name, found_in, human_size, pretty};
+use crate::paths::{self, file_name, found_in, human_size, pretty, short};
 use crate::types::*;
 
 /// At most this many search results are listed.
@@ -414,7 +414,7 @@ impl Core {
                 label: Some(file_name(d))
                     .filter(|n| !n.is_empty())
                     .unwrap_or_else(|| pretty(d)),
-                path: pretty(d),
+                path: short(d),
                 home: self.settings.music_dir.as_ref() == Some(d),
                 current: current == Some(d.as_path()),
             })
@@ -589,7 +589,7 @@ impl Core {
             fade: format!("{} s", s.fade_s),
             loops: format!("{}", s.loops),
             bars: format!("{}", s.spectrum_bars),
-            soundfont_dir: s.soundfont_dir.as_deref().map(pretty).unwrap_or_default(),
+            soundfont_dir: s.soundfont_dir.as_deref().map(short).unwrap_or_default(),
             soundfonts: self.soundfonts.iter().map(|f| file_name(f)).collect(),
             soundfont: self.soundfont_index().map(|i| i as i32).unwrap_or(-1),
             soundfont_status: self.soundfont_status.clone(),

@@ -13,9 +13,16 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -28,10 +35,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.singularity098.chippy.Store
@@ -39,6 +51,8 @@ import io.github.singularity098.chippy.core.LyricsInfo
 import io.github.singularity098.chippy.core.TabsState
 import io.github.singularity098.chippy.core.TrackInfo
 import io.github.singularity098.chippy.core.UiEvent
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 enum class Page { Player, Browser, Playlist, Settings }
@@ -63,11 +77,20 @@ fun ChippyRoot(store: Store, host: Host) {
         val export by store.export.collectAsStateWithLifecycle()
         val tabs by store.tabs.collectAsStateWithLifecycle()
         var lyrics by remember { mutableStateOf<LyricsInfo?>(null) }
-        var page by rememberSaveable { mutableStateOf(Page.Player) }
+        // The page underneath (the player or the playlist), and the panel
+        // pulled out over it (the browser or the settings), if any.
+        var base by rememberSaveable { mutableStateOf(Page.Player) }
+        var panel by rememberSaveable { mutableStateOf<Page?>(null) }
         var showExport by rememberSaveable { mutableStateOf(false) }
         var info by remember { mutableStateOf<TrackInfo?>(null) }
         val snackbar = remember { SnackbarHostState() }
         val scope = rememberCoroutineScope()
+        val pull = remember { PanelPull(panel.pullTarget(), scope) }
+        // Opened or closed by a button, Back or the engine: slid there.
+        LaunchedEffect(panel) {
+            val to = panel.pullTarget()
+            if (pull.value != to) pull.settle(to)
+        }
 
         LaunchedEffect(Unit) {
             store.events.collect { e ->
@@ -80,12 +103,12 @@ fun ChippyRoot(store: Store, host: Host) {
                             duration = if (e.error) SnackbarDuration.Long else SnackbarDuration.Short,
                         )
                     }
-                    is UiEvent.OpenBrowser -> page = Page.Browser
+                    is UiEvent.OpenBrowser -> panel = Page.Browser
                 }
             }
         }
 
-        BackHandler(enabled = page == Page.Player) { host.moveToBack() }
+        BackHandler(enabled = base == Page.Player && panel == null) { host.moveToBack() }
 
         // The lyrics or the guitar tab, slid up over the player (one at a
         // time); back, the arrow or a drag down puts it away.
@@ -111,7 +134,7 @@ fun ChippyRoot(store: Store, host: Host) {
             snackbarHost = { SnackbarHost(snackbar) },
             containerColor = ChippyBackground,
         ) { _ ->
-            Box(
+            BoxWithConstraints(
                 Modifier
                     .fillMaxSize()
                     .background(ChippyBackground)
@@ -121,46 +144,105 @@ fun ChippyRoot(store: Store, host: Host) {
                             listOf(look.paintC.copy(alpha = 0.10f), Color.Transparent),
                             radius = 1400f,
                         )
-                    )
-                    .swipeBetweenPages(page) { page = it },
+                    ),
             ) {
-                AnimatedContent(
-                    targetState = page,
-                    transitionSpec = { transition(initialState, targetState) },
-                    label = "page",
-                ) { p ->
-                    when (p) {
-                        Page.Player -> PlayerScreen(
-                            store, now,
-                            onOpenBrowser = { page = Page.Browser },
-                            onOpenPlaylist = { page = Page.Playlist },
-                            onOpenSettings = { page = Page.Settings },
-                            onLyrics = {
-                                if (tabsShown) store.send { closeTabs() }
-                                scope.launch { lyrics = store.ask { lyrics() } }
-                            },
-                            onTabs = {
-                                lyrics = null
-                                store.send { openTabs() }
-                            },
-                        )
-                        Page.Browser -> BrowserScreen(store, browser, onClose = { page = Page.Player })
-                        Page.Playlist -> PlaylistScreen(
-                            store, playlist,
-                            onClose = { page = Page.Player },
-                            onOpenBrowser = { page = Page.Browser },
-                            onInfo = { i ->
-                                scope.launch { info = store.ask { trackInfo(i.toUInt()) } }
-                            },
-                            onExport = { row ->
-                                scope.launch {
-                                    if (store.ask { prepareExport(row?.toUInt()) } == true) showExport = true
-                                }
-                            },
-                        )
-                        Page.Settings -> SettingsScreen(
+                // The panels come nearly across the screen, a strip of the
+                // player left beside them to tap or drag them away by.
+                val panelWidth = maxOf(maxWidth - 36.dp, minOf(maxWidth, 280.dp))
+                val widthPx = with(LocalDensity.current) { panelWidth.toPx() }
+                fun letGo(velocity: Float) {
+                    val to = pull.target(velocity)
+                    val next = when {
+                        to > 0f -> Page.Browser
+                        to < 0f -> Page.Settings
+                        else -> null
+                    }
+                    if (next != panel) panel = next
+                    pull.settle(to, velocity, widthPx)
+                }
+                val dragOpen = { pull.value.let { if (it > 0.5f) 1f else if (it < -0.5f) -1f else 0f } }
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        // On the player, a swipe right pulls the browser out
+                        // and one left the settings, following the finger.
+                        .then(
+                            if (base == Page.Player) {
+                                Modifier.pullPanels(pull, base to widthPx, { 0f }, { widthPx }, ::letGo)
+                            } else {
+                                Modifier
+                            }
+                        ),
+                ) {
+                    AnimatedContent(
+                        targetState = base,
+                        transitionSpec = { transition(initialState, targetState) },
+                        label = "page",
+                    ) { p ->
+                        when (p) {
+                            Page.Playlist -> PlaylistScreen(
+                                store, playlist,
+                                onClose = { base = Page.Player },
+                                onOpenBrowser = { base = Page.Player; panel = Page.Browser },
+                                onInfo = { i ->
+                                    scope.launch { info = store.ask { trackInfo(i.toUInt()) } }
+                                },
+                                onExport = { row ->
+                                    scope.launch {
+                                        if (store.ask { prepareExport(row?.toUInt()) } == true) showExport = true
+                                    }
+                                },
+                            )
+                            else -> PlayerScreen(
+                                store, now,
+                                onOpenBrowser = { panel = Page.Browser },
+                                onOpenPlaylist = { base = Page.Playlist },
+                                onOpenSettings = { panel = Page.Settings },
+                                onLyrics = {
+                                    if (tabsShown) store.send { closeTabs() }
+                                    scope.launch { lyrics = store.ask { lyrics() } }
+                                },
+                                onTabs = {
+                                    lyrics = null
+                                    store.send { openTabs() }
+                                },
+                            )
+                        }
+                    }
+                }
+                val shown = pull.value
+                if (abs(shown) > 0.001f) {
+                    // The player darkens as a panel comes over it; a tap or
+                    // a drag on what's left of it puts the panel away.
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.5f * abs(shown)))
+                            .pullPanels(pull, panel to widthPx, dragOpen, { widthPx }, ::letGo)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { panel = null },
+                    )
+                }
+                if (shown > 0.001f || panel == Page.Browser) {
+                    SidePanel(
+                        left = true, width = panelWidth,
+                        offsetPx = -(1f - shown.coerceAtLeast(0f)) * widthPx,
+                        drag = Modifier.pullPanels(pull, panel to widthPx, dragOpen, { widthPx }, ::letGo),
+                    ) {
+                        BrowserScreen(store, browser, onClose = { panel = null })
+                    }
+                }
+                if (shown < -0.001f || panel == Page.Settings) {
+                    SidePanel(
+                        left = false, width = panelWidth,
+                        offsetPx = (1f + shown.coerceAtMost(0f)) * widthPx,
+                        drag = Modifier.pullPanels(pull, panel to widthPx, dragOpen, { widthPx }, ::letGo),
+                    ) {
+                        SettingsScreen(
                             store, settings,
-                            onClose = { page = Page.Player },
+                            onClose = { panel = null },
                             onPickFolder = host::pickFolder,
                         )
                     }
@@ -188,39 +270,39 @@ fun ChippyRoot(store: Store, host: Host) {
     }
 }
 
-/**
- * Swiping sideways moves between the pages the way they slide in: on the
- * player, a swipe to the right pulls the browser in from the left and one
- * to the left pulls the settings in from the right; the opposite swipe
- * puts either away. Drags a slider or a list takes for itself (the seek
- * and volume bars) are left to it.
- */
-private fun Modifier.swipeBetweenPages(page: Page, go: (Page) -> Unit): Modifier =
-    pointerInput(page) {
-        val needed = 72.dp.toPx()
-        var dx = 0f
-        detectHorizontalDragGestures(
-            onDragStart = { dx = 0f },
-            onDragCancel = { dx = 0f },
-            onDragEnd = {
-                val to = when {
-                    dx > needed -> when (page) {
-                        Page.Player -> Page.Browser
-                        Page.Settings -> Page.Player
-                        else -> null
-                    }
-                    dx < -needed -> when (page) {
-                        Page.Player -> Page.Settings
-                        Page.Browser -> Page.Player
-                        else -> null
-                    }
-                    else -> null
-                }
-                to?.let(go)
-            },
-            onHorizontalDrag = { _, amount -> dx += amount },
-        )
+/** Where the panel pull rests with this panel out. */
+private fun Page?.pullTarget(): Float = when (this) {
+    Page.Browser -> 1f
+    Page.Settings -> -1f
+    else -> 0f
+}
+
+/** A panel at the left or right edge, `offsetPx` slid out of view (0
+ * fully out), its inner corners rounded. */
+@Composable
+private fun BoxScope.SidePanel(
+    left: Boolean,
+    width: Dp,
+    offsetPx: Float,
+    drag: Modifier,
+    content: @Composable () -> Unit,
+) {
+    val shape = if (left) {
+        RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp)
+    } else {
+        RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
     }
+    Box(
+        Modifier
+            .align(if (left) Alignment.CenterStart else Alignment.CenterEnd)
+            .offset { IntOffset(offsetPx.roundToInt(), 0) }
+            .width(width)
+            .fillMaxHeight()
+            .shadow(12.dp, shape)
+            .clip(shape)
+            .then(drag),
+    ) { content() }
+}
 
 /** The browser comes from the left, the settings from the right, the
  * playlist from below, as their buttons sit on the player. */

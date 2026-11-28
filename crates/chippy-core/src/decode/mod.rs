@@ -1,6 +1,7 @@
 //! Decoding any supported track to interleaved stereo `f32` PCM.
 
 pub mod ao;
+pub mod disc;
 pub mod gme;
 pub mod gsf;
 pub mod midi;
@@ -119,6 +120,7 @@ pub fn open_decoder(t: &TrackRef, opts: &DecodeOptions) -> Result<Box<dyn Decode
         Some(Codec::Twosf) => Ok(Box::new(twosf::open(&t.loc, opts)?)),
         Some(Codec::Wsr) => Ok(Box::new(wsr::open(&t.loc, t.sub, opts)?)),
         Some(Codec::Module) => Ok(Box::new(xmp::XmpDecoder::open(&t.loc, opts)?)),
+        Some(Codec::Disc) => Ok(Box::new(disc::open(&t.loc, t.sub)?)),
         Some(Codec::Common) => match sym::SymDecoder::open(&t.loc) {
             Ok(d) => Ok(Box::new(d)),
             Err(e) => vgm::VgmDecoder::open(&t.loc, t.sub, opts)
@@ -142,6 +144,7 @@ pub fn track_list(loc: &Location, opts: &DecodeOptions) -> Result<Vec<SubTrack>>
         Some(Codec::Sid) => sid::track_list(loc, opts),
         Some(Codec::Sgc) => sgc::track_list(loc, opts),
         Some(Codec::Wsr) => wsr::track_list(loc, opts),
+        Some(Codec::Disc) => disc::track_list(loc),
         _ => Ok(vec![SubTrack {
             index: 0,
             title: loc.name(),
@@ -164,6 +167,7 @@ pub fn read_meta(t: &TrackRef, opts: &DecodeOptions) -> Result<TrackMeta> {
         Some(Codec::Twosf) => twosf::meta(&t.loc, opts),
         Some(Codec::Wsr) => wsr::meta(&t.loc, t.sub, opts),
         Some(Codec::Module) => xmp::meta(&t.loc),
+        Some(Codec::Disc) => disc::meta(&t.loc, t.sub),
         Some(Codec::Common) => sym::meta(&t.loc).or_else(|_| vgm::meta(&t.loc, t.sub, opts)),
         Some(Codec::Vgmstream) | None => vgm::meta(&t.loc, t.sub, opts),
     }

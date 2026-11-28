@@ -363,6 +363,9 @@ fn list_dir(dir: &Path, show_all: bool) -> Result<Vec<Entry>> {
         out.push(entry);
     }
     promote_m3us(&mut out);
+    if !show_all {
+        hide_disc_files(&mut out);
+    }
     out.retain(|e| shown(e, show_all));
     Ok(out)
 }
@@ -402,8 +405,26 @@ fn list_archive(archive_path: &Path, dir: &str, show_all: bool) -> Result<Vec<En
         out.push(entry);
     }
     promote_m3us(&mut out);
+    if !show_all {
+        hide_disc_files(&mut out);
+    }
     out.retain(|e| shown(e, show_all));
     Ok(out)
+}
+
+/// Leaves out the raw files a CD image's sheet names (a CUE's BINs, a
+/// GDI's tracks, a CCD's IMG): the sheet lists their tracks.
+fn hide_disc_files(entries: &mut Vec<Entry>) {
+    let hidden: std::collections::HashSet<String> = entries
+        .iter()
+        .filter(|e| matches!(formats::extension(&e.name).as_str(), "cue" | "gdi" | "ccd"))
+        .filter_map(|e| e.track.as_ref())
+        .flat_map(|t| decode::disc::companions(&t.loc))
+        .map(|n| n.to_lowercase())
+        .collect();
+    if !hidden.is_empty() {
+        entries.retain(|e| e.kind.is_container() || !hidden.contains(&e.name.to_lowercase()));
+    }
 }
 
 /// Turns per-song M3Us (`01 Title.m3u` holding `game.wsr::WSR,$03,...`)
@@ -615,6 +636,39 @@ mod tests {
             true
         });
         assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn cd_images_list_their_tracks() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("game.bin"), vec![0u8; 2352 * 4]).unwrap();
+        std::fs::write(
+            d.join("game.cue"),
+            "FILE \"game.bin\" BINARY\n TRACK 01 MODE1/2352\n  INDEX 01 00:00:00\n\
+             TRACK 02 AUDIO\n  INDEX 01 00:00:01\n TRACK 03 AUDIO\n  INDEX 01 00:00:03\n",
+        )
+        .unwrap();
+        let opts = DecodeOptions::default();
+        let names = |all| -> Vec<String> {
+            list(&Node::Dir(d.into()), all, &opts)
+                .unwrap()
+                .into_iter()
+                .map(|e| e.name)
+                .collect()
+        };
+        // The BIN is the CUE's: only shown when every file is.
+        assert_eq!(names(false), ["game.cue"]);
+        assert_eq!(names(true), ["game.bin", "game.cue"]);
+        let tracks = list(
+            &Node::Tracks(Location::Fs(d.join("game.cue"))),
+            false,
+            &opts,
+        )
+        .unwrap();
+        let names: Vec<_> = tracks.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["02", "03"]);
+        assert_eq!(tracks[1].track.as_ref().unwrap().sub, Some(2));
     }
 
     #[test]

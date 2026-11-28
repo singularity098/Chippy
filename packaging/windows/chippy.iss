@@ -97,7 +97,7 @@ Root: HKA; Subkey: "Software\Classes\{#ProgId}\shell\open\command"; ValueType: s
 ; crates/chippy-core/src/formats.rs; vgmstream's hundreds are left out bar
 ; the common ones). Removed again on uninstall, leaving each extension's
 ; other handlers alone.
-#define Exts "nsf nsfe gbs hes kss ay sap spc vgm vgz gym usf miniusf psf minipsf psf2 minipsf2 ssf minissf dsf minidsf qsf miniqsf spu sid psid rsid sgc gsf minigsf 2sf mini2sf wsr mod xm s3m it mtm 669 med okt stm far ult ptm dbm amf mdl psm gdm imf umx mid midi kar rmi adx hca brstm bcstm bfstm bwav xwb fsb at3 dsp mp3 flac ogg opus wav m4a "
+#define Exts "nsf nsfe gbs hes kss ay sap spc vgm vgz gym usf miniusf psf minipsf psf2 minipsf2 ssf minissf dsf minidsf qsf miniqsf spu sid psid rsid sgc gsf minigsf 2sf mini2sf wsr mod xm s3m it mtm 669 med okt stm far ult ptm dbm amf mdl psm gdm imf umx mid midi kar rmi adx hca brstm bcstm bfstm bwav xwb fsb at3 dsp mp3 flac ogg opus wav m4a cue chd gdi ccd "
 #define Rest Exts
 #define Ext ""
 #sub AddExt

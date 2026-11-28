@@ -32,6 +32,7 @@ files as if they were folders.
 | [RustySynth](https://github.com/sinshu/rustysynth) | MIDI (MID, MIDI, KAR, RMI, SMF) through SF2 SoundFonts |
 | The `tablature` crate ([Tabby](https://github.com/singularity098/Tabby)'s), then RustySynth | Tab files: Guitar Pro 3, 4 and 5 (GP3, GP4, GP5), Guitar Pro 6 (GPX), Guitar Pro 7 and 8 (GP), MusicXML (MUSICXML, MXL), every track through the SoundFont with its repeats, tempo changes and effects (bends, slides, hammer-ons, palm muting...) |
 | [vgmstream](https://github.com/vgmstream/vgmstream) | Hundreds of game formats: ADX, HCA, BRSTM, BCSTM, XWB, FSB, AT3, DSP, GENH/TXTH... including multi-subsong files |
+| Chippy's own reader, [chd-rs](https://github.com/SnowflakePowered/chd-rs) for CHD | CD images' audio tracks: BIN/CUE (one BIN or one per track), MAME's CHD (LZMA, Deflate, FLAC and Zstandard), Dreamcast GDI, CloneCD CCD/IMG; and CUE sheets over an album ripped to one WAV, FLAC, MP3... |
 | [Symphonia](https://github.com/pdeljanov/Symphonia) | MP3, FLAC, WAV, OGG Vorbis, M4A/AAC, ALAC, AIFF, CAF, MKV/WebM audio (Opus in them through libopus) |
 | vgmstream's FFmpeg | Opus, WMA, AC-3 |
 
@@ -66,6 +67,13 @@ info, PSF tags, vgmstream stream names).
 * **Multi-track files** (NSF, NSFE, GBS, HES, KSS, AY, SAP, SID, SGC, WSR
   with an M3U, and vgmstream files with subsongs) open like folders listing their tracks by number and
   title. A file with one track just plays.
+* **CD images** (a game's CUE, CHD, GDI or CCD) open like folders listing
+  their audio tracks, numbered as on the disc (the data tracks are left
+  out), with the CUE's titles where it has them. The BINs, IMG and track
+  files a sheet names aren't listed beside it unless every file is shown.
+  A track stops where the next one's pregap starts (on game discs, two
+  seconds of silence). Images inside archives are unpacked into memory to
+  play.
 * **Paths run through all of this**: you can type
   `~/music/nes.zip/Mega Man 2.nsfe` in the path box, or pass it on the
   command line.
@@ -92,7 +100,7 @@ info, PSF tags, vgmstream stream names).
   Sampled instruments (SNES, PlayStation, DS, GBA, modules) are measured
   and named to pick each one's General MIDI instrument, and unpitched
   samples become drums. MIDI is greyed out for tracks whose notes can't be
-  found: recorded audio (MP3, FLAC, vgmstream's formats) and the N64,
+  found: recorded audio (MP3, FLAC, vgmstream's formats, CD audio) and the N64,
   Saturn, Dreamcast and QSound.
 * **Lyrics** (`L`, or the speech-bubble button by the volume): from an
   `.lrc` file beside the track (timed: the line being sung is marked and

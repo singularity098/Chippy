@@ -104,6 +104,9 @@ pub struct SymDecoder {
     /// Reused between packets while the format stays the same.
     sample_buf: Option<(SampleBuffer<f32>, symphonia::core::audio::SignalSpec, u64)>,
     done: bool,
+    time_base: Option<symphonia::core::units::TimeBase>,
+    /// Frames still to drop after a seek that landed before its place.
+    skip: u64,
 }
 
 impl SymDecoder {
@@ -154,6 +157,8 @@ impl SymDecoder {
             pending: Vec::new(),
             sample_buf: None,
             done: false,
+            time_base: params.time_base,
+            skip: 0,
         })
     }
 
@@ -223,9 +228,14 @@ impl Decoder for SymDecoder {
         self.duration
     }
     fn read(&mut self, out: &mut [f32]) -> Result<usize> {
-        while self.pending.len() < out.len() && !self.done {
+        while (self.pending.len() < out.len() || self.skip > 0) && !self.done {
             if !self.decode_next()? {
                 self.done = true;
+            }
+            if self.skip > 0 {
+                let drop = (self.skip as usize * 2).min(self.pending.len());
+                self.pending.drain(..drop);
+                self.skip -= drop as u64 / 2;
             }
         }
         let n = self.pending.len().min(out.len()) & !1;
@@ -234,7 +244,7 @@ impl Decoder for SymDecoder {
         Ok(n / 2)
     }
     fn seek(&mut self, ms: u64) -> Result<()> {
-        self.format.seek(
+        let to = self.format.seek(
             SeekMode::Accurate,
             SeekTo::Time {
                 time: Time::new(ms / 1000, (ms % 1000) as f64 / 1000.0),
@@ -247,6 +257,16 @@ impl Decoder for SymDecoder {
         }
         self.pending.clear();
         self.done = false;
+        // The reader may stop short of the place (at the packet holding
+        // it): the frames up to it are decoded and dropped.
+        let short = to.required_ts.saturating_sub(to.actual_ts);
+        self.skip = match self.time_base {
+            Some(tb) => {
+                let t = tb.calc_time(short);
+                t.seconds * self.rate as u64 + (t.frac * self.rate as f64).round() as u64
+            }
+            None => short,
+        };
         Ok(())
     }
 }

@@ -5,6 +5,7 @@
 
 pub mod archive;
 pub mod art;
+pub mod builtin_font;
 pub mod decode;
 pub mod formats;
 pub mod lyrics;

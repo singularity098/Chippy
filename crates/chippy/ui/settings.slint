@@ -342,8 +342,9 @@ export component SettingsPanel inherits Rectangle {
                             tip: "The SoundFont MIDI plays through";
                             picked(i) => { root.interacted(); Prefs.pick-soundfont(i); }
                         }
-                        if Prefs.soundfont-dir != "" && Prefs.soundfonts.length == 0: Text {
-                            text: "No .sf2 files in this folder.";
+                        // (Only the built-in one listed.)
+                        if Prefs.soundfont-dir != "" && Prefs.soundfonts.length <= 1: Text {
+                            text: "No .sf2 files in this folder: the built-in sound plays.";
                             color: Theme.text-faint;
                             font-size: Theme.font-small;
                         }

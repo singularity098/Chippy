@@ -215,7 +215,7 @@ fun SettingsScreen(
                     }
                 }
             }
-            if (s.soundfontDir.isNotEmpty() && s.soundfonts.isEmpty()) {
+            if (s.soundfontDir.isNotEmpty() && s.soundfonts.size <= 1) {
                 item { Hint(stringResource(R.string.no_soundfonts)) }
             }
             if (s.soundfonts.isNotEmpty()) {

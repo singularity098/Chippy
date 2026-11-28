@@ -1209,6 +1209,9 @@ impl Core {
             })
             .unwrap_or_default();
         self.soundfonts.sort_by_key(|p| file_name(p).to_lowercase());
+        // The built-in one last, always there (the one used when the folder
+        // has none).
+        self.soundfonts.push(midi::builtin_soundfont_path());
         if self.soundfont_index().is_none() {
             self.settings.soundfont = self.soundfonts.first().map(|p| file_name(p));
         }
@@ -1231,8 +1234,12 @@ impl Core {
         self.scan_soundfonts();
         self.load_soundfont();
         self.mark_dirty();
-        if self.soundfonts.is_empty() {
-            self.toast("No SoundFonts (.sf2) in that folder", true);
+        // (Only the built-in one.)
+        if self.soundfonts.len() <= 1 {
+            self.toast(
+                "No SoundFonts (.sf2) in that folder: the built-in sound plays",
+                true,
+            );
         }
     }
 
@@ -1290,10 +1297,11 @@ impl Core {
 
     pub fn cycle_soundfont(&mut self, d: i32) {
         let n = self.soundfonts.len() as i32;
-        if n == 0 {
+        // Only the built-in one: nothing to step to.
+        if n <= 1 {
             self.toast(
-                "Choose a folder of SoundFonts in Settings, under MIDI",
-                true,
+                "Only the built-in sound: choose a folder of SoundFonts in Settings, under MIDI",
+                false,
             );
             return;
         }

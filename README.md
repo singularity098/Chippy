@@ -199,7 +199,10 @@ info, PSF tags, vgmstream stream names).
   `%APPDATA%\chippy\config\settings.json`, or the `chippy-settings` folder
   beside `chippy.exe` in the portable zip). Each start begins in the music folder
   with an empty playlist.
-* **MIDI**: choose a folder of SF2 SoundFonts in Settings. The SoundFont in
+* **MIDI**: plays at once through a small built-in SoundFont (made in
+  code: plucked strings, sustained tones and a drum kit); choose a folder of
+  SF2 SoundFonts in Settings for better instruments. The built-in one stays
+  in the list beside them. The SoundFont in
   use can change while a song plays (the list in Settings, the arrows beside
   the title in the bottom bar, or `[` and `]`); the song crossfades to it.
 * **Media keys** and the desktop's player controls work (MPRIS on Linux,

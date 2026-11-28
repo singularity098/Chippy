@@ -160,7 +160,7 @@
     <string name="soundfont_folder">SoundFont folder</string>
     <string name="none_chosen">None chosen</string>
     <string name="choose">Choose…</string>
-    <string name="no_soundfonts">No .sf2 files in this folder.</string>
+    <string name="no_soundfonts">No .sf2 files in this folder: the built-in sound plays.</string>
     <string name="display">Display</string>
     <string name="theme">Theme</string>
     <string name="embedded_art">Prefer embedded artwork</string>

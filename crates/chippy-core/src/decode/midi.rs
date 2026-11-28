@@ -29,8 +29,34 @@ static FONT: RwLock<Font> = RwLock::new(Font {
 static FONT_GENERATION: AtomicU64 = AtomicU64::new(0);
 static FONT_LOADING: AtomicBool = AtomicBool::new(false);
 
-/// Loads an SF2 file (this can take a moment for a large one).
+/// The built-in SoundFont ([`crate::builtin_font`]), made the first time
+/// it is asked for.
+pub fn builtin_soundfont() -> Arc<SoundFont> {
+    static BUILTIN: std::sync::OnceLock<Arc<SoundFont>> = std::sync::OnceLock::new();
+    BUILTIN
+        .get_or_init(|| {
+            let bytes = crate::builtin_font::sf2();
+            Arc::new(SoundFont::new(&mut &bytes[..]).expect("the built-in SoundFont loads"))
+        })
+        .clone()
+}
+
+/// The built-in SoundFont as it is listed among the SoundFonts found
+/// (always, after them): a path that is only its name.
+pub fn builtin_soundfont_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(crate::builtin_font::NAME)
+}
+
+pub fn is_builtin_soundfont(path: &std::path::Path) -> bool {
+    path.as_os_str() == crate::builtin_font::NAME
+}
+
+/// Loads an SF2 file (this can take a moment for a large one), or the
+/// built-in SoundFont for its name ([`builtin_soundfont_path`]).
 pub fn load_soundfont(path: &std::path::Path) -> Result<Arc<SoundFont>> {
+    if is_builtin_soundfont(path) {
+        return Ok(builtin_soundfont());
+    }
     let f = std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
     let mut r = std::io::BufReader::with_capacity(1 << 20, f);
     let font = SoundFont::new(&mut r)

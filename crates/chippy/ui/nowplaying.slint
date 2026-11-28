@@ -170,7 +170,8 @@ component MidiButton inherits Rectangle {
 component SoundFontButton inherits Rectangle {
     property <length> size: 40px;
     property <bool> in-use: Now.has-track && (Now.midi || (Now.midi-mode && Now.midi-state == 3));
-    property <int> rows: max(1, Prefs.soundfonts.length);
+    // (With only the built-in one, the folder to choose as well.)
+    property <int> rows: Prefs.soundfonts.length + (Prefs.soundfonts.length <= 1 ? 1 : 0);
     width: self.size;
     height: self.size;
     border-radius: self.size / 2;
@@ -213,7 +214,8 @@ component SoundFontButton inherits Rectangle {
             ScrollView {
                 VerticalLayout {
                     padding: 6px;
-                    if Prefs.soundfonts.length == 0: MenuItem {
+                    // (Only the built-in one listed.)
+                    if Prefs.soundfonts.length <= 1: MenuItem {
                         text: "Choose a SoundFont folder…";
                         clicked => {
                             menu.close();

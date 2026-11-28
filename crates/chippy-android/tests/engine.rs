@@ -216,7 +216,7 @@ fn browses_plays_and_seeks() {
     engine.add_browser_dir();
     assert_eq!(
         seen.lock().unwrap().settings.as_ref().unwrap().music_dirs[0].path,
-        "Internal storage/Music/Chip"
+        "~/Music/Chip"
     );
 
     // The first music folder is where the browser starts.
